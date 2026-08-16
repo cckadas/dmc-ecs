@@ -15,12 +15,27 @@ router.post('/', async (req, res) => {
       role = 'customer',
     } = req.body
 
+    if (!name || !email) {
+      return res.status(400).json({
+        error: 'Name and email are required.',
+      })
+    }
+
     // Check if email already exists
-    const { data: existing } = await supabaseAdmin
-      .from('profiles')
-      .select('id')
-      .eq('email', email)
-      .maybeSingle()
+    const { data: existing, error: existingError } =
+      await supabaseAdmin
+        .from('profiles')
+        .select('id')
+        .eq('email', email)
+        .maybeSingle()
+
+    if (existingError) {
+      console.error(existingError)
+
+      return res.status(500).json({
+        error: existingError.message,
+      })
+    }
 
     if (existing) {
       return res.status(400).json({
@@ -28,12 +43,13 @@ router.post('/', async (req, res) => {
       })
     }
 
-    // Invite user
+    // Invite user through Supabase Auth
     const { data, error } =
       await supabaseAdmin.auth.admin.inviteUserByEmail(
         email,
         {
-          redirectTo: 'http://localhost:5173/set-password',
+          redirectTo:
+            `${process.env.CLIENT_URL}/set-password`,
         }
       )
 
@@ -61,6 +77,7 @@ router.post('/', async (req, res) => {
         })
 
     if (profileError) {
+      // Roll back Auth user if profile creation fails
       await supabaseAdmin.auth.admin.deleteUser(user.id)
 
       return res.status(400).json({
@@ -74,12 +91,11 @@ router.post('/', async (req, res) => {
       email,
       role,
     })
-
-  } catch (err) {
-    console.error(err)
+  } catch (error) {
+    console.error('Create user error:', error)
 
     return res.status(500).json({
-      error: err.message,
+      error: 'Internal server error.',
     })
   }
 })
