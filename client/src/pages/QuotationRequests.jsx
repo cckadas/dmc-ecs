@@ -4,33 +4,20 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faEye, faPlus, faTrash } from '@fortawesome/free-solid-svg-icons'
+import { faPlus, faTrash } from '@fortawesome/free-solid-svg-icons'
 
 
 export default function QuotationRequestsPage() {
-
   const { profile } = useAuth()
   const [deliveryLocations, setDeliveryLocations] = useState([])
-  const [selectedProducts, setSelectedProducts] = useState([])
   const [products, setProducts] = useState([])
   const [showModal, setShowModal] = useState(false)
   const [requests, setRequests] = useState([])
 
-  const [form, setForm] = useState({
-    preferred_ship_date: '',
-    delivery_location_id: '',
-  })
 
-
-  useEffect(() => {
-    if (profile?.id) {
-      loadRequests()
-      loadDeliveryLocations()
-      loadProducts()
-    }
-  }, [profile])
-
-
+  // =============================================
+  // LOAD REQUESTS
+  // =============================================
   async function loadRequests() {
     const { data, error } = await supabase
       .from('quotation_requests')
@@ -57,9 +44,8 @@ export default function QuotationRequestsPage() {
       .eq('customer_id', profile.id)
       .order('created_at', { ascending: false })
 
-
     if (error) {
-      console.error(error)
+      alert(error.message)
       return
     }
 
@@ -67,6 +53,9 @@ export default function QuotationRequestsPage() {
   }
 
 
+  // =============================================
+  // LOAD DELIVERY LOCATIONS
+  // =============================================
   async function loadDeliveryLocations() {
     const { data, error } = await supabase
       .from('delivery_locations')
@@ -74,36 +63,36 @@ export default function QuotationRequestsPage() {
       .eq('profile_id', profile.id)
       .order('location_name')
 
-    if (!error) {
-      setDeliveryLocations(data || [])
+    if (error) {
+      alert(error.message)
+      return
     }
+
+    setDeliveryLocations(data || [])
   }
 
 
+  // =============================================
+  // LOAD PRODUCTS
+  // =============================================
   async function loadProducts() {
     const { data, error } = await supabase
       .from('products')
       .select('id, product_name, brand')
       .order('product_name')
 
-    if (!error) {
-      setProducts(data || [])
+    if (error) {
+      alert(error.message)
+      return
     }
+
+    setProducts(data || [])
   }
   
 
-  function generateQuotationReference() {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-    let random = ''
-
-    for (let i = 0; i < 6; i++) {
-      random += chars.charAt(Math.floor(Math.random() * chars.length))
-    }
-
-    return `REF-${random}`
-  }
-
-
+  // =============================================
+  // SAVE REQUEST
+  // =============================================
   async function saveRequest(formData) {
     const quotationReference = generateQuotationReference()
 
@@ -140,18 +129,14 @@ export default function QuotationRequestsPage() {
       return
     }
 
-    setForm({
-      preferred_ship_date: '',
-      delivery_location_id: '',
-    })
-
-    setSelectedProducts([])
-
     setShowModal(false)
     loadRequests()
   }
 
 
+  // =============================================
+  // DELETE REQUEST
+  // =============================================
   async function deleteRequest(requestId) {
     const confirmed = window.confirm(
       'Are you sure you want to delete this quotation request?'
@@ -185,24 +170,36 @@ export default function QuotationRequestsPage() {
   }
 
 
-  function handleSubmit(e) {
-    e.preventDefault()
+  // =============================================
+  // GENERATE QUOTATION REFERENCE
+  // =============================================
+  function generateQuotationReference() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    let random = ''
 
-    if (
-      !form.delivery_location_id ||
-      !form.preferred_ship_date ||
-      selectedProducts.length === 0
-    ) {
-      return
+    for (let i = 0; i < 6; i++) {
+      random += chars.charAt(Math.floor(Math.random() * chars.length))
     }
 
-    saveRequest({
-      ...form,
-      items: selectedProducts,
-    })
+    return `REF-${random}`
   }
 
 
+  // =============================================
+  // INITIAL LOAD
+  // =============================================
+  useEffect(() => {
+    if (profile?.id) {
+      loadRequests()
+      loadDeliveryLocations()
+      loadProducts()
+    }
+  }, [profile])
+
+
+  // =============================================
+  // MAIN CONTENT
+  // =============================================
   return (
     <div>
 
@@ -349,197 +346,14 @@ export default function QuotationRequestsPage() {
         </table>
       </div>
 
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
-
-            {/* Header */}
-            <div className="border-b bg-[#F4F8F5] px-6 py-4">
-              <h2 className="text-xl font-semibold text-[#1F3A2C]">
-                Add Quotation Request
-              </h2>
-            </div>
-
-
-            <form onSubmit={handleSubmit} className="space-y-6 p-6">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="mb-1 block text-sm font-medium">
-                    Preferred Shipping Date
-                  </label>
-
-                  <input
-                    type="date"
-                    value={form.preferred_ship_date}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        preferred_ship_date: e.target.value,
-                      })
-                    }
-                    className="w-full rounded-lg border px-3 py-2"
-                    required
-                  />
-                </div>
-
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium">
-                    Delivery Location
-                  </label>
-
-                  <select
-                    value={form.delivery_location_id}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        delivery_location_id: e.target.value,
-                      })
-                    }
-                    className="w-full rounded-lg border px-3 py-2"
-                    required
-                  >
-                    <option value="">Select Location</option>
-
-                    {deliveryLocations.map((location) => (
-                      <option key={location.id} value={location.id}>
-                        {location.location_name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-
-                <div className="col-span-2">
-                  <label className="mb-1 block text-sm font-medium">
-                    Products
-                  </label>
-
-                  <div className="space-y-3 max-h-80 overflow-y-auto">
-
-                    {products.map((product) => {
-                      const selected = selectedProducts.find(
-                        (p) => p.product_id === product.id
-                      )
-
-                      return (
-                        <div
-                          key={product.id}
-                          className="rounded-lg border p-3"
-                        >
-                          <div className="flex items-center gap-4">
-                            <input
-                              type="checkbox"
-                              checked={!!selected}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setSelectedProducts([
-                                    ...selectedProducts,
-                                    {
-                                      product_id: product.id,
-                                      quantity: 1,
-                                      notes: '',
-                                    },
-                                  ])
-                                } else {
-                                  setSelectedProducts(
-                                    selectedProducts.filter(
-                                      (p) => p.product_id !== product.id
-                                    )
-                                  )
-                                }
-                              }}
-                            />
-
-                            <div className="flex-1">
-                              <p className="font-medium">
-                                {product.product_name}
-                              </p>
-
-                              <p className="text-sm text-gray-500">
-                                {product.brand}
-                              </p>
-                            </div>
-
-                            {selected && (
-                              <input
-                                type="number"
-                                min={1}
-                                value={selected.quantity}
-                                onChange={(e) =>
-                                  setSelectedProducts(
-                                    selectedProducts.map((p) =>
-                                      p.product_id === product.id
-                                        ? {
-                                            ...p,
-                                            quantity: Number(e.target.value),
-                                          }
-                                        : p
-                                    )
-                                  )
-                                }
-                                className="w-20 rounded border px-2 py-1"
-                              />
-                            )}
-                          </div>
-
-                          {selected && (
-                            <div className="mt-3">
-                              <label className="mb-1 block text-sm font-medium text-gray-700">
-                                Notes
-                              </label>
-
-                              <textarea
-                                rows={2}
-                                placeholder="Optional notes for this product..."
-                                value={selected.notes}
-                                onChange={(e) =>
-                                  setSelectedProducts(
-                                    selectedProducts.map((p) =>
-                                      p.product_id === product.id
-                                        ? {
-                                            ...p,
-                                            notes: e.target.value,
-                                          }
-                                        : p
-                                    )
-                                  )
-                                }
-                                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
-                              />
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                </div>
-              </div>
-
-              </div>
-
-              {/* Buttons */}
-              <div className="flex justify-end gap-3 pt-5">
-                <button
-                  type="button"
-                  onClick={() => setShowModal(false)}
-                  className="rounded-lg border border-gray-300 px-4 py-2 transition hover:bg-gray-100"
-                >
-                  Cancel
-                </button>
-
-                <button
-                  type="submit"
-                  className="rounded-lg bg-[#1F3A2C] px-4 py-2 text-white transition hover:bg-[#2D5A42]"
-                >
-                  Submit Request
-                </button>
-              </div>
-            </form>
-
-          </div>
-
-        </div>
-      )}
+    {showModal && (
+      <QuotationRequestModal
+        deliveryLocations={deliveryLocations}
+        products={products}
+        onClose={() => setShowModal(false)}
+        onSubmit={saveRequest}
+      />
+    )}
 
     </div>
   )
@@ -547,3 +361,223 @@ export default function QuotationRequestsPage() {
 
 
 
+// =============================================
+// AUOTATION REQUEST MODAL
+// =============================================
+function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit }) {
+  const [selectedProducts, setSelectedProducts] = useState([])
+
+  const [form, setForm] = useState({
+    preferred_ship_date: '',
+    delivery_location_id: '',
+  })
+
+
+  function handleSubmit(e) {
+    e.preventDefault()
+
+    if (
+      !form.delivery_location_id ||
+      !form.preferred_ship_date ||
+      selectedProducts.length === 0
+    ) {
+      return
+    }
+
+    onSubmit({
+      ...form,
+      items: selectedProducts,
+    })
+  }
+
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
+
+        {/* Header */}
+        <div className="border-b bg-[#F4F8F5] px-6 py-4">
+          <h2 className="text-xl font-semibold text-[#1F3A2C]">
+            Add Quotation Request
+          </h2>
+        </div>
+
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="space-y-6 p-6">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium">
+                Preferred Shipping Date
+              </label>
+
+              <input
+                type="date"
+                value={form.preferred_ship_date}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    preferred_ship_date: e.target.value,
+                  })
+                }
+                className="w-full rounded-lg border px-3 py-2"
+                required
+              />
+            </div>
+
+
+            <div>
+              <label className="mb-1 block text-sm font-medium">
+                Delivery Location
+              </label>
+
+              <select
+                value={form.delivery_location_id}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    delivery_location_id: e.target.value,
+                  })
+                }
+                className="w-full rounded-lg border px-3 py-2"
+                required
+              >
+                <option value="">Select Location</option>
+
+                {deliveryLocations.map((location) => (
+                  <option key={location.id} value={location.id}>
+                    {location.location_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+
+            <div className="col-span-2">
+              <label className="mb-1 block text-sm font-medium">
+                Products
+              </label>
+
+              <div className="space-y-3 max-h-80 overflow-y-auto">
+
+                {products.map((product) => {
+                  const selected = selectedProducts.find(
+                    (p) => p.product_id === product.id
+                  )
+
+                  return (
+                    <div
+                      key={product.id}
+                      className="rounded-lg border p-3"
+                    >
+                      <div className="flex items-center gap-4">
+                        <input
+                          type="checkbox"
+                          checked={!!selected}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedProducts([
+                                ...selectedProducts,
+                                {
+                                  product_id: product.id,
+                                  quantity: 1,
+                                  notes: '',
+                                },
+                              ])
+                            } else {
+                              setSelectedProducts(
+                                selectedProducts.filter(
+                                  (p) => p.product_id !== product.id
+                                )
+                              )
+                            }
+                          }}
+                        />
+
+                        <div className="flex-1">
+                          <p className="font-medium">
+                            {product.product_name}
+                          </p>
+
+                          <p className="text-sm text-gray-500">
+                            {product.brand}
+                          </p>
+                        </div>
+
+                        {selected && (
+                          <input
+                            type="number"
+                            min={1}
+                            value={selected.quantity}
+                            onChange={(e) =>
+                              setSelectedProducts(
+                                selectedProducts.map((p) =>
+                                  p.product_id === product.id
+                                    ? {
+                                        ...p,
+                                        quantity: Number(e.target.value),
+                                      }
+                                    : p
+                                )
+                              )
+                            }
+                            className="w-20 rounded border px-2 py-1"
+                          />
+                        )}
+                      </div>
+
+                      {selected && (
+                        <div className="mt-3">
+                          <label className="mb-1 block text-sm font-medium text-gray-700">
+                            Notes
+                          </label>
+
+                          <textarea
+                            rows={2}
+                            placeholder="Optional notes for this product..."
+                            value={selected.notes}
+                            onChange={(e) =>
+                              setSelectedProducts(
+                                selectedProducts.map((p) =>
+                                  p.product_id === product.id
+                                    ? {
+                                        ...p,
+                                        notes: e.target.value,
+                                      }
+                                    : p
+                                )
+                              )
+                            }
+                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+            </div>
+          </div>
+          </div>
+
+          {/* Buttons */}
+          <div className="flex justify-end gap-3 pt-5">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-gray-300 px-4 py-2 transition hover:bg-gray-100"
+            >
+              Cancel
+            </button>
+
+            <button
+              type="submit"
+              className="rounded-lg bg-[#1F3A2C] px-4 py-2 text-white transition hover:bg-[#2D5A42]"
+            >
+              Submit Request
+            </button>
+          </div>
+
+        </form>
+      </div>
+    </div>
+  )
+}

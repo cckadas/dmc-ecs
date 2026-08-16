@@ -6,20 +6,20 @@ import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPen, faTrash } from '@fortawesome/free-solid-svg-icons'
 
+
 export default function ProductCatalogPage() {
   const { profile } = useAuth()
 
   const [products, setProducts] = useState([])
-
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState('')
   const [brand, setBrand] = useState('')
   const [availability, setAvailability] = useState('')
 
-  useEffect(() => {
-    loadProducts()
-  }, [])
 
+  // =============================================
+  // LOAD PRODUCTS
+  // =============================================
   async function loadProducts() {
     let query = supabase
       .from('products')
@@ -52,17 +52,25 @@ export default function ProductCatalogPage() {
     const { data, error } = await query
 
     if (error) {
-      console.error(error)
+      alert(error.message)
       return
     }
 
     setProducts(data)
   }
 
+
+  // =============================================
+  // INITIAL LOAD
+  // =============================================
   useEffect(() => {
     loadProducts()
   }, [search, category, brand, availability])
 
+
+  // =============================================
+  // MAIN CONTENT
+  // =============================================
   return (
     <div>
 

@@ -4,30 +4,20 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faEye, faFileLines, faPlus, faTrash } from '@fortawesome/free-solid-svg-icons'
+import { faFileLines } from '@fortawesome/free-solid-svg-icons'
 
 
 export default function QuotationQueuePage() {
-
   const { profile } = useAuth()
 
-  const [products, setProducts] = useState([])
   const [showModal, setShowModal] = useState(false)
   const [requests, setRequests] = useState([])
   const [currentRequest, setCurrentRequest] = useState([])
 
-  const [form, setForm] = useState({
 
-  })
-
-
-  useEffect(() => {
-    if (profile?.id) {
-      loadQueues()
-    }
-  }, [profile])
-
-
+  // =============================================
+  // LOAD QUEUES
+  // =============================================
   async function loadQueues() {
     const { data, error } = await supabase
       .from('quotation_requests')
@@ -61,19 +51,17 @@ export default function QuotationQueuePage() {
 
 
     if (error) {
-      console.error(error)
+      alert(error.message)
       return
     }
 
     setRequests(data || [])
   }
 
-  function openModal(request) {
-    setCurrentRequest(request)
-    setShowModal(true)
-  }
 
-  
+  // =============================================
+  // CREATE QUOTATION
+  // =============================================
   async function generateQuotation(data) {
     const quotationNumber = `QT-${Math.random()
       .toString(36)
@@ -144,6 +132,29 @@ export default function QuotationQueuePage() {
     loadQueues()
   }
 
+
+  // =============================================
+  // OPEN INFORMATION MODAL
+  // =============================================
+  function openInfoModal(request) {
+    setCurrentRequest(request)
+    setShowModal(true)
+  }
+
+
+  // =============================================
+  // INITIAL LOAD
+  // =============================================
+  useEffect(() => {
+    if (profile?.id) {
+      loadQueues()
+    }
+  }, [profile])
+
+
+  // =============================================
+  // MAIN CONTENT
+  // =============================================
   return (
     <div>
 
@@ -241,7 +252,7 @@ export default function QuotationQueuePage() {
 
                   <td className="px-5 py-3">
                     <button
-                      onClick={() => openModal(request)}
+                      onClick={() => openInfoModal(request)}
                       className="rounded-md border border-blue-200 bg-blue-50 p-1.5 text-blue-600 hover:bg-blue-100"
                       title="View Quotation Request"
                     >
@@ -282,6 +293,10 @@ export default function QuotationQueuePage() {
 }
 
 
+
+// =============================================
+// QUOTATION MODAL
+// =============================================
 function QuotationModal({ request, onClose, onSubmit }) {
   const [shippingCost, setShippingCost] = useState(0)
   const [expiryDate, setExpiryDate] = useState('')

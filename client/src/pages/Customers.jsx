@@ -3,22 +3,13 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { createCustomer } from '../services/userService'
-
-import {
-  faFile,
-  faPen,
-  faTrash,
-} from '@fortawesome/free-solid-svg-icons'
+import { faFile, faPen, faTrash } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState([])
   const [showModal, setShowModal] = useState(false)
-
-  useEffect(() => {
-    loadCustomers()
-  }, [])
 
   async function loadCustomers() {
     const { data, error } = await supabase
@@ -43,6 +34,10 @@ export default function CustomersPage() {
     setCustomers(data)
   }
 
+
+  // =============================================
+  // ADD CUSTOMER - via createCustomer api
+  // =============================================
   async function handleAddCustomer(customer) {
     try {
       await createCustomer(customer)
@@ -55,6 +50,18 @@ export default function CustomersPage() {
     }
   }
 
+
+  // =============================================
+  // INITIAL LOAD
+  // =============================================
+  useEffect(() => {
+    loadCustomers()
+  }, [])
+
+  
+  // =============================================
+  // MAIN CONTENT
+  // =============================================
   return (
     <div>
       {/* Header */}
@@ -187,6 +194,8 @@ export default function CustomersPage() {
     </div>
   )
 }
+
+
 function AddCustomerModal({ onClose, onSubmit }) {
   const [form, setForm] = useState({
     name: '',

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabase'
 
+
 export default function SetPasswordPage() {
   const navigate = useNavigate()
 
@@ -12,6 +13,10 @@ export default function SetPasswordPage() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
+
+  // =============================================
+  // SET PASSWORD
+  // =============================================
   async function handleSubmit(e) {
     e.preventDefault()
 
@@ -48,6 +53,10 @@ export default function SetPasswordPage() {
     }, 1500)
   }
 
+
+  // =============================================
+  // MAIN CONTENT
+  // =============================================
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-100 px-4">
       <div className="w-full max-w-md overflow-hidden rounded-xl bg-white shadow-lg">

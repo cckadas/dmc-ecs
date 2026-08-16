@@ -1,7 +1,7 @@
 import { useAuth } from "../context/AuthContext"
 
-export default function DashboardPage() {
 
+export default function DashboardPage() {
   const { profile } = useAuth()
   const role = profile?.role
 
@@ -32,6 +32,7 @@ export default function DashboardPage() {
     title: "Dashboard",
     description: "Welcome to DMC Export Consolidation System.",
   }
+  
 
   return (
     <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center">

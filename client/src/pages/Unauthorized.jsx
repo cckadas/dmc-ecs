@@ -6,14 +6,17 @@ import bg1 from '../assets/bg_1.jpg'
 import bg2 from '../assets/bg_2.jpg'
 import bg3 from '../assets/bg_3.jpg'
 
+
 export default function UnauthorizedPage() {
   const navigate = useNavigate()
 
   const backgrounds = [bg1, bg2, bg3]
-  const [currentBg, setCurrentBg] = useState(0)
+  const [currentBg] = useState(0)
 
 
-
+  // =============================================
+  // MAIN CONTENT
+  // =============================================
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden">
 

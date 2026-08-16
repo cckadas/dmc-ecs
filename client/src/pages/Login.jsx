@@ -1,10 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-
 import { signIn } from '../services/authService'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
-
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faEye, faEyeSlash } from '@fortawesome/free-solid-svg-icons'
 
@@ -12,6 +10,7 @@ import logo from '../assets/logo.png'
 import bg1 from '../assets/bg_1.jpg'
 import bg2 from '../assets/bg_2.jpg'
 import bg3 from '../assets/bg_3.jpg'
+
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -26,15 +25,9 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
 
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentBg((prev) => (prev + 1) % backgrounds.length)
-    }, 5000) 
-
-    return () => clearInterval(interval)
-  }, [])
-
-
+  // =============================================
+  // LOGIN
+  // =============================================
   async function handleLogin() {
     if (!email || !password) {
       alert('Please enter your email and password.')
@@ -66,12 +59,16 @@ export default function LoginPage() {
       return
     }
 
-    // Save profile globally
     setProfile(profile)
+    handleNavigation(profile)
+  }
 
+
+  // =============================================
+  // NAVIGATION REDIRECTION
+  // =============================================
+  async function handleNavigation(profile) {
     const userRole = profile.role
-
-    console.log("User role:", userRole)
 
     if(userRole === "admin"){
       navigate("/admin/dashboard")
@@ -90,6 +87,22 @@ export default function LoginPage() {
     }
   }
 
+
+  // =============================================
+  // INITIAL LOAD
+  // =============================================
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentBg((prev) => (prev + 1) % backgrounds.length)
+    }, 5000) 
+
+    return () => clearInterval(interval)
+  }, [])
+
+
+  // =============================================
+  // MAIN CONTENT
+  // =============================================
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden">
 

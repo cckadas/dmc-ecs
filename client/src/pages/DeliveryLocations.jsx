@@ -7,6 +7,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPen, faTrash, faPlus } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 
+
 export default function DeliveryLocationsPage() {
   const { profile } = useAuth()
   const { toast } = useToast()
@@ -16,13 +17,9 @@ export default function DeliveryLocationsPage() {
   const [editingLocation, setEditingLocation] = useState(null)
 
 
-  useEffect(() => {
-    if (profile?.id) {
-      loadLocations()
-    }
-  }, [profile])
-
-
+  // =============================================
+  // LOAD LOCATIONS
+  // =============================================
   async function loadLocations() {
     const { data, error } = await supabase
       .from('delivery_locations')
@@ -39,7 +36,7 @@ export default function DeliveryLocationsPage() {
 
 
     if (error) {
-      console.error(error)
+      alert(error.message)
       return
     }
 
@@ -47,18 +44,9 @@ export default function DeliveryLocationsPage() {
   }
 
 
-  function openAddModal() {
-    setEditingLocation(null)
-    setShowModal(true)
-  }
-
-
-  function openEditModal(location) {
-    setEditingLocation(location)
-    setShowModal(true)
-  }
-
-
+  // =============================================
+  // SAVE LOCATION
+  // =============================================
   async function saveLocation(formData) {
     if (!formData.location_name || !formData.address) {
       alert('Location name and address are required')
@@ -88,7 +76,7 @@ export default function DeliveryLocationsPage() {
     }
 
     if (error) {
-      console.error(error)
+      alert(error.message)
       return
     }
 
@@ -98,6 +86,9 @@ export default function DeliveryLocationsPage() {
   }
 
 
+  // =============================================
+  // DELETE LOCATION
+  // =============================================
   async function deleteLocation(id) {
     const confirmDelete = confirm(
       'Are you sure you want to delete this location?'
@@ -111,7 +102,7 @@ export default function DeliveryLocationsPage() {
       .eq('id', id)
 
     if (error) {
-      console.error(error)
+      alert(error.message)
       return
     }
 
@@ -119,6 +110,37 @@ export default function DeliveryLocationsPage() {
   }
 
 
+  // =============================================
+  // OPEN ADD MODAL
+  // =============================================
+  function openAddModal() {
+    setEditingLocation(null)
+    setShowModal(true)
+  }
+
+
+  // =============================================
+  // OPEN EDIT MODAL
+  // =============================================
+  function openEditModal(location) {
+    setEditingLocation(location)
+    setShowModal(true)
+  }
+  
+
+  // =============================================
+  // INITIAL LOAD
+  // =============================================
+  useEffect(() => {
+    if (profile?.id) {
+      loadLocations()
+    }
+  }, [profile])
+
+
+  // =============================================
+  // MAIN CONTENT
+  // =============================================
   return (
     <div>
 
@@ -233,6 +255,9 @@ export default function DeliveryLocationsPage() {
 }
 
 
+// =============================================
+// DELIVERY LOCATION MODAL
+// =============================================
 function DeliveryLocationModal({ onClose, onSubmit, location }) {
 
   const [form, setForm] = useState({
