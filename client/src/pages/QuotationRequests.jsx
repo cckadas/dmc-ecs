@@ -46,7 +46,8 @@ export default function QuotationRequestsPage() {
           notes,
           products (
             product_name,
-            brand
+            brand,
+            unit
           )
         )
       `)
@@ -87,7 +88,7 @@ export default function QuotationRequestsPage() {
   async function loadProducts() {
     const { data, error } = await supabase
       .from('products')
-      .select('id, product_name, brand')
+      .select('id, product_name, brand, unit')
       .order('product_name')
 
     if (error) {
@@ -222,7 +223,8 @@ export default function QuotationRequestsPage() {
           subtotal,
           products (
             product_name,
-            brand
+            brand,
+            unit
           )
         )
       `)
@@ -332,33 +334,33 @@ export default function QuotationRequestsPage() {
 
     try {
 
-      /* CREATE CUSTOMER ORDERS */
+      // -------------------------------------------------
+      // CREATE CUSTOMER ORDER NUMBER
+      // -------------------------------------------------
       const now = new Date()
       const year = now.getFullYear()
 
-      const {data: latestORD, error: latestORDError} = await supabase
+      const { data: existingORD, error: existingORDError } = await supabase
         .from('customer_orders')
         .select('order_number')
-        .like(
-          'order_number',
-          `ORD-${year}-%`
-        )
-        .order('created_at', {
-          ascending: false
-        })
-        .limit(1)
+        .like('order_number', `ORD-${year}-%`)
 
-      if (latestORDError) {
-        throw latestORDError
+      if (existingORDError) {
+        throw existingORDError
       }
 
       let nextNumber = 1
 
-      if (latestORD && latestORD.length > 0 && latestORD[0].order_number) {
-        const match = latestORD[0].order_number.match(/^ORD-\d{5}-(\d+)$/)
+      if (existingORD && existingORD.length > 0) {
+        const numbers = existingORD
+          .map((order) => {
+            const match = order.order_number?.match(/^ORD-\d{4}-(\d+)$/)
+            return match ? Number(match[1]) : 0
+          })
+          .filter((number) => number > 0)
 
-        if (match) {
-          nextNumber = Number(match[1]) + 1
+        if (numbers.length > 0) {
+          nextNumber = Math.max(...numbers) + 1
         }
       }
 
@@ -579,7 +581,7 @@ export default function QuotationRequestsPage() {
                             <div className="font-medium">
                               {item.products?.product_name}
                               <span className="ml-2 text-sm font-normal text-gray-500">
-                                × {item.quantity}
+                                × {item.quantity} {item.products?.unit}
                               </span>
                             </div>
 
@@ -788,7 +790,7 @@ function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
                     </td>
 
                     <td className="px-4 py-3 text-center">
-                      {item.quantity}
+                      {item.quantity} {item.products?.unit}
                     </td>
 
                     <td className="px-4 py-3 text-right">
@@ -1091,15 +1093,20 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
                           }}
                         />
 
-                        <div className="flex-1">
-                          <p className="font-medium">
-                            {product.product_name}
-                          </p>
+                      <div className="flex-1">
+                        <p className="font-medium">
+                          {product.product_name}
+                        </p>
 
-                          <p className="text-sm text-gray-500">
-                            {product.brand}
-                          </p>
-                        </div>
+                        <p className="text-sm text-gray-500">
+                          {product.brand}
+                          {product.unit && (
+                            <span className="ml-2 font-medium text-green-600">
+                              · Unit sold as per {product.unit}
+                            </span>
+                          )}
+                        </p>
+                      </div>
 
                         {selected && (
                           <input

@@ -30,6 +30,7 @@ export default function ProductCatalogPage() {
         id,
         product_name,
         sku,
+        unit,
         brand,
         category,
         availability
@@ -158,6 +159,10 @@ export default function ProductCatalogPage() {
               </th>
 
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
+                Unit
+              </th>
+
+              <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
                 Availability
               </th>
 
@@ -195,6 +200,10 @@ export default function ProductCatalogPage() {
                   </td>
 
                   <td className="px-5 py-3">
+                    {product.unit}
+                  </td>
+
+                  <td className="px-5 py-3">
                     <span
                       className={`rounded-full px-3 py-1 text-xs font-medium ${
                         product.availability === 'Available'
@@ -220,7 +229,7 @@ export default function ProductCatalogPage() {
             ) : (
               <tr>
                 <td
-                  colSpan={profile?.role === 'admin' ? 6 : 5}
+                  colSpan={profile?.role === 'admin' ? 7 : 6}
                   className="py-10 text-center text-sm text-gray-500"
                 >
                   No products found.

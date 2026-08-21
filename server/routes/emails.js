@@ -28,8 +28,6 @@ router.post('/', async (req, res) => {
       .select(`
         id,
         po_number,
-        status,
-        issued_date,
         expected_delivery_date,
         created_at
       `)
@@ -279,7 +277,6 @@ router.post('/', async (req, res) => {
 
 
                   <tr>
-
                     <td style="padding:8px;">
                       <strong>
                         Issued Date
@@ -288,16 +285,13 @@ router.post('/', async (req, res) => {
 
                     <td style="padding:8px;">
                       ${formatDate(
-                        purchaseOrder.issued_date ||
                         purchaseOrder.created_at
                       )}
                     </td>
-
                   </tr>
 
 
                   <tr>
-
                     <td style="padding:8px;">
                       <strong>
                         Expected Delivery
@@ -309,24 +303,7 @@ router.post('/', async (req, res) => {
                         purchaseOrder.expected_delivery_date
                       )}
                     </td>
-
                   </tr>
-
-
-                  <tr>
-
-                    <td style="padding:8px;">
-                      <strong>
-                        Status
-                      </strong>
-                    </td>
-
-                    <td style="padding:8px;">
-                      ${purchaseOrder.status}
-                    </td>
-
-                  </tr>
-
                 </table>
 
 

@@ -49,7 +49,8 @@ export default function QuotationQueuePage() {
           products (
             id,
             product_name,
-            brand
+            brand,
+            unit
           )
         )
       `)
@@ -247,7 +248,8 @@ export default function QuotationQueuePage() {
             subtotal,
             products (
               product_name,
-              brand
+              brand,
+              unit
             )
           )
         `)
@@ -369,7 +371,7 @@ export default function QuotationQueuePage() {
                     )}
 
                     {request.status === 'pending' && (
-                      <IconButton icon={faPenToSquare} title="View Quotation" color="yellow" disabled={false} onClick={() => openInfoModal(request)}/>
+                      <IconButton icon={faPenToSquare} title="View Quotation" color="amber" disabled={false} onClick={() => openInfoModal(request)}/>
                     )}
 
                     {request.status === 'rejected' && (
@@ -506,10 +508,14 @@ function QuotationViewModal({ quotation, onClose }) {
                   </th>
 
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
-                    Unit Price
+                    Unit
                   </th>
 
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
+                    Unit Price
+                  </th>
+
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-500">
                     Subtotal
                   </th>
                 </tr>
@@ -534,13 +540,19 @@ function QuotationViewModal({ quotation, onClose }) {
 
 
                     {/* QUANTITY */}
-                    <td className="px-4 py-4 text-right">
+                    <td className="px-4 py-4 text-left">
                       {item.quantity}
                     </td>
 
 
+                    {/* UNIT */}
+                    <td className="px-4 py-4 text-left">
+                      {item.products.unit}
+                    </td>
+
+
                     {/* UNIT PRICE */}
-                    <td className="px-4 py-4 text-right">
+                    <td className="px-4 py-4 text-left">
                       ₱ {Number(item.unit_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
 
@@ -660,6 +672,7 @@ function QuotationModal({ request, onClose, onSubmit }) {
       brand: item.products.brand,
       quantity: item.quantity,
       notes: item.notes,
+      unit: item.products.unit,
       unit_price: 0,
     }))
   )
@@ -768,11 +781,15 @@ function QuotationModal({ request, onClose, onSubmit }) {
                       </th>
 
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
+                        Notes
+                      </th>
+
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
                         Quantity
                       </th>
 
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
-                        Notes
+                        Unit
                       </th>
 
                       <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
@@ -807,6 +824,14 @@ function QuotationModal({ request, onClose, onSubmit }) {
                               </td>
 
 
+                              {/* NOTES */}
+                              <td className=" px-4 py-4">
+                                <p className="font-medium text-gray-800">
+                                  {item.notes || '-'}
+                                </p>
+                              </td>
+
+
                               {/* QUANTITY */}
                               <td className=" px-4 py-4">
                                 <p className="font-medium text-gray-800">
@@ -815,10 +840,10 @@ function QuotationModal({ request, onClose, onSubmit }) {
                               </td>
 
 
-                              {/* NOTES */}
+                              {/* UNIT */}
                               <td className=" px-4 py-4">
                                 <p className="font-medium text-gray-800">
-                                  {item.notes || '-'}
+                                  {item.unit || '-'}
                                 </p>
                               </td>
 

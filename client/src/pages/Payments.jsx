@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faEye, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faCreditCard, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 
 import IconButton from '../components/IconButton'
@@ -56,7 +56,8 @@ export default function PaymentsPage() {
 
           products (
             product_name,
-            brand
+            brand,
+            unit
           )
         )
       `)
@@ -224,7 +225,7 @@ export default function PaymentsPage() {
                     {/* ACTION */}
                     <td className="px-5 py-3">
                       {isPending ? (
-                        <IconButton icon={faEye} title="View Payment" color="blue" disabled={false} onClick={() => openPaymentModal(payment)}/>
+                        <IconButton icon={faCreditCard} title="View Payment" color="green" disabled={false} onClick={() => openPaymentModal(payment)}/>
                       ) : isSubmitted ? (
                         <span className="text-sm font-medium text-yellow-600">
                           Awaiting payment verification
@@ -465,6 +466,10 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
                   </th>
 
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
+                    Unit
+                  </th>
+
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
                     Unit Price
                   </th>
 
@@ -483,12 +488,12 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
                         {/* PRODUCT */}
                         <td className="px-4 py-4">
                           <p className="font-medium text-gray-800">
-                            {item.product_name}
+                            {item.products?.product_name}
                           </p>
 
                           {item.brand && (
                             <p className="text-xs text-gray-500">
-                              {item.brand}
+                              {item.products?.brand}
                             </p>
                           )}
                         </td>
@@ -497,6 +502,12 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
                         {/* QUANTITY */}
                         <td className="px-4 py-4 text-left">
                           {item.quantity}
+                        </td>
+
+
+                        {/* UNIT */}
+                        <td className="px-4 py-4 text-left">
+                          {item.products?.unit}
                         </td>
 
 

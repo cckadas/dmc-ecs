@@ -55,7 +55,8 @@ export default function CustomerOrdersPage() {
 
           products (
             product_name,
-            brand
+            brand,
+            unit
           )
         )
       `)
@@ -525,6 +526,10 @@ function CustomerOrderModal({ order, onClose }) {
                   </th>
 
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
+                    Unit
+                  </th>
+
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
                     Unit Price
                   </th>
 
@@ -545,19 +550,24 @@ function CustomerOrderModal({ order, onClose }) {
 
 
                     {/* QUANTITY */}
-                    <td className="px-4 py-4 text-right">
+                    <td className="px-4 py-4 text-left">
                       {item.quantity}
+                    </td>
+
+                    {/* UNIT */}
+                    <td className="px-4 py-4 text-left">
+                      {item.products?.unit}
                     </td>
 
 
                     {/* UNIT PRICE */}
-                    <td className="px-4 py-4 text-right">
+                    <td className="px-4 py-4 text-left">
                         ₱ {Number(item.unit_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
 
 
                     {/* SUBTOTAL */}
-                    <td className="px-4 py-4 text-right">
+                    <td className="px-4 py-4 text-left">
                       ₱ {Number(item.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
                   </tr>

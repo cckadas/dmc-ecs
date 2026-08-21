@@ -46,6 +46,7 @@ export default function PurchaseOrdersPage() {
         customer_order_id,
         po_number,
         status,
+        expected_delivery_date,
         created_at,
         updated_at,
 
@@ -348,7 +349,12 @@ export default function PurchaseOrdersPage() {
   // =====================================================
   // CREATE PURCHASE ORDER
   // =====================================================
-  async function createPurchaseOrder({customerOrderId, items}) {
+  async function createPurchaseOrder({expectedDeliveryDate, customerOrderId, items}) {
+
+    if (!expectedDeliveryDate) {
+      toast.error('Please set expected delivery date.')
+      return
+    }
 
     if (!customerOrderId) {
       toast.error('Please select a customer order.')
@@ -384,32 +390,33 @@ export default function PurchaseOrdersPage() {
 
 
     try {
+      // -------------------------------------------------
+      // CREATE PURCHASE ORDER NUMBER
+      // -------------------------------------------------
       const now = new Date()
       const year = now.getFullYear()
 
-      const {data: latestPO, error: latestPOError} = await supabase
+      const { data: existingPO, error: existingPOError } = await supabase
         .from('purchase_orders')
         .select('po_number')
-        .like(
-          'po_number',
-          `PO-${year}-%`
-        )
-        .order('created_at', {
-          ascending: false
-        })
-        .limit(1)
+        .like('po_number', `PO-${year}-%`)
 
-      if (latestPOError) {
-        throw latestPOError
+      if (existingPOError) {
+        throw existingPOError
       }
 
       let nextNumber = 1
 
-      if (latestPO && latestPO.length > 0 && latestPO[0].po_number) {
-        const match = latestPO[0].po_number.match(/^PO-\d{5}-(\d+)$/)
+      if (existingPO && existingPO.length > 0) {
+        const numbers = existingPO
+          .map((po) => {
+            const match = po.po_number?.match(/^PO-\d{4}-(\d+)$/)
+            return match ? Number(match[1]) : 0
+          })
+          .filter((number) => number > 0)
 
-        if (match) {
-          nextNumber = Number(match[1]) + 1
+        if (numbers.length > 0) {
+          nextNumber = Math.max(...numbers) + 1
         }
       }
 
@@ -422,6 +429,7 @@ export default function PurchaseOrdersPage() {
       const {data: purchaseOrder, error: purchaseOrderError} = await supabase
         .from('purchase_orders')
         .insert({
+          expected_delivery_date: expectedDeliveryDate,
           customer_order_id: customerOrderId,
           po_number: poNumber,
           status: 'pending'
@@ -780,6 +788,7 @@ export default function PurchaseOrdersPage() {
 // ADD PURCHASE ORDER MODAL
 // =====================================================
 function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingCustomerOrders, loadingSuppliers, creating, onClose, onCreate }) {
+  const [expectedDeliveryDate, setExpectedDeliveryDate] = useState('')
   const [customerOrderId, setCustomerOrderId] = useState('')
   const [items, setItems] = useState([])
 
@@ -877,10 +886,10 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
   function handleSubmit() {
     onCreate({
       customerOrderId,
+      expectedDeliveryDate,
       items
     })
   }
-
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -970,6 +979,29 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
               </div>
             </div>
           )}
+
+
+          {/* =================================================
+              EXPECTED DELIVERY DATE
+          ================================================= */}
+          <div className="mb-6">
+            <label className="mb-2 block text-sm font-medium text-gray-700">
+              Expected Delivery Date
+            </label>
+
+            <input
+              type="date"
+              value={expectedDeliveryDate}
+              onChange={(e) => setExpectedDeliveryDate(e.target.value)}
+              min={new Date().toISOString().split('T')[0]}
+              disabled={creating}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
+            />
+
+            <p className="mt-1 text-xs text-gray-500">
+              Select the date when the supplier is expected to deliver the order.
+            </p>
+          </div>
 
 
           {/* =================================================
@@ -1141,6 +1173,7 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
               ================================================= */}
               <div className="mt-6 flex justify-end">
                 <div className="w-full max-w-sm rounded-lg bg-gray-50 p-5">
+                  
                   <div className="flex items-center justify-between">
                     <span className="font-semibold text-gray-700">
                       Purchase Order Total
@@ -1174,7 +1207,7 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={creating || !customerOrderId || items.length === 0}
+            disabled={creating || !expectedDeliveryDate || !customerOrderId || items.length === 0}
             className="flex items-center gap-2 rounded-md bg-[#1F3A2C] px-5 py-2 text-sm font-medium text-white hover:bg-[#294D3A] disabled:cursor-not-allowed disabled:opacity-50"
           >
 
