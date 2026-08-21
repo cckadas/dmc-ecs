@@ -23,11 +23,7 @@ router.post('/', async (req, res) => {
     // =================================================
     // GET PURCHASE ORDER
     // =================================================
-
-    const {
-      data: purchaseOrder,
-      error: purchaseOrderError,
-    } = await supabaseAdmin
+    const { data: purchaseOrder, error: purchaseOrderError } = await supabaseAdmin
       .from('purchase_orders')
       .select(`
         id,
@@ -52,11 +48,7 @@ router.post('/', async (req, res) => {
     // =================================================
     // GET PURCHASE ORDER ITEMS
     // =================================================
-
-    const {
-      data: items,
-      error: itemsError,
-    } = await supabaseAdmin
+    const { data: items, error: itemsError } = await supabaseAdmin
       .from('purchase_order_items')
       .select(`
         id,
@@ -95,11 +87,9 @@ router.post('/', async (req, res) => {
     // =================================================
     // GROUP ITEMS BY SUPPLIER
     // =================================================
-
     const supplierItems = {}
 
     for (const item of items) {
-
       if (!item.supplier_id) {
         continue
       }
@@ -115,7 +105,6 @@ router.post('/', async (req, res) => {
     // =================================================
     // CREATE EMAIL TRANSPORTER
     // =================================================
-
     const transporter = nodemailer.createTransport({
       service: 'gmail',
 
@@ -129,9 +118,7 @@ router.post('/', async (req, res) => {
     // =================================================
     // FORMAT DATE
     // =================================================
-
     const formatDate = (date) => {
-
       if (!date) {
         return 'N/A'
       }
@@ -150,23 +137,17 @@ router.post('/', async (req, res) => {
     // =================================================
     // SEND EMAIL TO EACH SUPPLIER
     // =================================================
-
     const results = []
 
-    for (const [supplierId, supplierProducts] of Object.entries(
-      supplierItems
-    )) {
+    for (const [supplierId, supplierProducts] of Object.entries(supplierItems)) {
 
-      const supplier =
-        supplierProducts[0]?.suppliers
+      const supplier = supplierProducts[0]?.suppliers
 
 
       // -------------------------------------------------
       // VALIDATE SUPPLIER
       // -------------------------------------------------
-
       if (!supplier) {
-
         results.push({
           supplier_id: supplierId,
           success: false,
@@ -178,7 +159,6 @@ router.post('/', async (req, res) => {
 
 
       if (!supplier.email) {
-
         results.push({
           supplier_id: supplierId,
           supplier_name: supplier.supplier_name,
@@ -193,266 +173,256 @@ router.post('/', async (req, res) => {
       // -------------------------------------------------
       // CREATE PRODUCT ROWS
       // -------------------------------------------------
+      const rows = supplierProducts.map((item) =>
+          `
+            <tr>
 
-      const rows = supplierProducts
-        .map(
-          (item) => `
-<tr>
+              <td style="
+                border:1px solid #ddd;
+                padding:10px;
+              ">
+                ${item.products?.product_name ?? 'Unknown Product'}
+              </td>
 
-  <td style="
-    border:1px solid #ddd;
-    padding:10px;
-  ">
-    ${item.products?.product_name ?? 'Unknown Product'}
-  </td>
+              <td style="
+                border:1px solid #ddd;
+                padding:10px;
+                text-align:center;
+              ">
+                ${item.ordered_quantity}
+              </td>
 
-  <td style="
-    border:1px solid #ddd;
-    padding:10px;
-    text-align:center;
-  ">
-    ${item.ordered_quantity}
-  </td>
+              <td style="
+                border:1px solid #ddd;
+                padding:10px;
+                text-align:center;
+              ">
+                ${item.products?.unit ?? '-'}
+              </td>
 
-  <td style="
-    border:1px solid #ddd;
-    padding:10px;
-    text-align:center;
-  ">
-    ${item.products?.unit ?? '-'}
-  </td>
-
-</tr>
-`
-        )
-        .join('')
+            </tr>
+          `
+        ).join('')
 
 
       // -------------------------------------------------
       // SEND EMAIL
       // -------------------------------------------------
-
       try {
 
         await transporter.sendMail({
-
-          from:
-            `"DMC Enterprise" <${process.env.GMAIL_USER}>`,
-
+          from: `"DMC Enterprise" <${process.env.GMAIL_USER}>`,
           to: supplier.email,
+          subject: `Purchase Order ${purchaseOrder.po_number}`,
+          html:
+          `
+            <div style="
+              font-family:Arial,Helvetica,sans-serif;
+              background:#f5f5f5;
+              padding:30px;
+            ">
 
-          subject:
-            `Purchase Order ${purchaseOrder.po_number}`,
+              <div style="
+                max-width:750px;
+                margin:auto;
+                background:white;
+                border-radius:8px;
+                padding:35px;
+              ">
 
-          html: `
-<div style="
-  font-family:Arial,Helvetica,sans-serif;
-  background:#f5f5f5;
-  padding:30px;
-">
-
-  <div style="
-    max-width:750px;
-    margin:auto;
-    background:white;
-    border-radius:8px;
-    padding:35px;
-  ">
-
-    <h2 style="
-      margin-top:0;
-      color:#222;
-    ">
-      Purchase Order
-    </h2>
+                <h2 style="
+                  margin-top:0;
+                  color:#222;
+                ">
+                  Purchase Order
+                </h2>
 
 
-    <p>
-      Dear
-      <strong>
-        ${supplier.supplier_name}
-      </strong>,
-    </p>
+                <p>
+                  Dear
+                  <strong>
+                    ${supplier.supplier_name}
+                  </strong>,
+                </p>
 
 
-    <p>
-      DMC Enterprise has created a new Purchase Order
-      for your company.
-      Please prepare the items listed below.
-    </p>
+                <p>
+                  DMC Enterprise has created a new Purchase Order
+                  for your company.
+                  Please prepare the items listed below.
+                </p>
 
 
-    <!-- =========================================== -->
-    <!-- PURCHASE ORDER INFORMATION -->
-    <!-- =========================================== -->
+                <!-- =========================================== -->
+                <!-- PURCHASE ORDER INFORMATION -->
+                <!-- =========================================== -->
 
-    <table style="
-      width:100%;
-      margin:25px 0;
-      border-collapse:collapse;
-    ">
+                <table style="
+                  width:100%;
+                  margin:25px 0;
+                  border-collapse:collapse;
+                ">
 
-      <tr>
+                  <tr>
 
-        <td style="padding:8px;">
-          <strong>
-            Purchase Order No.
-          </strong>
-        </td>
+                    <td style="padding:8px;">
+                      <strong>
+                        Purchase Order No.
+                      </strong>
+                    </td>
 
-        <td style="padding:8px;">
-          ${purchaseOrder.po_number}
-        </td>
+                    <td style="padding:8px;">
+                      ${purchaseOrder.po_number}
+                    </td>
 
-      </tr>
-
-
-      <tr>
-
-        <td style="padding:8px;">
-          <strong>
-            Issued Date
-          </strong>
-        </td>
-
-        <td style="padding:8px;">
-          ${formatDate(
-            purchaseOrder.issued_date ||
-            purchaseOrder.created_at
-          )}
-        </td>
-
-      </tr>
+                  </tr>
 
 
-      <tr>
+                  <tr>
 
-        <td style="padding:8px;">
-          <strong>
-            Expected Delivery
-          </strong>
-        </td>
+                    <td style="padding:8px;">
+                      <strong>
+                        Issued Date
+                      </strong>
+                    </td>
 
-        <td style="padding:8px;">
-          ${formatDate(
-            purchaseOrder.expected_delivery_date
-          )}
-        </td>
+                    <td style="padding:8px;">
+                      ${formatDate(
+                        purchaseOrder.issued_date ||
+                        purchaseOrder.created_at
+                      )}
+                    </td>
 
-      </tr>
-
-
-      <tr>
-
-        <td style="padding:8px;">
-          <strong>
-            Status
-          </strong>
-        </td>
-
-        <td style="padding:8px;">
-          ${purchaseOrder.status}
-        </td>
-
-      </tr>
-
-    </table>
+                  </tr>
 
 
-    <!-- =========================================== -->
-    <!-- PRODUCTS -->
-    <!-- =========================================== -->
+                  <tr>
 
-    <h3>
-      Products Requested
-    </h3>
+                    <td style="padding:8px;">
+                      <strong>
+                        Expected Delivery
+                      </strong>
+                    </td>
 
+                    <td style="padding:8px;">
+                      ${formatDate(
+                        purchaseOrder.expected_delivery_date
+                      )}
+                    </td>
 
-    <table style="
-      width:100%;
-      border-collapse:collapse;
-    ">
-
-      <thead>
-
-        <tr style="
-          background:#222;
-          color:white;
-        ">
-
-          <th style="
-            padding:10px;
-            border:1px solid #ddd;
-            text-align:left;
-          ">
-            Product
-          </th>
-
-          <th style="
-            padding:10px;
-            border:1px solid #ddd;
-          ">
-            Quantity
-          </th>
-
-          <th style="
-            padding:10px;
-            border:1px solid #ddd;
-          ">
-            Unit
-          </th>
-
-        </tr>
-
-      </thead>
+                  </tr>
 
 
-      <tbody>
+                  <tr>
 
-        ${rows}
+                    <td style="padding:8px;">
+                      <strong>
+                        Status
+                      </strong>
+                    </td>
 
-      </tbody>
+                    <td style="padding:8px;">
+                      ${purchaseOrder.status}
+                    </td>
 
-    </table>
+                  </tr>
 
-
-    <p style="
-      margin-top:30px;
-    ">
-      Please ensure that the products are delivered
-      to the DMC Enterprise warehouse together with
-      the corresponding delivery receipt.
-    </p>
-
-
-    <p>
-      If you anticipate any delays or are unable to
-      fulfill the order completely, please reply to
-      this email so we can coordinate accordingly.
-    </p>
+                </table>
 
 
-    <hr style="
-      margin:35px 0;
-    ">
+                <!-- =========================================== -->
+                <!-- PRODUCTS -->
+                <!-- =========================================== -->
+
+                <h3>
+                  Products Requested
+                </h3>
 
 
-    <p>
-      Thank you for your continued partnership.
-    </p>
+                <table style="
+                  width:100%;
+                  border-collapse:collapse;
+                ">
+
+                  <thead>
+
+                    <tr style="
+                      background:#222;
+                      color:white;
+                    ">
+
+                      <th style="
+                        padding:10px;
+                        border:1px solid #ddd;
+                        text-align:left;
+                      ">
+                        Product
+                      </th>
+
+                      <th style="
+                        padding:10px;
+                        border:1px solid #ddd;
+                      ">
+                        Quantity
+                      </th>
+
+                      <th style="
+                        padding:10px;
+                        border:1px solid #ddd;
+                      ">
+                        Unit
+                      </th>
+
+                    </tr>
+
+                  </thead>
 
 
-    <p>
-      <strong>DMC Enterprise</strong><br>
-      Procurement Department
-    </p>
+                  <tbody>
 
-  </div>
+                    ${rows}
 
-</div>
-`,
+                  </tbody>
+
+                </table>
+
+
+                <p style="
+                  margin-top:30px;
+                ">
+                  Please ensure that the products are delivered
+                  to the DMC Enterprise warehouse together with
+                  the corresponding delivery receipt.
+                </p>
+
+
+                <p>
+                  If you anticipate any delays or are unable to
+                  fulfill the order completely, please reply to
+                  this email so we can coordinate accordingly.
+                </p>
+
+
+                <hr style="
+                  margin:35px 0;
+                ">
+
+
+                <p>
+                  Thank you for your continued partnership.
+                </p>
+
+
+                <p>
+                  <strong>DMC Enterprise</strong><br>
+                  Procurement Department
+                </p>
+
+              </div>
+
+            </div>
+          `,
         })
-
 
         results.push({
           supplier_id: supplierId,
@@ -461,13 +431,10 @@ router.post('/', async (req, res) => {
           success: true,
           item_count: supplierProducts.length,
         })
-
-      } catch (emailError) {
-
-        console.error(
-          `Failed to send PO email to ${supplier.email}:`,
-          emailError
-        )
+      } 
+      
+      catch (emailError) {
+        console.error('Failed to send PO email to ${supplier.email}:', emailError)
 
         results.push({
           supplier_id: supplierId,
@@ -483,31 +450,22 @@ router.post('/', async (req, res) => {
     // =================================================
     // RESPONSE
     // =================================================
-
     const failed = results.filter(
       (result) => !result.success
     )
 
-    return res.status(
-      failed.length > 0 ? 207 : 200
-    ).json({
-
+    return res.status(failed.length > 0 ? 207 : 200).json({
       success: failed.length === 0,
-
-      message:
-        failed.length === 0
+      message: failed.length === 0
           ? 'Purchase Order emails sent successfully.'
           : 'Purchase Order created, but some supplier emails failed.',
 
       results,
     })
-
-  } catch (error) {
-
-    console.error(
-      'Send Purchase Order email error:',
-      error
-    )
+  } 
+  
+  catch (error) {
+    console.error('Send Purchase Order email error:', error)
 
     return res.status(500).json({
       error: 'Internal server error.',
