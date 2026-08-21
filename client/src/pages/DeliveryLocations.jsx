@@ -7,6 +7,8 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPen, faTrash, faPlus } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 
+import IconButton from '../components/IconButton'
+
 
 export default function DeliveryLocationsPage() {
   const { profile } = useAuth()
@@ -36,7 +38,7 @@ export default function DeliveryLocationsPage() {
 
 
     if (error) {
-      alert(error.message)
+      toast.error(error.message)
       return
     }
 
@@ -102,10 +104,11 @@ export default function DeliveryLocationsPage() {
       .eq('id', id)
 
     if (error) {
-      alert(error.message)
+      toast.success(error.message)
       return
     }
 
+    toast.success("Location deleted successfully!")
     loadLocations()
   }
 
@@ -209,24 +212,8 @@ export default function DeliveryLocationsPage() {
 
                   <td className="px-5 py-3">
                     <div className="flex gap-2">
-
-                      <button
-                        onClick={() => openEditModal(location)}
-                        className="rounded-md border border-amber-200 bg-amber-50 p-1.5 text-amber-600 hover:bg-amber-100"
-                        title="Edit Location"
-                      >
-                        <FontAwesomeIcon icon={faPen} className="h-3.5 w-3.5"/>
-                      </button>
-
-
-                      <button
-                        onClick={() => deleteLocation(location.id)}
-                        className="rounded-md border border-red-200 bg-red-50 p-1.5 text-red-600 hover:bg-red-100"
-                        title="Delete Location"
-                      >
-                        <FontAwesomeIcon icon={faTrash} className="h-3.5 w-3.5"/>
-                      </button>
-
+                      <IconButton icon={faPen} title="Edit Location" color="amber" disabled={false} onClick={() => openEditModal(location)}/>
+                      <IconButton icon={faTrash} title="Delete Lcoation" color="red" disabled={false} onClick={() => deleteLocation(location.id)}/>
                     </div>
                   </td>
                 </tr>

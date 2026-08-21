@@ -4,6 +4,7 @@ import express from 'express'
 import cors from 'cors'
 
 import usersRouter from './routes/users.js'
+import purchaseOrderEmailRouter from './routes/emails.js'
 
 const app = express()
 
@@ -22,6 +23,7 @@ app.use(express.json())
 
 // Routes
 app.use('/api/users', usersRouter)
+app.use('/api/send-email',purchaseOrderEmailRouter)
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -3,10 +3,13 @@ import { useParams } from "react-router-dom"
 import DashboardPage from "./Dashboard"
 import CustomerOrdersPage from "./CustomerOrders"
 import CustomersPage from "./Customers"
-import ProductCatalogPage from "./ProductCatalog"
 import DeliveryLocationsPage from "./DeliveryLocations"
-import QuotationRequestsPage from "./QuotationRequests"
+import MyOrdersPage from "./MyOrders"
+import PaymentsPage from "./Payments"
+import ProductCatalogPage from "./ProductCatalog"
 import QuotationQueuePage from "./QuotationQueue"
+import QuotationRequestsPage from "./QuotationRequests"
+import PurchaseOrdersPage from "./PurchaseOrders"
 
 export default function PageRouter(){
 
@@ -22,17 +25,26 @@ export default function PageRouter(){
     case "customers":
       return <CustomersPage />
 
-    case "product-catalog":
-      return <ProductCatalogPage />
-
     case "delivery-locations":
       return <DeliveryLocationsPage />
 
-    case "quotation-requests":
-      return <QuotationRequestsPage />
+    case "my-orders":
+      return <MyOrdersPage />
+
+    case "payments":
+      return <PaymentsPage />
+
+    case "product-catalog":
+      return <ProductCatalogPage />
+    
+    case "purchase-orders":
+      return <PurchaseOrdersPage />
 
     case "quotation-queue":
       return <QuotationQueuePage />
+
+    case "quotation-requests":
+      return <QuotationRequestsPage />
 
     default:
       return (

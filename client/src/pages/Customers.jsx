@@ -4,13 +4,21 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { createCustomer } from '../services/userService'
 import { faFile, faPen, faTrash } from '@fortawesome/free-solid-svg-icons'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { useToast } from "../context/ToastContext"
+
+import IconButton from '../components/IconButton'
 
 
 export default function CustomersPage() {
+  const { toast } = useToast()
+
   const [customers, setCustomers] = useState([])
   const [showModal, setShowModal] = useState(false)
 
+
+  // =============================================
+  // LOAD CUSTOMERS
+  // =============================================
   async function loadCustomers() {
     const { data, error } = await supabase
       .from('profiles')
@@ -27,7 +35,7 @@ export default function CustomersPage() {
       .order('created_at', { ascending: false })
 
     if (error) {
-      console.error(error)
+      toast.error(error.message)
       return
     }
 
@@ -42,11 +50,11 @@ export default function CustomersPage() {
     try {
       await createCustomer(customer)
       await loadCustomers()
-      alert('Customer invited successfully.')
+      toast.success('Customer invited successfully.')
     }
     
     catch (err) {
-      alert(err.message)
+      toast.error(err.message)
     }
   }
 
@@ -145,28 +153,13 @@ export default function CustomersPage() {
                   <td className="px-5 py-3">
                       <div className="flex items-center justify-start gap-2"> 
                         {/* View */} 
-                        <button 
-                          className="rounded-md border border-blue-200 bg-blue-50 p-1.5 text-blue-600 transition hover:border-blue-300 hover:bg-blue-100" 
-                          title="View Customer"
-                        > 
-                          <FontAwesomeIcon icon={faFile} className="h-3.5 w-3.5" /> 
-                        </button> 
+                        <IconButton icon={faFile} title="View Customer" color="blue" disabled={false} onClick={() => {}}/>
 
                         {/* Edit */} 
-                        <button 
-                          className="rounded-md border border-amber-200 bg-amber-50 p-1.5 text-amber-600 transition hover:border-amber-300 hover:bg-amber-100" 
-                          title="Edit Customer"
-                        > 
-                          <FontAwesomeIcon icon={faPen} className="h-3.5 w-3.5" /> 
-                        </button> 
+                        <IconButton icon={faPen} title="Edit Customer" color="amber" disabled={false} onClick={() => {}}/>
                         
                         {/* Delete */} 
-                        <button 
-                          className="rounded-md border border-red-200 bg-red-50 p-1.5 text-red-600 transition hover:border-red-300 hover:bg-red-100" 
-                          title="Delete Customer"
-                        > 
-                          <FontAwesomeIcon icon={faTrash} className="h-3.5 w-3.5" /> 
-                        </button> 
+                        <IconButton icon={faTrash} title="Delete" color="red" disabled={false} onClick={() => {}}/>
                       </div>
                   </td>
                 </tr>

@@ -11,6 +11,7 @@ export async function createCustomer(customer) {
 
   const text = await response.text()
 
+  // eslint-disable-next-line no-useless-assignment
   let data = {}
 
   try {

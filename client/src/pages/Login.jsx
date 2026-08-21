@@ -5,6 +5,7 @@ import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faEye, faEyeSlash } from '@fortawesome/free-solid-svg-icons'
+import { useToast } from "../context/ToastContext"
 
 import logo from '../assets/logo.png'
 import bg1 from '../assets/bg_1.jpg'
@@ -15,6 +16,7 @@ import bg3 from '../assets/bg_3.jpg'
 export default function LoginPage() {
   const navigate = useNavigate()
   const { setProfile } = useAuth()
+  const { toast } = useToast()
 
   const backgrounds = [bg1, bg2, bg3]
   const [currentBg, setCurrentBg] = useState(0)
@@ -30,7 +32,7 @@ export default function LoginPage() {
   // =============================================
   async function handleLogin() {
     if (!email || !password) {
-      alert('Please enter your email and password.')
+      toast.error('Please enter your email and password.')
       return
     }
 
@@ -40,7 +42,7 @@ export default function LoginPage() {
 
     if (error) {
       setLoading(false)
-      alert(error.message)
+      toast.error(error.message)
       return
     }
 
@@ -55,7 +57,7 @@ export default function LoginPage() {
     setLoading(false)
 
     if (profileError) {
-      alert(profileError.message)
+      toast.error(profileError.message)
       return
     }
 

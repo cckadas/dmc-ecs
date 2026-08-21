@@ -1,10 +1,12 @@
+import { useAuth } from '../../context/AuthContext'
+import { useNavigate, useLocation } from 'react-router-dom'
+import { signOut } from '../../services/authService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faHouse,
   faClipboardList,
   faTruck,
   faBoxesStacked,
-  faChartColumn,
   faGear,
   faRightFromBracket,
   faFilePen,
@@ -17,18 +19,20 @@ import {
   faWarehouse,
   faUserTag,
   faBagShopping,
+  faWallet
 } from '@fortawesome/free-solid-svg-icons'
-
-import { useAuth } from '../../context/AuthContext'
-import { useNavigate, useLocation } from 'react-router-dom'
-import { signOut } from '../../services/authService'
 
 import logo from '../../assets/logo.png'
 
 
+// =============================================
+// SIDEBAR SECTION
+// =============================================
 const sections = [
 
-  /* INTERNALS */
+  // ---------------------------------------------
+  // INTERNALS
+  // ---------------------------------------------
   {
     title: 'MAIN',
     items: [
@@ -45,12 +49,6 @@ const sections = [
     title: 'ORDER MANAGEMENT',
     items: [
       {
-        label: 'Customer Orders',
-        path: 'customer-orders',
-        icon: faCartShopping,
-        roles: ['admin', 'sales'],
-      },
-      {
         label: 'Quotation Queue',
         path: 'quotation-queue',
         icon: faFileLines,
@@ -60,6 +58,12 @@ const sections = [
         label: 'PFI Builder',
         path: 'pfi-builder',
         icon: faFilePen,
+        roles: ['admin', 'sales'],
+      },
+      {
+        label: 'Customer Orders',
+        path: 'customer-orders',
+        icon: faCartShopping,
         roles: ['admin', 'sales'],
       },
     ],
@@ -149,7 +153,9 @@ const sections = [
   },
 
 
-  /* CUSTOMERS */
+  // ---------------------------------------------
+  // CUSTOMERS
+  // ---------------------------------------------
   {
     title: 'ORDERING',
     items: [
@@ -173,7 +179,7 @@ const sections = [
       },
       {
         label: 'My Orders',
-        path: 'orders',
+        path: 'my-orders',
         icon: faCartShopping,
         roles: ['customer'],
       },
@@ -186,7 +192,7 @@ const sections = [
       {
         label: 'Payments',
         path: 'payments',
-        icon: faFilePen,
+        icon: faWallet,
         roles: ['customer'],
       },
       {
@@ -212,6 +218,7 @@ const sections = [
 ]
 
 
+
 export default function Sidebar({ collapsed }) {
   const { profile } = useAuth()
   
@@ -220,6 +227,10 @@ export default function Sidebar({ collapsed }) {
 
   const userRole = profile?.role
 
+
+  // =============================================
+  // HANDLE NAVIGATION
+  // =============================================
   function handleNavigation(path) {
     if (!userRole) return
     navigate(`/${userRole}/${path}`)
@@ -229,7 +240,7 @@ export default function Sidebar({ collapsed }) {
   return (
     <aside className={`fixed left-0 top-0 flex h-screen flex-col bg-[#1F3A2C] text-white shadow-2xl transition-all duration-300 ${ collapsed ? 'w-24' : 'w-72' }`}>
 
-      {/* Logo */}
+      {/* ======= LOGO ======= */}
       <div className="border-b border-white/10 px-6 py-6">
         <div className={`flex items-center ${ collapsed ? 'justify-center' : 'gap-4' }`}>
           <img
@@ -255,7 +266,7 @@ export default function Sidebar({ collapsed }) {
       </div>
 
 
-      {/* Navigation */}
+      {/* ======= NAVIGATION ======= */}
       <div
         className="
           flex-1 overflow-y-auto px-3 py-5
@@ -328,27 +339,19 @@ export default function Sidebar({ collapsed }) {
       </div>
 
 
-      {/* Logout */}
+      {/* ======= LOGOUT ======= */}
       <div className="border-t border-white/10 px-3 py-1">
         <button
           onClick={signOut}
           className={`
             group flex w-full items-center rounded-lg
             px-3 py-2.5 transition
-
-            ${
-              collapsed
-              ? 'justify-center'
-              : 'gap-3'
-            }
-
+            ${ collapsed ? 'justify-center' : 'gap-3'}
             text-red-300 hover:bg-red-500/10 hover:text-red-200
           `}
         >
 
-          <FontAwesomeIcon
-            icon={faRightFromBracket}
-          />
+          <FontAwesomeIcon icon={faRightFromBracket}/>
 
           {!collapsed && (
             <span>

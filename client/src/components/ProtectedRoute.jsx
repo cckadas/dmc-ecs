@@ -14,7 +14,6 @@ export default function ProtectedRoute({children}){
     return <Navigate to="/" />
   }
 
-
   if(profile.role !== role){
     return <Navigate to="/unauthorized" />
   }

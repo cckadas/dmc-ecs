@@ -3,12 +3,15 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPen, faTrash } from '@fortawesome/free-solid-svg-icons'
+import { useToast } from "../context/ToastContext"
+
+import IconButton from '../components/IconButton'
 
 
 export default function ProductCatalogPage() {
   const { profile } = useAuth()
+  const { toast } = useToast()
 
   const [products, setProducts] = useState([])
   const [search, setSearch] = useState('')
@@ -52,7 +55,7 @@ export default function ProductCatalogPage() {
     const { data, error } = await query
 
     if (error) {
-      alert(error.message)
+      toast.error(error.message)
       return
     }
 
@@ -206,21 +209,9 @@ export default function ProductCatalogPage() {
                   {profile?.role === 'admin' && (
                     <td className="px-5 py-3">
                       <div className="flex items-center justify-start gap-2"> 
-                        {/* Edit */} 
-                        <button 
-                          className="rounded-md border border-amber-200 bg-amber-50 p-1.5 text-amber-600 transition hover:border-amber-300 hover:bg-amber-100" 
-                          title="Edit Customer"
-                        > 
-                          <FontAwesomeIcon icon={faPen} className="h-3.5 w-3.5" /> 
-                        </button> 
-                        
-                        {/* Delete */} 
-                        <button 
-                          className="rounded-md border border-red-200 bg-red-50 p-1.5 text-red-600 transition hover:border-red-300 hover:bg-red-100" 
-                          title="Delete Customer"
-                        > 
-                          <FontAwesomeIcon icon={faTrash} className="h-3.5 w-3.5" /> 
-                        </button> 
+                        <IconButton icon={faPen} title="Edit Product" color="amber" disabled={false} onClick={() => {}}/>
+                        <IconButton icon={faTrash} title="Delete Product" color="red" disabled={false} onClick={() => {}}/>
+
                       </div>
                     </td>
                   )}
