@@ -10,6 +10,9 @@ import ProductCatalogPage from "./ProductCatalog"
 import QuotationQueuePage from "./QuotationQueue"
 import QuotationRequestsPage from "./QuotationRequests"
 import PurchaseOrdersPage from "./PurchaseOrders"
+import SuppliersPage from "./Suppliers"
+import SupplierPerformancePage from "./SupplierPerformance"
+
 
 export default function PageRouter(){
 
@@ -45,6 +48,12 @@ export default function PageRouter(){
 
     case "quotation-requests":
       return <QuotationRequestsPage />
+
+    case "suppliers":
+      return <SuppliersPage />
+
+    case "supplier-performance":
+      return <SupplierPerformancePage />
 
     default:
       return (

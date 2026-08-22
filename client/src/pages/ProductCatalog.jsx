@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
-import { faPen, faTrash } from '@fortawesome/free-solid-svg-icons'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faPen, faTrash, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 
 import IconButton from '../components/IconButton'
@@ -18,6 +19,9 @@ export default function ProductCatalogPage() {
   const [category, setCategory] = useState('')
   const [brand, setBrand] = useState('')
   const [availability, setAvailability] = useState('')
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [editingProduct, setEditingProduct] = useState(null)
+  const [manufacturers, setManufacturers] = useState([])
 
 
   // =============================================
@@ -33,7 +37,12 @@ export default function ProductCatalogPage() {
         unit,
         brand,
         category,
-        availability
+        availability,
+        supplier_id,
+        suppliers (
+          supplier_name,
+          supplier_type
+        )
       `)
       .order('product_name')
 
@@ -65,11 +74,102 @@ export default function ProductCatalogPage() {
 
 
   // =============================================
+  // LOAD MANUFACTURERS
+  // =============================================
+  async function loadManufacturers() {
+    const { data, error } = await supabase
+      .from('suppliers')
+      .select('id, supplier_name')
+      .eq('supplier_type', 'Manufacturer')
+      .order('supplier_name')
+
+    if (error) {
+      toast.error(error.message)
+      return
+    }
+
+    setManufacturers(data || [])
+  }
+
+
+  // =============================================
+  // DELETE PRODUCT
+  // =============================================
+  async function handleDeleteProduct(product) {
+    const confirmed = window.confirm(
+      `Are you sure you want to delete "${product.product_name}"?`
+    )
+
+    if (!confirmed) {
+      return
+    }
+
+    const { error } = await supabase
+      .from('products')
+      .delete()
+      .eq('id', product.id)
+
+    if (error) {
+      toast.error(error.message)
+      return
+    }
+
+    await loadProducts()
+
+    toast.success('Product deleted successfully.')
+  }
+
+
+  // =============================================
+  // UPDATE PRODUCT
+  // =============================================
+  async function handleUpdateProduct(updatedProduct) {
+    const { error } = await supabase
+      .from('products')
+      .update({
+        product_name: updatedProduct.product_name,
+        sku: updatedProduct.sku,
+        unit: updatedProduct.unit,
+        brand: updatedProduct.brand,
+        category: updatedProduct.category,
+        availability: updatedProduct.availability,
+        supplier_id: updatedProduct.supplier_id || null,
+      })
+      .eq('id', updatedProduct.id)
+
+    if (error) {
+      toast.error(error.message)
+      return
+    }
+
+    await loadProducts()
+
+    setShowEditModal(false)
+    setEditingProduct(null)
+
+    toast.success('Product updated successfully.')
+  }
+
+
+  // =============================================
+  // OPEN EDIT MODAL
+  // =============================================
+  async function handleEditProduct(product) {
+    setEditingProduct(product)
+    setShowEditModal(true)
+  }
+
+
+  // =============================================
   // INITIAL LOAD
   // =============================================
   useEffect(() => {
     loadProducts()
   }, [search, category, brand, availability])
+
+  useEffect(() => {
+    loadManufacturers()
+  }, [])
 
 
   // =============================================
@@ -151,7 +251,7 @@ export default function ProductCatalogPage() {
               </th>
 
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
-                Brand
+                Manufacturer
               </th>
 
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
@@ -187,12 +287,20 @@ export default function ProductCatalogPage() {
                     {product.sku}
                   </td>
 
-                  <td className="px-5 py-3 font-medium text-gray-800">
-                    {product.product_name}
+                  <td className="px-5 py-3">
+                    <p className="font-medium text-gray-800">
+                      {product.product_name}
+                    </p>
+
+                    {product.brand && (
+                      <p className="text-sm text-gray-500">
+                        {product.brand}
+                      </p>
+                    )}
                   </td>
 
-                  <td className="px-5 py-3">
-                    {product.brand}
+                  <td className="px-5 py-3 text-gray-700">
+                    {product.suppliers?.supplier_type === 'Manufacturer' ? product.suppliers.supplier_name : '-'}
                   </td>
 
                   <td className="px-5 py-3">
@@ -218,8 +326,8 @@ export default function ProductCatalogPage() {
                   {profile?.role === 'admin' && (
                     <td className="px-5 py-3">
                       <div className="flex items-center justify-start gap-2"> 
-                        <IconButton icon={faPen} title="Edit Product" color="amber" disabled={false} onClick={() => {}}/>
-                        <IconButton icon={faTrash} title="Delete Product" color="red" disabled={false} onClick={() => {}}/>
+                        <IconButton icon={faPen} title="Edit Product" color="amber" disabled={false} onClick={() => handleEditProduct(product)}/>
+                        <IconButton icon={faTrash} title="Delete Product" color="red" disabled={false} onClick={() => handleDeleteProduct(product)}/>
 
                       </div>
                     </td>
@@ -236,12 +344,288 @@ export default function ProductCatalogPage() {
                 </td>
               </tr>
             )}
-
           </tbody>
-
         </table>
+      </div>
+
+
+      {showEditModal && editingProduct && (
+        <EditProductModal
+          product={editingProduct}
+          manufacturers={manufacturers}
+          onClose={() => {
+            setShowEditModal(false)
+            setEditingProduct(null)
+          }}
+          onSubmit={handleUpdateProduct}
+        />
+      )}
+
+    </div>
+  )
+}
+
+
+
+// =============================================
+// EDIT PRODUCT MODAL
+// =============================================
+function EditProductModal({ product, manufacturers, onClose, onSubmit }) {
+  const [form, setForm] = useState({
+    id: product.id,
+    product_name: product.product_name || '',
+    sku: product.sku || '',
+    unit: product.unit || '',
+    brand: product.brand || '',
+    category: product.category || '',
+    availability: product.availability || 'Available',
+    supplier_id: product.supplier_id || '',
+  })
+
+  function handleChange(e) {
+    setForm({
+      ...form,
+      [e.target.name]: e.target.value,
+    })
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault()
+
+    if (
+      !form.product_name ||
+      !form.sku ||
+      !form.unit ||
+      !form.brand ||
+      !form.category
+    ) {
+      return
+    }
+
+    onSubmit(form)
+  }
+
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+
+      <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
+
+        {/* Header */}
+        <div className="flex items-center justify-between border-b bg-[#F4F8F5] px-6 py-4">
+
+          <div>
+            <h2 className="text-xl font-semibold text-[#1F3A2C]">
+              Edit Product
+            </h2>
+
+            <p className="text-sm text-gray-500">
+              Update product information.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md p-2 text-gray-500 transition hover:bg-white hover:text-gray-700"
+          >
+            <FontAwesomeIcon icon={faXmark} />
+          </button>
+
+        </div>
+
+
+        {/* Form */}
+        <form
+          onSubmit={handleSubmit}
+          className="space-y-6 p-6"
+        >
+
+          <div className="grid grid-cols-2 gap-4">
+
+            {/* Product Name */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Product Name
+              </label>
+
+              <input
+                type="text"
+                name="product_name"
+                value={form.product_name}
+                onChange={handleChange}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
+                required
+              />
+            </div>
+
+
+            {/* SKU */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                SKU
+              </label>
+
+              <input
+                type="text"
+                name="sku"
+                value={form.sku}
+                onChange={handleChange}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
+                required
+              />
+            </div>
+
+
+            {/* Brand */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Brand
+              </label>
+
+              <input
+                type="text"
+                name="brand"
+                value={form.brand}
+                onChange={handleChange}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
+                required
+              />
+            </div>
+
+
+            {/* Unit */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Unit
+              </label>
+
+              <input
+                type="text"
+                name="unit"
+                value={form.unit}
+                onChange={handleChange}
+                placeholder="e.g. Box, Piece, Case"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
+                required
+              />
+            </div>
+
+
+            {/* Category */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Category
+              </label>
+
+              <select
+                name="category"
+                value={form.category}
+                onChange={handleChange}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
+                required
+              >
+                <option value="">
+                  Select category
+                </option>
+
+                <option value="Biscuits">
+                  Biscuits
+                </option>
+
+                <option value="Snacks">
+                  Snacks
+                </option>
+
+                <option value="Coffee">
+                  Coffee
+                </option>
+              </select>
+            </div>
+
+
+            {/* Availability */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Availability
+              </label>
+
+              <select
+                name="availability"
+                value={form.availability}
+                onChange={handleChange}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
+                required
+              >
+                <option value="Available">
+                  Available
+                </option>
+
+                <option value="Unavailable">
+                  Unavailable
+                </option>
+              </select>
+            </div>
+
+
+            {/* Manufacturer */}
+            <div className="col-span-2">
+
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Manufacturer
+              </label>
+
+              <select
+                name="supplier_id"
+                value={form.supplier_id}
+                onChange={handleChange}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
+              >
+
+                <option value="">
+                  Select manufacturer
+                </option>
+
+                {manufacturers.map((manufacturer) => (
+                  <option
+                    key={manufacturer.id}
+                    value={manufacturer.id}
+                  >
+                    {manufacturer.supplier_name}
+                  </option>
+                ))}
+
+              </select>
+
+            </div>
+
+          </div>
+
+
+          {/* Buttons */}
+          <div className="flex justify-end gap-3 pt-5">
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-100"
+            >
+              Cancel
+            </button>
+
+            <button
+              type="submit"
+              className="rounded-lg bg-[#1F3A2C] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#2D5A42]"
+            >
+              Save Changes
+            </button>
+
+          </div>
+
+        </form>
 
       </div>
+
     </div>
   )
 }
