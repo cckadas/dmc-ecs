@@ -7,7 +7,7 @@ import { useToast } from '../context/ToastContext'
 import { sendPurchaseOrderEmails } from '../services/emailService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
-  faEye,
+  faFolderOpen,
   faPlus,
   faXmark,
   faFileInvoice
@@ -721,7 +721,7 @@ export default function PurchaseOrdersPage() {
 
                     {/* ACTION */}
                     <td className="px-5 py-4">
-                      <IconButton icon={faEye} title="View Purchase Order" color="blue" disabled={false} onClick={() => openViewModal(po)}/>
+                      <IconButton icon={faFolderOpen} title="View Purchase Order" color="blue" disabled={false} onClick={() => openViewModal(po)}/>
                     </td>
                   </tr>
                 )

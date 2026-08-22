@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlus, faTrash, faEye } from '@fortawesome/free-solid-svg-icons'
+import { faPlus, faTrash, faFileSignature } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 
 import IconButton from '../components/IconButton'
@@ -113,7 +113,7 @@ export default function QuotationRequestsPage() {
         customer_id: profile.id,
         delivery_location_id: formData.delivery_location_id,
         preferred_ship_date: formData.preferred_ship_date,
-        status: 'pending',
+        status: 'awaiting pricing',
       })
       .select()
       .single()
@@ -607,10 +607,10 @@ export default function QuotationRequestsPage() {
                   </td>
 
                   <td className="px-5 py-3">
-                    {request.status === 'quoted' ? (
-                      <IconButton icon={faEye} title="View Quotation" color="blue" disabled={false} onClick={() => viewQuotation(request.id)}/>
+                    {request.status === 'priced & sent to customer' ? (
+                      <IconButton icon={faFileSignature} title="View Quotation" color="blue" disabled={false} onClick={() => viewQuotation(request.id)}/>
                     ) : (
-                      <IconButton icon={faTrash} title={request.status === 'pending' ? 'Cancel Request' : 'Cannot cancel this request'} color="red" disabled={request.status !== 'pending'} onClick={() => deleteRequest(request.id)}/>
+                      <IconButton icon={faTrash} title={request.status === 'awaiting pricing' ? 'Cancel Request' : 'Cannot cancel this request'} color="red" disabled={request.status !== 'awaiting pricing'} onClick={() => deleteRequest(request.id)}/>
                     )}
                   </td>
                 </tr>

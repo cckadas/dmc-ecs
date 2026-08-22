@@ -4,8 +4,9 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faFileLines, faPenToSquare, faTrash, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faFileLines, faFileSignature, faTrash, faXmark} from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
+import { generatePFI } from '../services/pfiService'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
@@ -121,22 +122,62 @@ export default function QuotationQueuePage() {
       return
     }
 
-    // Update request status
-    const { error: updateError } = await supabase
-      .from('quotation_requests')
-      .update({
-        status: 'quoted',
-      })
-      .eq('id', currentRequest.id)
 
-    if (updateError) {
-      toast.error(updateError)
+    // 3. Generate PFI
+    const pfi = generatePFI(quotation, data.items)
+    const pdfBlob = pfi.output('blob')
+
+
+    // 4. Upload PFI to Supabase Storage
+    const filePath = `pfi/${quotation.quotation_number}-PFI.pdf`
+
+    const { error: uploadError } = await supabase.storage
+      .from('documents')
+      .upload(filePath, pdfBlob, {
+        contentType: 'application/pdf',
+      })
+
+    if (uploadError) {
+      console.error(uploadError)
+      toast.error('PFI upload failed.')
       return
     }
 
+
+    // 5. Save PFI path to quotation
+    const { error: pathError } = await supabase
+      .from('quotations')
+      .update({
+        pfi_file_path: filePath,
+      })
+      .eq('id', quotation.id)
+
+    if (pathError) {
+      console.error(pathError)
+      toast.error('Could not attach PFI to quotation.')
+      return
+    }
+
+
+    // 6. Update quotation request
+    const { error: requestError } = await supabase
+      .from('quotation_requests')
+      .update({
+        status: 'priced & sent to customer',
+      })
+      .eq('id', currentRequest.id)
+
+    if (requestError) {
+      toast.error('Failed to update request status.')
+      return
+    }
+
+    toast.success('Quotation and PFI generated successfully.')
+
     setShowModal(false)
     setCurrentRequest(null)
-    loadQueues()
+
+    await loadQueues()
   }
 
 
@@ -221,12 +262,12 @@ export default function QuotationQueuePage() {
   async function openInfoModal(request) {
     setCurrentRequest(request)
 
-    if (request.status === 'pending') {
+    if (request.status === 'awaiting pricing') {
       setShowModal(true)
       return
     }
 
-    if (request.status === 'quoted') {
+    if (request.status === 'priced & sent to customer') {
       const { data, error } = await supabase
         .from('quotations')
         .select(`
@@ -366,12 +407,12 @@ export default function QuotationQueuePage() {
                   </td>
 
                   <td className="px-5 py-3">
-                    {request.status === 'quoted' && (
+                    {request.status === 'priced & sent to customer' && (
                       <IconButton icon={faFileLines} title="View Quotation" color="blue" disabled={false} onClick={() => openInfoModal(request)}/>
                     )}
 
-                    {request.status === 'pending' && (
-                      <IconButton icon={faPenToSquare} title="View Quotation" color="amber" disabled={false} onClick={() => openInfoModal(request)}/>
+                    {request.status === 'awaiting pricing' && (
+                      <IconButton icon={faFileSignature} title="View Quotation" color="blue" disabled={false} onClick={() => openInfoModal(request)}/>
                     )}
 
                     {request.status === 'rejected' && (
@@ -397,7 +438,7 @@ export default function QuotationQueuePage() {
       </div>
 
 
-      {showModal && currentRequest?.status === 'pending' && (
+      {showModal && currentRequest?.status === 'awaiting pricing' && (
         <QuotationModal
           request={currentRequest}
           onClose={() => {
@@ -408,7 +449,7 @@ export default function QuotationQueuePage() {
         />
       )}
 
-      {showModal && currentRequest?.status === 'quoted' && (
+      {showModal && currentRequest?.status === 'priced & sent to customer' && (
         <QuotationViewModal
           quotation={currentQuotation}
           onClose={() => {

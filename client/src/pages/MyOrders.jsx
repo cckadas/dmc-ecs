@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faEye, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faFolderOpen, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 import StatusBadge from '../components/StatusBadge'
 
@@ -199,7 +199,7 @@ export default function MyOrdersPage() {
 
                   {/* ACTION */}
                   <td className="px-5 py-3">
-                    <IconButton icon={faEye} title="View Order" color="blue" disabled={false} onClick={() => openOrderModal(order)}/>
+                    <IconButton icon={faFolderOpen} title="View Order" color="blue" disabled={false} onClick={() => openOrderModal(order)}/>
                   </td>
                 </tr>
               ))

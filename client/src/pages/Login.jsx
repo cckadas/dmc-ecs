@@ -4,7 +4,7 @@ import { signIn } from '../services/authService'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faEye, faEyeSlash } from '@fortawesome/free-solid-svg-icons'
+import { faFolderOpen, faEyeSlash } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 
 import logo from '../assets/logo.png'
@@ -178,7 +178,7 @@ export default function LoginPage() {
             className="absolute inset-y-0 right-0 flex items-center px-4 text-gray-500 transition hover:text-green-700"
             aria-label={showPassword ? 'Hide password' : 'Show password'}
           >
-            <FontAwesomeIcon icon={showPassword ? faEyeSlash : faEye} />
+            <FontAwesomeIcon icon={showPassword ? faEyeSlash : faFolderOpen} />
           </button>
         </div>
 

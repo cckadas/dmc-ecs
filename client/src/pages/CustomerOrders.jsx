@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faEye, faXmark, faCreditCard, faCircleCheck, faCircleXmark } from '@fortawesome/free-solid-svg-icons'
+import { faFolderOpen, faXmark, faCreditCard, faCircleCheck, faCircleXmark } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 
 import IconButton from '../components/IconButton'
@@ -347,7 +347,7 @@ export default function CustomerOrdersPage() {
                     <div className="flex items-center gap-2">
 
                       {/* VIEW ORDER */}
-                      <IconButton icon={faEye} title="View Purchase Order" color="blue" disabled={false} onClick={() => openOrderModal(order)}/>
+                      <IconButton icon={faFolderOpen} title="View Purchase Order" color="blue" disabled={false} onClick={() => openOrderModal(order)}/>
 
 
                       {/* PAYMENT */}
