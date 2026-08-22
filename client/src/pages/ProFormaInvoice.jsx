@@ -35,7 +35,10 @@ export default function ProFormaInvoicePage() {
         status,
         created_at,
         profiles (
-          company
+          company,
+          email,
+          contact_number,
+          address
         ),
         delivery_locations (
           location_name,
@@ -127,25 +130,22 @@ export default function ProFormaInvoicePage() {
     const pfiData = {
       ...quotation,
 
+      // Profile
+      profile_phone: profile?.contact_number || '-',
+      profile_email: profile?.email || '-',
+
       // Customer
       customer_name: currentRequest.profiles?.company || '-',
 
       // Delivery
-      customer_address:
-        currentRequest.delivery_locations?.address || '-',
-
-      customer_phone:
-        currentRequest.delivery_locations?.contact_number || '-',
-
-      customer_country:
-        currentRequest.delivery_locations?.country || '-',
+      customer_address: currentRequest.delivery_locations?.address || '-',
+      customer_phone: currentRequest.delivery_locations?.contact_number || '-',
+      customer_email: currentRequest.profiles?.email || '-',
+      customer_country: currentRequest.delivery_locations?.country || '-',
 
       // Shipping
-      shipping_to:
-        currentRequest.delivery_locations?.address || '-',
-
-      shipping_location:
-        currentRequest.delivery_locations?.location_name || '-',
+      shipping_to: currentRequest.delivery_locations?.address || '-',
+      shipping_location: currentRequest.delivery_locations?.location_name || '-',
 
       // Quotation
       delivery_method: 'Standard',
@@ -441,7 +441,7 @@ export default function ProFormaInvoicePage() {
                     )}
 
                     {request.status === 'awaiting pricing' && (
-                      <IconButton icon={faFileSignature} title="View Quotation" color="blue" disabled={false} onClick={() => openInfoModal(request)}/>
+                      <IconButton icon={faFileSignature} title="View Quotation" color="amber" disabled={false} onClick={() => openInfoModal(request)}/>
                     )}
 
                     {request.status === 'rejected' && (

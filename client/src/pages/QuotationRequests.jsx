@@ -718,7 +718,9 @@ function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-3xl rounded-xl bg-white shadow-xl">
+      <div className="flex flex-col w-full max-w-6xl rounded-xl bg-white shadow-xl">
+
+      {/* <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-xl"></div> */}
 
         {/* Header */}
         <div className="flex items-center justify-between border-b px-6 py-4">
@@ -741,67 +743,42 @@ function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
         </div>
 
 
-        {/* Quotation Information */}
-        <div className="flex items-start justify-between px-6 py-5">
-          <div className="grid flex-1 grid-cols-2 gap-4">
-            <div>
-              <p className="text-xs font-medium uppercase text-gray-500">
-                Quotation Number
-              </p>
+        {/* =================================================
+            ORDER INFORMATION
+        ================================================= */}
+        <div className="px-6 pt-6">
+          <h3 className="mb-3 text-sm font-semibold text-gray-800">
+            Quotation Information
+          </h3>
 
-              <p className="font-medium text-gray-800">
-                {quotation.quotation_number}
-              </p>
+          <div className="mb-6 grid grid-cols-1 gap-4 rounded-lg bg-gray-50 p-4 md:grid-cols-4">
+            <div>
+              <p className="text-xs uppercase text-gray-500"> Quotation Number </p>
+              <p className="mt-1 font-medium text-gray-800"> {quotation.quotation_number || '-'} </p>
             </div>
 
             <div>
-              <p className="text-xs font-medium uppercase text-gray-500">
-                Status
-              </p>
-
-              <p className="font-medium text-gray-800">
-                {quotation.status}
-              </p>
+              <p className="text-xs uppercase text-gray-500"> Status </p>
+              <p className="mt-1 font-medium text-gray-800"> <StatusBadge status={quotation.status}/> </p>
             </div>
 
             <div>
-              <p className="text-xs font-medium uppercase text-gray-500">
-                Expiry Date
-              </p>
-
-              <p className="font-medium text-gray-800">
-                {new Date(quotation.expiry_date).toLocaleDateString()}
-              </p>
-            </div>
+              <p className="text-xs uppercase text-gray-500"> Expiry Date </p>
+              <p className="mt-1 font-medium text-gray-800"> {new Date(quotation.expiry_date).toLocaleDateString()} </p>
+            </div>        
 
             <div>
-              <p className="text-xs font-medium uppercase text-gray-500">
-                Created
-              </p>
-
-              <p className="font-medium text-gray-800">
-                {new Date(quotation.created_at).toLocaleDateString()}
-              </p>
+              <p className="text-xs uppercase text-gray-500"> Date Created </p>
+              <p className="mt-1 font-medium text-gray-800"> {new Date(quotation.created_at).toLocaleDateString()} </p>
             </div>
           </div>
-
-
-          {/* Download PFI */}
-          <button
-            type="button"
-            onClick={downloadPFI}
-            disabled={!quotation?.pfi_file_path}
-            className="ml-6 flex shrink-0 items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <FontAwesomeIcon icon={faDownload} />
-            Download PFI
-          </button>
         </div>
+
 
 
         {/* Items */}
         <div className="px-6">
-          <h3 className="mb-3 font-semibold text-gray-800">
+          <h3 className="mb-3 text-sm font-semibold text-gray-800">
             Quotation Items
           </h3>
 
@@ -863,69 +840,73 @@ function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
           </div>
         </div>
 
-        {/* Totals */}
-        <div className="flex justify-end px-6 py-5">
-          <div className="w-72 space-y-2">
+          {/* =================================================
+              SUMMARY
+          ================================================= */}
+          <div className="m-6 flex justify-end">
+            <div className="w-full max-w-sm">
+          
+              <h3 className="mb-3 text-sm font-semibold text-gray-800">
+                Order Summary
+              </h3>
 
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-500">
-                Subtotal
-              </span>
+              <div className="rounded-lg bg-gray-50 p-5">
+                <div className="mb-3 flex justify-between text-sm">
+                  <span className="font-semibold text-gray-700">
+                    Subtotal
+                  </span>
 
-              <span>
-                ₱{Number(quotation.subtotal).toLocaleString(
-                  undefined,
-                  { minimumFractionDigits: 2 }
-                )}
-              </span>
-            </div>
+                  <span className="text-lg font-bold text-gray-800">
+                    ₱ {Number(quotation.subtotal || 0).toLocaleString(undefined, {
+                      minimumFractionDigits: 2
+                    })}
+                  </span>
+                </div>
 
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-500">
-                Shipping
-              </span>
+                <div className="mb-3 flex justify-between text-sm">
+                  <span className="font-semibold text-gray-700">
+                    Shipping Cost
+                  </span>
 
-              <span>
-                ₱{Number(quotation.shipping_cost).toLocaleString(
-                  undefined,
-                  { minimumFractionDigits: 2 }
-                )}
-              </span>
-            </div>
+                  <span className="text-lg font-bold text-gray-800">
+                    ₱ {Number(quotation.shipping_cost || 0).toLocaleString(undefined, {
+                      minimumFractionDigits: 2
+                    })}
+                  </span>
+                </div>
 
-            <div className="border-t pt-2">
-              <div className="flex justify-between">
-                <span className="font-semibold text-gray-800">
-                  Total
-                </span>
+                <div className="border-t pt-3">
+                  <div className="flex justify-between">
+                    <span className="font-semibold text-gray-700">
+                      Total
+                    </span>
 
-                <span className="text-lg font-bold text-[#1F3A2C]">
-                  ₱{Number(quotation.total_amount).toLocaleString(
-                    undefined,
-                    { minimumFractionDigits: 2 }
-                  )}
-                </span>
+                    <span className="text-xl font-bold text-gray-800">
+                      ₱ {Number(quotation.total_amount || 0).toLocaleString(undefined, {
+                        minimumFractionDigits: 2
+                      })}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between">
+                    <span className="font-semibold text-green-700">
+                      Down Payment
+                    </span>
+
+                    <span className="text-lg font-bold text-green-800">
+                      ₱ {Number(quotation.down_payment_amount || 0).toLocaleString(undefined, {
+                        minimumFractionDigits: 2
+                      })}
+                    </span>
+                  </div>
+                </div>
               </div>
+              
             </div>
-
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-500">
-                Down Payment
-              </span>
-
-              <span className="font-medium">
-                ₱{Number(quotation.down_payment_amount).toLocaleString(
-                  undefined,
-                  { minimumFractionDigits: 2 }
-                )}
-              </span>
-            </div>
-
           </div>
-        </div>
 
         {/* Footer */}
-        <div className="border-t bg-gray-50 px-6 py-4">
+        <div className="bg-gray-50 px-6 py-4">
           {quotation.status === 'rejected' ? (
             <div className="flex items-center justify-between">
               <div>
@@ -985,27 +966,39 @@ function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
               </button>
             </div>
           ) : (
-            <div className="flex justify-end gap-3">
+            <div className="flex items-center justify-between">
               <button
-                onClick={onClose}
-                className="rounded-lg border border-gray-300 bg-white px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                type="button"
+                onClick={downloadPFI}
+                disabled={!quotation?.pfi_file_path}
+                className="flex shrink-0 items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Close
+                <FontAwesomeIcon icon={faDownload} />
+                Download PFI
               </button>
 
-              <button
-                onClick={() => onReject(quotation.id)}
-                className="rounded-lg border border-red-200 bg-red-50 px-5 py-2 text-sm font-medium text-red-600 hover:bg-red-100"
-              >
-                Reject
-              </button>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={onClose}
+                  className="rounded-lg border border-gray-300 bg-white px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Close
+                </button>
 
-              <button
-                onClick={() => onApprove(quotation.id)}
-                className="rounded-lg bg-[#2D5A42] px-5 py-2 text-sm font-medium text-white hover:bg-[#234633]"
-              >
-                Approve Quotation
-              </button>
+                <button
+                  onClick={() => onReject(quotation.id)}
+                  className="rounded-lg border border-red-200 bg-red-50 px-5 py-2 text-sm font-medium text-red-600 hover:bg-red-100"
+                >
+                  Reject
+                </button>
+
+                <button
+                  onClick={() => onApprove(quotation.id)}
+                  className="rounded-lg bg-[#2D5A42] px-5 py-2 text-sm font-medium text-white hover:bg-[#234633]"
+                >
+                  Approve Quotation
+                </button>
+              </div>
             </div>
           )}
         </div>

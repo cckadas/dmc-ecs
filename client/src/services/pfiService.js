@@ -1,8 +1,8 @@
-// client/services/pfiService.js
-
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import logo from '../assets/logo.png'
+import seal from '../assets/seal.png'
+
 
 
 // ============================================================
@@ -59,7 +59,7 @@ export async function generatePFI(quotation, items) {
   const mutedText = [95, 99, 115]
   const lightBlue = [225, 239, 246]
   const borderColor = [145, 150, 160]
-  const background = [248, 249, 253]
+  const background = [255, 255, 255]
 
 
   // ----------------------------------------------------------
@@ -75,9 +75,13 @@ export async function generatePFI(quotation, items) {
   doc.setTextColor(...darkText)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(24)
+  doc.text('PROFORMA INVOICE', 20, 27)
 
-  doc.text('PROFORMA', 20, 27)
-  doc.text('INVOICE', 20, 39)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(12)
+  doc.setTextColor(...mutedText)
+  doc.text('A preliminary billing document issued for quotation', 20, 38)
+  doc.text('order confirmation, and payment reference', 20, 44)
 
 
   // ----------------------------------------------------------
@@ -86,9 +90,7 @@ export async function generatePFI(quotation, items) {
   // ----------------------------------------------------------
   try {
     const logoData = await getImageData(logo)
-
     const image = new Image()
-
     image.src = logoData
 
     await new Promise((resolve, reject) => {
@@ -96,15 +98,10 @@ export async function generatePFI(quotation, items) {
       image.onerror = reject
     })
 
-    // Desired logo width
     const logoWidth = 30
+    const logoHeight = (image.height / image.width) * logoWidth
 
-    // Preserve original aspect ratio
-    const logoHeight =
-      (image.height / image.width) * logoWidth
-
-    // Keep the logo aligned to the top-right
-    const logoX = 142
+    const logoX = 168
     const logoY = 17
 
     doc.addImage(
@@ -126,57 +123,23 @@ export async function generatePFI(quotation, items) {
   }
 
 
-  // ----------------------------------------------------------
-  // TOP INFORMATION
-  // ----------------------------------------------------------
-  doc.setFontSize(9)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(...darkText)
-
-
   // ==========================================================
   // BILLED BY
   // ==========================================================
+  doc.setFontSize(9)
+  doc.setFont('helvetica', 'bold')
+  doc.setTextColor(...darkText)
   doc.text('Billed by', 20, 62)
+
 
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(8)
   doc.setTextColor(...mutedText)
 
-  doc.text(
-    'DMC Enterprise',
-    20,
-    70
-  )
-
-  doc.text(
-    'San Juan City, Metro Manila, Philippines',
-    20,
-    76,
-    {
-      maxWidth: 62,
-    }
-  )
-
-  doc.text(
-    `Email  ${
-      quotation.company_email ||
-      quotation.supplier_email ||
-      '-'
-    }`,
-    20,
-    88
-  )
-
-  doc.text(
-    `Phone  ${
-      quotation.company_phone ||
-      quotation.supplier_phone ||
-      '-'
-    }`,
-    20,
-    94
-  )
+  doc.text('DMC Enterprise', 20, 70)
+  doc.text('San Juan City, Metro Manila', 20, 76, { maxWidth: 48 })
+  doc.text(`Email  ${quotation.profile_email || '-'}`, 20, 88)
+  doc.text(`Phone  ${quotation.profile_phone || '-'}`, 20, 94)
 
 
   // ==========================================================
@@ -193,9 +156,7 @@ export async function generatePFI(quotation, items) {
   doc.setTextColor(...mutedText)
 
   doc.text(
-    quotation.customer_name ||
-      quotation.customer?.name ||
-      '-',
+    quotation.customer_name || quotation.customer?.name || '-',
     82,
     70
   )
@@ -207,7 +168,7 @@ export async function generatePFI(quotation, items) {
     82,
     76,
     {
-      maxWidth: 60,
+      maxWidth: 48,
     }
   )
 
@@ -283,14 +244,11 @@ export async function generatePFI(quotation, items) {
   doc.setTextColor(...mutedText)
 
   doc.text(
-    quotation.shipping_from ||
-      quotation.company_address ||
-      quotation.supplier_address ||
-      '-',
+    'DMC Warehouse, San Juan City, Metro Manila',
     20,
     122,
     {
-      maxWidth: 62,
+      maxWidth: 48,
     }
   )
 
@@ -316,7 +274,7 @@ export async function generatePFI(quotation, items) {
     82,
     122,
     {
-      maxWidth: 60,
+      maxWidth: 48,
     }
   )
 
@@ -651,6 +609,53 @@ export async function generatePFI(quotation, items) {
       align: 'right',
     }
   )
+
+
+  // ==========================================================
+  // COMPANY SEAL
+  // ==========================================================
+
+  try {
+    const sealData = await getImageData(seal)
+
+    // Square seal
+    const sealSize = 30
+
+    // Position below the terms section
+    const sealX = 20
+    const sealY = finalY + 50
+
+    doc.addImage(
+      sealData,
+      'PNG',
+      sealX,
+      sealY,
+      sealSize,
+      sealSize
+    )
+
+    // Label underneath
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(7.5)
+    doc.setTextColor(...darkText)
+
+    doc.text(
+      'AUTHORIZED COMPANY SEAL',
+      sealX + sealSize / 2,
+      sealY + sealSize + 6,
+      {
+        align: 'center',
+      }
+    )
+
+  }
+  
+  catch (error) {
+    console.warn(
+      'Unable to load company seal:',
+      error
+    )
+  }
 
 
   // ----------------------------------------------------------
