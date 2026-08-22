@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faFileLines, faFileSignature, faTrash, faXmark, faDownload } from '@fortawesome/free-solid-svg-icons'
+import { faFolderOpen, faFileSignature, faTrash, faXmark, faDownload } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 import { generatePFI } from '../services/pfiService'
 
@@ -124,7 +124,35 @@ export default function ProFormaInvoicePage() {
 
 
     // 3. Generate PFI
-    const pfi = generatePFI(quotation, data.items)
+    const pfiData = {
+      ...quotation,
+
+      // Customer
+      customer_name: currentRequest.profiles?.company || '-',
+
+      // Delivery
+      customer_address:
+        currentRequest.delivery_locations?.address || '-',
+
+      customer_phone:
+        currentRequest.delivery_locations?.contact_number || '-',
+
+      customer_country:
+        currentRequest.delivery_locations?.country || '-',
+
+      // Shipping
+      shipping_to:
+        currentRequest.delivery_locations?.address || '-',
+
+      shipping_location:
+        currentRequest.delivery_locations?.location_name || '-',
+
+      // Quotation
+      delivery_method: 'Standard',
+    }
+
+    const pfi = await generatePFI(pfiData, data.items)
+
     const pdfBlob = pfi.output('blob')
 
 
@@ -409,7 +437,7 @@ export default function ProFormaInvoicePage() {
 
                   <td className="px-5 py-3">
                     {request.status === 'priced & sent to customer' && (
-                      <IconButton icon={faFileLines} title="View Quotation" color="blue" disabled={false} onClick={() => openInfoModal(request)}/>
+                      <IconButton icon={faFolderOpen} title="View Quotation" color="blue" disabled={false} onClick={() => openInfoModal(request)}/>
                     )}
 
                     {request.status === 'awaiting pricing' && (
@@ -721,7 +749,7 @@ function QuotationViewModal({ quotation, onClose }) {
             type="button"
             onClick={downloadPFI}
             disabled={!quotation?.pfi_file_path}
-            className="rounded-md bg-[#1F3A2C] px-4 py-2 text-sm font-medium text-white hover:bg-[#2D5A42] disabled:cursor-not-allowed disabled:opacity-50"
+            className="ml-6 flex shrink-0 items-center gap-0 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <FontAwesomeIcon icon={faDownload} className="mr-2" />
             Download PFI
@@ -754,6 +782,7 @@ function QuotationModal({ request, onClose, onSubmit }) {
   const [expiryDate, setExpiryDate] = useState('')
   const [items, setItems] = useState(
     request.quotation_request_items.map((item) => ({
+      id: item.id,
       product_id: item.products.id,
       product_name: item.products.product_name,
       brand: item.products.brand,

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faFile, faPen, faTrash, faFileImport } from '@fortawesome/free-solid-svg-icons'
+import { faFolderOpen, faPen, faTrash, faFileImport } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from '../context/ToastContext'
 
 import IconButton from '../components/IconButton'
@@ -313,7 +313,7 @@ export default function SuppliersPage() {
                     <div className="flex items-center justify-start gap-2">
 
                     {/* View */}
-                    <IconButton icon={faFile} title="View Supplier" color="blue" disabled={false} onClick={() => handleViewSupplier(supplier)}/>
+                    <IconButton icon={faFolderOpen} title="View Supplier" color="blue" disabled={false} onClick={() => handleViewSupplier(supplier)}/>
 
                     {/* Edit */}
                     <IconButton icon={faPen} title="Edit Supplier" color="amber" disabled={false} onClick={() => handleEditSupplier(supplier)}/>

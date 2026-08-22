@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { createCustomer } from '../services/userService'
-import { faFile, faTrash } from '@fortawesome/free-solid-svg-icons'
+import { faFolderOpen, faTrash } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 
 import IconButton from '../components/IconButton'
@@ -153,7 +153,7 @@ export default function CustomersPage() {
                   <td className="px-5 py-3">
                       <div className="flex items-center justify-start gap-2"> 
                         {/* View */} 
-                        <IconButton icon={faFile} title="View Customer" color="blue" disabled={false} onClick={() => {}}/>
+                        <IconButton icon={faFolderOpen} title="View Customer" color="blue" disabled={false} onClick={() => {}}/>
                         
                         {/* Delete */} 
                         <IconButton icon={faTrash} title="Delete" color="red" disabled={false} onClick={() => {}}/>

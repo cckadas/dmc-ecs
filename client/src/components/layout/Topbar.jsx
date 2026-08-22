@@ -122,7 +122,7 @@ function ProfileDropdown({ profile }) {
           </span>
 
           <span className="font-medium text-gray-800">
-            {profile?.role}
+            {profile?.role ? profile.role.charAt(0).toUpperCase() + profile.role.slice(1).toLowerCase() : ''}
           </span>
         </div>
 
