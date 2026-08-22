@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faFileLines, faFileSignature, faTrash, faXmark} from '@fortawesome/free-solid-svg-icons'
+import { faFileLines, faFileSignature, faTrash, faXmark, faDownload } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 import { generatePFI } from '../services/pfiService'
 
@@ -12,7 +12,7 @@ import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
 
 
-export default function QuotationQueuePage() {
+export default function ProFormaInvoicePage() {
   const { profile } = useAuth()
   const { toast } = useToast()
 
@@ -111,7 +111,7 @@ export default function QuotationQueuePage() {
       .insert(quotationItems)
 
     if (itemError) {
-      toast.error(itemError)
+      toast.error(itemError.message)
 
       // Roll back quotation if item insert fails
       await supabase
@@ -281,6 +281,7 @@ export default function QuotationQueuePage() {
           expiry_date,
           status,
           created_at,
+          pfi_file_path,
           quotation_items (
             id,
             product_id,
@@ -328,11 +329,11 @@ export default function QuotationQueuePage() {
       <div className="mb-6 flex items-start justify-between">
         <div>
           <h1 className="text-3xl font-bold text-[#1F3A2C]">
-            Quotation Queue
+            PFI Builder
           </h1>
 
           <p className="text-gray-500">
-            View your customers' quotation requests and their current status.
+            View customers' quotation requests and generate PFI.
           </p>
         </div>
       </div>
@@ -468,6 +469,41 @@ export default function QuotationQueuePage() {
 // VIEW CUSTOMER ORDER MODAL
 // =====================================================
 function QuotationViewModal({ quotation, onClose }) {
+
+  // =============================================
+  // DOWNLOAD PFI
+  // =============================================
+  async function downloadPFI() {
+    if (!quotation?.pfi_file_path) {
+      alert('PFI file is not available.')
+      return
+    }
+
+    console.log(quotation.pfi_file_path)
+
+    const { data, error } = await supabase.storage
+      .from('documents')
+      .download(quotation.pfi_file_path)
+
+    if (error) {
+      console.error(error)
+      alert('Failed to download PFI.')
+      return
+    }
+
+    const url = URL.createObjectURL(data)
+
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${quotation.quotation_number}-PFI.pdf`
+
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+
+    URL.revokeObjectURL(url)
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-xl">
@@ -683,8 +719,18 @@ function QuotationViewModal({ quotation, onClose }) {
         <div className="flex items-center justify-end gap-3 bg-gray-50 px-6 py-4">
           <button
             type="button"
-            onClick={onClose}
-            className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            onClick={downloadPFI}
+            disabled={!quotation?.pfi_file_path}
+            className="rounded-md bg-[#1F3A2C] px-4 py-2 text-sm font-medium text-white hover:bg-[#2D5A42] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <FontAwesomeIcon icon={faDownload} className="mr-2" />
+            Download PFI
+          </button>
+
+          <button 
+            type="button" 
+            onClick={onClose} 
+            className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
           >
             Close
           </button>

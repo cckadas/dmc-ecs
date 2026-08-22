@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlus, faTrash, faFileSignature } from '@fortawesome/free-solid-svg-icons'
+import { faPlus, faTrash, faFileSignature, faDownload } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 
 import IconButton from '../components/IconButton'
@@ -215,6 +215,7 @@ export default function QuotationRequestsPage() {
         expiry_date,
         status,
         created_at,
+        pfi_file_path,
         quotation_items (
           id,
           product_id,
@@ -376,6 +377,7 @@ export default function QuotationRequestsPage() {
           shipping_cost: quotation.shipping_cost,
           total_amount: quotation.total_amount,
           down_payment_amount: quotation.down_payment_amount,
+          pfi_file_path: quotation.pfi_file_path,
           status: 'pending payment',
         })
         .select()
@@ -676,6 +678,44 @@ function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
 
   const isExpired = new Date() > new Date(`${quotation.expiry_date}T23:59:59`)
 
+
+  // =============================================
+  // DOWNLOAD PFI
+  // =============================================
+  async function downloadPFI() {
+    if (!quotation?.pfi_file_path) {
+      alert('PFI file is not available.')
+      return
+    }
+
+    console.log(quotation.pfi_file_path)
+
+    const { data, error } = await supabase.storage
+      .from('documents')
+      .download(quotation.pfi_file_path)
+
+    if (error) {
+      console.error(error)
+      alert('Failed to download PFI.')
+      return
+    }
+
+    const url = URL.createObjectURL(data)
+
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${quotation.quotation_number}-PFI.pdf`
+
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+
+    URL.revokeObjectURL(url)
+  }
+
+
+
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-3xl rounded-xl bg-white shadow-xl">
@@ -700,48 +740,64 @@ function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
           </button>
         </div>
 
+
         {/* Quotation Information */}
-        <div className="grid grid-cols-2 gap-4 px-6 py-5">
-          <div>
-            <p className="text-xs font-medium uppercase text-gray-500">
-              Quotation Number
-            </p>
+        <div className="flex items-start justify-between px-6 py-5">
+          <div className="grid flex-1 grid-cols-2 gap-4">
+            <div>
+              <p className="text-xs font-medium uppercase text-gray-500">
+                Quotation Number
+              </p>
 
-            <p className="font-medium text-gray-800">
-              {quotation.quotation_number}
-            </p>
+              <p className="font-medium text-gray-800">
+                {quotation.quotation_number}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-xs font-medium uppercase text-gray-500">
+                Status
+              </p>
+
+              <p className="font-medium text-gray-800">
+                {quotation.status}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-xs font-medium uppercase text-gray-500">
+                Expiry Date
+              </p>
+
+              <p className="font-medium text-gray-800">
+                {new Date(quotation.expiry_date).toLocaleDateString()}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-xs font-medium uppercase text-gray-500">
+                Created
+              </p>
+
+              <p className="font-medium text-gray-800">
+                {new Date(quotation.created_at).toLocaleDateString()}
+              </p>
+            </div>
           </div>
 
-          <div>
-            <p className="text-xs font-medium uppercase text-gray-500">
-              Status
-            </p>
 
-            <p className="font-medium text-gray-800">
-              {quotation.status}
-            </p>
-          </div>
-
-          <div>
-            <p className="text-xs font-medium uppercase text-gray-500">
-              Expiry Date
-            </p>
-
-            <p className="font-medium text-gray-800">
-              {new Date(quotation.expiry_date).toLocaleDateString()}
-            </p>
-          </div>
-
-          <div>
-            <p className="text-xs font-medium uppercase text-gray-500">
-              Created
-            </p>
-
-            <p className="font-medium text-gray-800">
-              {new Date(quotation.created_at).toLocaleDateString()}
-            </p>
-          </div>
+          {/* Download PFI */}
+          <button
+            type="button"
+            onClick={downloadPFI}
+            disabled={!quotation?.pfi_file_path}
+            className="ml-6 flex shrink-0 items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <FontAwesomeIcon icon={faDownload} />
+            Download PFI
+          </button>
         </div>
+
 
         {/* Items */}
         <div className="px-6">

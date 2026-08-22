@@ -44,6 +44,7 @@ export default function CustomerOrdersPage() {
         settled_amount,
         payment_bank,
         payment_proof,
+        pfi_file_path,
         created_at,
 
         customer_order_items (

@@ -45,6 +45,7 @@ export default function MyOrdersPage() {
         status,
         settled_amount,
         payment_proof,
+        pfi_file_path,
         created_at,
 
         customer_order_items (

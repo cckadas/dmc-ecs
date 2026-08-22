@@ -7,7 +7,7 @@ import DeliveryLocationsPage from "./DeliveryLocations"
 import MyOrdersPage from "./MyOrders"
 import PaymentsPage from "./Payments"
 import ProductCatalogPage from "./ProductCatalog"
-import QuotationQueuePage from "./QuotationQueue"
+import ProFormaInvoicePage from "./ProFormaInvoice"
 import QuotationRequestsPage from "./QuotationRequests"
 import PurchaseOrdersPage from "./PurchaseOrders"
 import SuppliersPage from "./Suppliers"
@@ -43,8 +43,8 @@ export default function PageRouter(){
     case "purchase-orders":
       return <PurchaseOrdersPage />
 
-    case "quotation-queue":
-      return <QuotationQueuePage />
+    case "pfi-builder":
+      return <ProFormaInvoicePage />
 
     case "quotation-requests":
       return <QuotationRequestsPage />

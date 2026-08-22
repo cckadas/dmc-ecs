@@ -9,7 +9,6 @@ import {
   faBoxesStacked,
   faGear,
   faRightFromBracket,
-  faFilePen,
   faCartShopping,
   faFileLines,
   faShop,
@@ -19,7 +18,8 @@ import {
   faWarehouse,
   faUserTag,
   faBagShopping,
-  faWallet
+  faWallet,
+  faFileSignature
 } from '@fortawesome/free-solid-svg-icons'
 
 import logo from '../../assets/logo.png'
@@ -49,15 +49,9 @@ const sections = [
     title: 'ORDER MANAGEMENT',
     items: [
       {
-        label: 'Quotation Queue',
-        path: 'quotation-queue',
-        icon: faFileLines,
-        roles: ['admin', 'sales'],
-      },
-      {
         label: 'PFI Builder',
         path: 'pfi-builder',
-        icon: faFilePen,
+        icon: faFileSignature,
         roles: ['admin', 'sales'],
       },
       {
