@@ -3,12 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import {
-  faFile,
-  faPen,
-  faTrash,
-  faFileImport,
-} from '@fortawesome/free-solid-svg-icons'
+import { faFile, faPen, faTrash, faFileImport } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from '../context/ToastContext'
 
 import IconButton from '../components/IconButton'
@@ -191,7 +186,6 @@ export default function SuppliersPage() {
 
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
-
         <div>
           <h1 className="text-3xl font-bold text-[#1F3A2C]">
             Suppliers
@@ -203,7 +197,6 @@ export default function SuppliersPage() {
         </div>
 
         <div className="flex items-center gap-2">
-
           <button
             onClick={() => setShowImportModal(true)}
             className="flex items-center gap-2 rounded-lg border border-[#2D5A42] bg-white px-4 py-2 font-medium text-[#1F3A2C] transition hover:bg-[#F4F8F5]"
@@ -218,19 +211,16 @@ export default function SuppliersPage() {
           >
             + Add Supplier
           </button>
-
         </div>
       </div>
 
 
       {/* Table */}
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-
         <table className="min-w-full">
-
+          
           <thead className="bg-[#F4F8F5]">
             <tr>
-
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
                 Supplier
               </th>
@@ -254,21 +244,13 @@ export default function SuppliersPage() {
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
                 Actions
               </th>
-
             </tr>
           </thead>
 
-
           <tbody>
-
             {suppliers.length > 0 ? (
-
               suppliers.map((supplier) => (
-
-                <tr
-                  key={supplier.id}
-                  className="border-t border-gray-200 text-sm hover:bg-gray-50"
-                >
+                <tr key={supplier.id} className="border-t border-gray-200 text-sm hover:bg-gray-50">
 
                   {/* Supplier */}
                   <td className="px-5 py-3 text-gray-800">
@@ -286,15 +268,7 @@ export default function SuppliersPage() {
 
                   {/* Supplier Type */}
                   <td className="px-5 py-3">
-
-                    <span
-                      className={`
-                        inline-flex
-                        rounded-full
-                        px-2.5
-                        py-1
-                        text-xs
-                        font-medium
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium
                         ${ 
                           supplier.supplier_type === 'Manufacturer'
                             ? 'bg-blue-100 text-blue-700'
@@ -306,7 +280,6 @@ export default function SuppliersPage() {
                     >
                       {supplier.supplier_type}
                     </span>
-
                   </td>
 
 
@@ -318,7 +291,6 @@ export default function SuppliersPage() {
 
                   {/* Contact */}
                   <td className="px-5 py-3 text-gray-700">
-
                     {supplier.phone ? (
                       <p>{supplier.phone}</p>
                     ) : (
@@ -338,63 +310,30 @@ export default function SuppliersPage() {
 
                   {/* Actions */}
                   <td className="px-5 py-3">
-
                     <div className="flex items-center justify-start gap-2">
 
                     {/* View */}
-                    <IconButton
-                      icon={faFile}
-                      title="View Supplier"
-                      color="blue"
-                      disabled={false}
-                      onClick={() => handleViewSupplier(supplier)}
-                    />
+                    <IconButton icon={faFile} title="View Supplier" color="blue" disabled={false} onClick={() => handleViewSupplier(supplier)}/>
 
                     {/* Edit */}
-                    <IconButton
-                      icon={faPen}
-                      title="Edit Supplier"
-                      color="amber"
-                      disabled={false}
-                      onClick={() => handleEditSupplier(supplier)}
-                    />
+                    <IconButton icon={faPen} title="Edit Supplier" color="amber" disabled={false} onClick={() => handleEditSupplier(supplier)}/>
 
                     {/* Delete */}
-                    <IconButton
-                      icon={faTrash}
-                      title="Delete Supplier"
-                      color="red"
-                      disabled={false}
-                      onClick={() => handleDeleteSupplier(supplier)}
-                    />
+                    <IconButton icon={faTrash} title="Delete Supplier" color="red" disabled={false} onClick={() => handleDeleteSupplier(supplier)}/>
 
                     </div>
-
                   </td>
-
                 </tr>
-
               ))
-
             ) : (
-
               <tr>
-
-                <td
-                  colSpan={6}
-                  className="py-10 text-center text-sm text-gray-500"
-                >
+                <td colSpan={6} className="py-10 text-center text-sm text-gray-500">
                   No suppliers found.
                 </td>
-
               </tr>
-
             )}
-
           </tbody>
-
         </table>
-
       </div>
 
 
@@ -441,6 +380,10 @@ export default function SuppliersPage() {
 }
 
 
+
+// =============================================
+// ADD SUPPLIER MODAL
+// =============================================
 function AddSupplierModal({ onClose, onSubmit }) {
 
   const [form, setForm] = useState({
@@ -470,10 +413,7 @@ function AddSupplierModal({ onClose, onSubmit }) {
   function handleSubmit(e) {
     e.preventDefault()
 
-    if (
-      !form.supplier_name ||
-      !form.supplier_type
-    ) {
+    if (!form.supplier_name || !form.supplier_type) {
       return
     }
 
@@ -484,26 +424,17 @@ function AddSupplierModal({ onClose, onSubmit }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-
       <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
 
         {/* Header */}
         <div className="border-b bg-[#F4F8F5] px-6 py-4">
-
           <h2 className="text-xl font-semibold text-[#1F3A2C]">
             Add Supplier
           </h2>
-
         </div>
 
-
-        <form
-          onSubmit={handleSubmit}
-          className="space-y-6 p-6"
-        >
-
+        <form onSubmit={handleSubmit} className="space-y-6 p-6">
           <div className="grid grid-cols-2 gap-4">
-
 
             {/* Supplier Name */}
             <div>
@@ -624,7 +555,6 @@ function AddSupplierModal({ onClose, onSubmit }) {
 
           {/* Buttons */}
           <div className="flex justify-end gap-3 pt-5">
-
             <button
               type="button"
               onClick={onClose}
@@ -639,29 +569,26 @@ function AddSupplierModal({ onClose, onSubmit }) {
             >
               Save Supplier
             </button>
-
           </div>
 
         </form>
-
       </div>
-
     </div>
   )
 }
 
 
 
-
+// =============================================
+// VIEW SUPPLIER MODAL
+// =============================================
 function ViewSupplierModal({ supplier, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-
       <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
 
         {/* Header */}
         <div className="border-b bg-[#F4F8F5] px-6 py-4">
-
           <h2 className="text-xl font-semibold text-[#1F3A2C]">
             Supplier Details
           </h2>
@@ -669,13 +596,11 @@ function ViewSupplierModal({ supplier, onClose }) {
           <p className="text-sm text-gray-500">
             View supplier information.
           </p>
-
         </div>
 
 
         {/* Content */}
         <div className="space-y-5 p-6">
-
           <div className="grid grid-cols-2 gap-5">
 
             {/* Supplier Name */}
@@ -697,13 +622,7 @@ function ViewSupplierModal({ supplier, onClose }) {
               </p>
 
               <span
-                className={`
-                  mt-1 inline-flex
-                  rounded-full
-                  px-2.5
-                  py-1
-                  text-xs
-                  font-medium
+                className={`mt-1 inline-flex rounded-full px-2.5 py-1 text-xs font-medium
                   ${
                     supplier.supplier_type === 'Manufacturer'
                       ? 'bg-blue-100 text-blue-700'
@@ -761,9 +680,7 @@ function ViewSupplierModal({ supplier, onClose }) {
               </p>
 
               <p className="mt-1 text-gray-800">
-                {supplier.created_at
-                  ? new Date(supplier.created_at).toLocaleDateString()
-                  : '-'}
+                {supplier.created_at ? new Date(supplier.created_at).toLocaleDateString() : '-'}
               </p>
             </div>
 
@@ -778,13 +695,11 @@ function ViewSupplierModal({ supplier, onClose }) {
                 {supplier.address || '-'}
               </p>
             </div>
-
           </div>
 
 
           {/* Close */}
           <div className="flex justify-end pt-5">
-
             <button
               type="button"
               onClick={onClose}
@@ -792,24 +707,21 @@ function ViewSupplierModal({ supplier, onClose }) {
             >
               Close
             </button>
-
           </div>
 
         </div>
-
       </div>
-
     </div>
   )
 }
 
 
 
-function EditSupplierModal({
-  supplier,
-  onClose,
-  onSubmit,
-}) {
+// =============================================
+// EDIT SUPPLIER MODAL
+// =============================================
+function EditSupplierModal({ supplier, onClose, onSubmit }) {
+
   const [form, setForm] = useState({
     id: supplier.id,
     supplier_name: supplier.supplier_name || '',
@@ -842,12 +754,10 @@ function EditSupplierModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-
       <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
 
         {/* Header */}
         <div className="border-b bg-[#F4F8F5] px-6 py-4">
-
           <h2 className="text-xl font-semibold text-[#1F3A2C]">
             Edit Supplier
           </h2>
@@ -855,15 +765,10 @@ function EditSupplierModal({
           <p className="text-sm text-gray-500">
             Update supplier information.
           </p>
-
         </div>
 
 
-        <form
-          onSubmit={handleSubmit}
-          className="space-y-6 p-6"
-        >
-
+        <form onSubmit={handleSubmit} className="space-y-6 p-6">
           <div className="grid grid-cols-2 gap-4">
 
             {/* Supplier Name */}
@@ -983,7 +888,6 @@ function EditSupplierModal({
 
           {/* Buttons */}
           <div className="flex justify-end gap-3 pt-5">
-
             <button
               type="button"
               onClick={onClose}
@@ -998,19 +902,19 @@ function EditSupplierModal({
             >
               Save Changes
             </button>
-
           </div>
 
         </form>
-
       </div>
-
     </div>
   )
 }
 
 
 
+// =============================================
+// IMPORT SUPPLIER MODAL
+// =============================================
 function ImportSuppliersModal({ onClose, onSubmit }) {
 
   const [file, setFile] = useState(null)
@@ -1035,7 +939,6 @@ function ImportSuppliersModal({ onClose, onSubmit }) {
     setErrors([])
 
     try {
-
       const XLSX = await import('xlsx')
 
       const buffer = await selectedFile.arrayBuffer()
@@ -1104,14 +1007,7 @@ function ImportSuppliersModal({ onClose, onSubmit }) {
 
 
         // Skip completely empty rows
-        if (
-          !supplierName &&
-          !supplierType &&
-          !contactPerson &&
-          !email &&
-          !phone &&
-          !address
-        ) {
+        if (!supplierName && !supplierType && !contactPerson && !email && !phone && !address) {
           return
         }
 
@@ -1167,16 +1063,14 @@ function ImportSuppliersModal({ onClose, onSubmit }) {
       setPreview(validSuppliers)
       setErrors(importErrors)
 
-    } catch (error) {
-
+    }
+    
+    catch (error) {
       console.error(error)
-
       setFile(null)
-
       setErrors([
         'Unable to read the spreadsheet. Please make sure the file is a valid CSV or Excel file.',
       ])
-
     }
   }
 
@@ -1185,7 +1079,6 @@ function ImportSuppliersModal({ onClose, onSubmit }) {
   // IMPORT
   // =============================================
   async function handleImport() {
-
     if (preview.length === 0) {
       return
     }
@@ -1193,25 +1086,21 @@ function ImportSuppliersModal({ onClose, onSubmit }) {
     setIsProcessing(true)
 
     try {
-
       await onSubmit(preview)
-
-    } finally {
-
+    } 
+    
+    finally {
       setIsProcessing(false)
-
     }
   }
 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-
       <div className="w-full max-w-3xl overflow-hidden rounded-xl bg-white shadow-xl">
 
         {/* Header */}
         <div className="border-b bg-[#F4F8F5] px-6 py-4">
-
           <h2 className="text-xl font-semibold text-[#1F3A2C]">
             Import Suppliers
           </h2>
@@ -1219,7 +1108,6 @@ function ImportSuppliersModal({ onClose, onSubmit }) {
           <p className="text-sm text-gray-500">
             Bulk-add suppliers from a spreadsheet.
           </p>
-
         </div>
 
 
@@ -1228,7 +1116,6 @@ function ImportSuppliersModal({ onClose, onSubmit }) {
 
           {/* Spreadsheet format */}
           <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
-
             <p className="text-sm font-semibold text-blue-800">
               Spreadsheet format
             </p>
@@ -1246,13 +1133,11 @@ function ImportSuppliersModal({ onClose, onSubmit }) {
                 {' '}contact_person, email, phone, address
               </span>
             </p>
-
           </div>
 
 
           {/* File input */}
           <div>
-
             <label className="mb-2 block text-sm font-medium text-gray-700">
               Spreadsheet
             </label>
@@ -1263,14 +1148,12 @@ function ImportSuppliersModal({ onClose, onSubmit }) {
               onChange={handleFileChange}
               className="block w-full rounded-lg border border-gray-300 bg-white text-sm text-gray-700 file:mr-4 file:border-0 file:bg-[#F4F8F5] file:px-4 file:py-2 file:font-medium file:text-[#1F3A2C] hover:file:bg-[#E8F1EB]"
             />
-
           </div>
 
 
           {/* Selected file */}
           {file && (
             <div className="rounded-lg bg-gray-50 px-4 py-3">
-
               <p className="text-sm font-medium text-gray-800">
                 {file.name}
               </p>
@@ -1279,7 +1162,6 @@ function ImportSuppliersModal({ onClose, onSubmit }) {
                 {preview.length} valid supplier
                 {preview.length !== 1 ? 's' : ''} found
               </p>
-
             </div>
           )}
 
@@ -1287,24 +1169,17 @@ function ImportSuppliersModal({ onClose, onSubmit }) {
           {/* Validation errors */}
           {errors.length > 0 && (
             <div className="rounded-lg border border-red-200 bg-red-50 p-4">
-
               <p className="mb-2 text-sm font-semibold text-red-800">
                 Import warnings
               </p>
 
               <div className="max-h-32 overflow-y-auto">
-
                 {errors.map((error, index) => (
-                  <p
-                    key={index}
-                    className="text-xs text-red-700"
-                  >
+                  <p key={index} className="text-xs text-red-700">
                     {error}
                   </p>
                 ))}
-
               </div>
-
             </div>
           )}
 
@@ -1312,19 +1187,15 @@ function ImportSuppliersModal({ onClose, onSubmit }) {
           {/* Preview */}
           {preview.length > 0 && (
             <div>
-
               <p className="mb-2 text-sm font-semibold text-gray-700">
                 Preview
               </p>
 
               <div className="max-h-60 overflow-auto rounded-lg border border-gray-200">
-
                 <table className="min-w-full text-sm">
 
                   <thead className="sticky top-0 bg-[#F4F8F5]">
-
                     <tr>
-
                       <th className="px-4 py-2 text-left text-xs font-semibold text-gray-600">
                         Supplier
                       </th>
@@ -1340,21 +1211,12 @@ function ImportSuppliersModal({ onClose, onSubmit }) {
                       <th className="px-4 py-2 text-left text-xs font-semibold text-gray-600">
                         Email
                       </th>
-
                     </tr>
-
                   </thead>
 
-
                   <tbody>
-
                     {preview.map((supplier, index) => (
-
-                      <tr
-                        key={index}
-                        className="border-t border-gray-200"
-                      >
-
+                      <tr key={index} className="border-t border-gray-200">
                         <td className="px-4 py-2">
                           {supplier.supplier_name}
                         </td>
@@ -1370,24 +1232,18 @@ function ImportSuppliersModal({ onClose, onSubmit }) {
                         <td className="px-4 py-2">
                           {supplier.email || '-'}
                         </td>
-
                       </tr>
-
                     ))}
-
                   </tbody>
 
                 </table>
-
               </div>
-
             </div>
           )}
 
 
           {/* Buttons */}
           <div className="flex justify-end gap-3 pt-5">
-
             <button
               type="button"
               onClick={onClose}
@@ -1407,13 +1263,10 @@ function ImportSuppliersModal({ onClose, onSubmit }) {
                 ? 'Importing...'
                 : `Import ${preview.length} Supplier${preview.length !== 1 ? 's' : ''}`}
             </button>
-
           </div>
 
         </div>
-
       </div>
-
     </div>
   )
 }

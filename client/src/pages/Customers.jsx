@@ -186,6 +186,10 @@ export default function CustomersPage() {
 }
 
 
+
+// =============================================
+// ADD CUSTOMER MODAL
+// =============================================
 function AddCustomerModal({ onClose, onSubmit }) {
   const [form, setForm] = useState({
     name: '',
@@ -221,10 +225,7 @@ function AddCustomerModal({ onClose, onSubmit }) {
           </h2>
         </div>
 
-        <form
-          onSubmit={handleSubmit}
-          className="space-y-6 p-6"
-        >
+        <form onSubmit={handleSubmit} className="space-y-6 p-6">
           <div className="grid grid-cols-2 gap-4">
 
             {/* Company */}

@@ -11,7 +11,6 @@ export default function SupplierPerformancePage() {
 
   const [suppliers, setSuppliers] = useState([])
   const [selectedSupplierId, setSelectedSupplierId] = useState('')
-
   const [loadingSuppliers, setLoadingSuppliers] = useState(true)
 
 
@@ -65,7 +64,6 @@ export default function SupplierPerformancePage() {
           HEADER
       ============================================= */}
       <div className="mb-6 flex items-center justify-between">
-
         <div>
           <h1 className="text-3xl font-bold text-[#1F3A2C]">
             Supplier Performance
@@ -79,7 +77,6 @@ export default function SupplierPerformancePage() {
 
         {/* Supplier Dropdown */}
         <div className="w-64">
-
           <select
             value={selectedSupplierId}
             onChange={(e) => setSelectedSupplierId(e.target.value)}
@@ -88,24 +85,16 @@ export default function SupplierPerformancePage() {
           >
 
             <option value="">
-              {loadingSuppliers
-                ? 'Loading suppliers...'
-                : 'Select supplier'}
+              {loadingSuppliers ? 'Loading suppliers...' : 'Select supplier'}
             </option>
 
             {suppliers.map((supplier) => (
-              <option
-                key={supplier.id}
-                value={supplier.id}
-              >
+              <option key={supplier.id} value={supplier.id}>
                 {supplier.supplier_name}
               </option>
             ))}
-
           </select>
-
         </div>
-
       </div>
 
 
@@ -113,43 +102,34 @@ export default function SupplierPerformancePage() {
           PERFORMANCE CARD
       ============================================= */}
       {selectedSupplier ? (
-
         <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
 
           {/* Card Header */}
           <div className="border-b bg-[#F4F8F5] px-6 py-4">
-
             <div className="flex items-center justify-between">
-
               <div>
-
                 <h2 className="text-lg font-semibold text-[#1F3A2C]">
                   {selectedSupplier.supplier_name}
                 </h2>
 
-                <p className="mt-1 text-sm text-gray-500">
+                <p className="mt-0 text-sm text-gray-500">
                   {selectedSupplier.supplier_type}
                 </p>
-
               </div>
 
               <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-500">
                 No performance data
               </span>
-
             </div>
-
           </div>
 
 
           {/* Performance Content */}
           <div className="p-6">
-
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
 
               {/* On-Time Delivery */}
               <div className="rounded-lg border border-gray-200 p-5">
-
                 <p className="text-sm text-gray-500">
                   On-Time Delivery
                 </p>
@@ -157,13 +137,11 @@ export default function SupplierPerformancePage() {
                 <p className="mt-2 text-2xl font-bold text-gray-300">
                   —
                 </p>
-
               </div>
 
 
               {/* Order Accuracy */}
               <div className="rounded-lg border border-gray-200 p-5">
-
                 <p className="text-sm text-gray-500">
                   Order Accuracy
                 </p>
@@ -171,13 +149,11 @@ export default function SupplierPerformancePage() {
                 <p className="mt-2 text-2xl font-bold text-gray-300">
                   —
                 </p>
-
               </div>
 
 
               {/* Quality */}
               <div className="rounded-lg border border-gray-200 p-5">
-
                 <p className="text-sm text-gray-500">
                   Quality
                 </p>
@@ -185,13 +161,11 @@ export default function SupplierPerformancePage() {
                 <p className="mt-2 text-2xl font-bold text-gray-300">
                   —
                 </p>
-
               </div>
 
 
               {/* Overall Rating */}
               <div className="rounded-lg border border-gray-200 p-5">
-
                 <p className="text-sm text-gray-500">
                   Overall Rating
                 </p>
@@ -199,15 +173,12 @@ export default function SupplierPerformancePage() {
                 <p className="mt-2 text-2xl font-bold text-gray-300">
                   —
                 </p>
-
               </div>
-
             </div>
 
 
             {/* Empty State */}
             <div className="mt-6 rounded-lg border border-dashed border-gray-300 bg-gray-50 px-6 py-10 text-center">
-
               <p className="font-medium text-gray-600">
                 No performance data available
               </p>
@@ -215,20 +186,16 @@ export default function SupplierPerformancePage() {
               <p className="mt-1 text-sm text-gray-400">
                 Supplier performance metrics will appear here once performance data is available.
               </p>
-
             </div>
 
           </div>
-
         </div>
-
       ) : (
 
         /* =============================================
            NO SUPPLIER SELECTED
         ============================================= */
         <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-6 py-16 text-center">
-
           <p className="font-medium text-gray-600">
             Select a supplier
           </p>
@@ -236,11 +203,8 @@ export default function SupplierPerformancePage() {
           <p className="mt-1 text-sm text-gray-400">
             Choose a supplier above to view their performance.
           </p>
-
         </div>
-
       )}
-
     </div>
   )
 }

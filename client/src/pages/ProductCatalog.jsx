@@ -382,6 +382,7 @@ function EditProductModal({ product, manufacturers, onClose, onSubmit }) {
     supplier_id: product.supplier_id || '',
   })
 
+
   function handleChange(e) {
     setForm({
       ...form,
@@ -389,16 +390,11 @@ function EditProductModal({ product, manufacturers, onClose, onSubmit }) {
     })
   }
 
+
   function handleSubmit(e) {
     e.preventDefault()
 
-    if (
-      !form.product_name ||
-      !form.sku ||
-      !form.unit ||
-      !form.brand ||
-      !form.category
-    ) {
+    if (!form.product_name || !form.sku || !form.unit || !form.brand || !form.category) {
       return
     }
 
@@ -408,12 +404,10 @@ function EditProductModal({ product, manufacturers, onClose, onSubmit }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-
       <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
 
         {/* Header */}
         <div className="flex items-center justify-between border-b bg-[#F4F8F5] px-6 py-4">
-
           <div>
             <h2 className="text-xl font-semibold text-[#1F3A2C]">
               Edit Product
@@ -431,16 +425,11 @@ function EditProductModal({ product, manufacturers, onClose, onSubmit }) {
           >
             <FontAwesomeIcon icon={faXmark} />
           </button>
-
         </div>
 
 
         {/* Form */}
-        <form
-          onSubmit={handleSubmit}
-          className="space-y-6 p-6"
-        >
-
+        <form onSubmit={handleSubmit} className="space-y-6 p-6">
           <div className="grid grid-cols-2 gap-4">
 
             {/* Product Name */}
@@ -570,7 +559,6 @@ function EditProductModal({ product, manufacturers, onClose, onSubmit }) {
 
             {/* Manufacturer */}
             <div className="col-span-2">
-
               <label className="mb-1 block text-sm font-medium text-gray-700">
                 Manufacturer
               </label>
@@ -596,15 +584,12 @@ function EditProductModal({ product, manufacturers, onClose, onSubmit }) {
                 ))}
 
               </select>
-
             </div>
-
           </div>
 
 
           {/* Buttons */}
           <div className="flex justify-end gap-3 pt-5">
-
             <button
               type="button"
               onClick={onClose}
@@ -619,13 +604,10 @@ function EditProductModal({ product, manufacturers, onClose, onSubmit }) {
             >
               Save Changes
             </button>
-
           </div>
 
         </form>
-
       </div>
-
     </div>
   )
 }
