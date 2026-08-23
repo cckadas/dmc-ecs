@@ -32,7 +32,7 @@ export default function Topbar({ collapsed, onToggleSidebar }) {
 
   return (
     <header
-      className={`fixed right-0 top-0 z-20 flex h-16 items-center justify-between border-b border-gray-200 bg-white px-6 transition-all duration-300 ${ collapsed ? 'left-24' : 'left-72' }`}
+      className={`fixed right-0 top-0 z-20 flex h-16 items-center justify-between border-b border-gray-200 bg-white px-7 transition-all duration-300 ${ collapsed ? 'left-24' : 'left-72' }`}
     >
 
       {/* Left */}

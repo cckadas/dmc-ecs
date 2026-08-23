@@ -38,9 +38,15 @@ const sections = [
     items: [
       {
         label: 'Dashboard',
+        path: 'executive-dashboard',
+        icon: faHouse,
+        roles: ['admin', 'management'],
+      },
+      {
+        label: 'Dashboard',
         path: 'dashboard',
         icon: faHouse,
-        roles: ['admin', 'warehouse', 'procurement', 'sales', 'customer'],
+        roles: ['warehouse', 'procurement', 'sales', 'customer'],
       },
     ],
   },

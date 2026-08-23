@@ -200,7 +200,8 @@ export default function PurchaseOrdersPage() {
             id,
             product_name,
             brand,
-            supplier_id
+            supplier_id,
+            unit
           )
         )
       `)
@@ -815,6 +816,7 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
       product_name: item.products?.product_name || 'Unknown Product',
       brand: item.products?.brand || '',
       ordered_quantity: Number(item.quantity || 0),
+      unit: item.products?.unit || '',
 
       // Supplier actually selected for the PO
       supplier_id: '',
@@ -1087,7 +1089,7 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
                               {/* QUANTITY */}
                               <td className=" px-4 py-4">
                                 <p className="font-medium text-gray-800">
-                                  {item.ordered_quantity}
+                                  {item.ordered_quantity} {item.unit}
                                 </p>
                               </td>
 

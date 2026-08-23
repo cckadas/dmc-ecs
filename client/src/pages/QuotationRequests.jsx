@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlus, faTrash, faFileSignature, faDownload } from '@fortawesome/free-solid-svg-icons'
+import { faPlus, faTrash, faFileSignature, faDownload, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 
 import IconButton from '../components/IconButton'
@@ -718,35 +718,37 @@ function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="flex flex-col w-full max-w-6xl rounded-xl bg-white shadow-xl">
+      <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-xl">
 
-      {/* <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-xl"></div> */}
-
-        {/* Header */}
+        {/* =================================================
+            HEADER
+        ================================================= */}
         <div className="flex items-center justify-between border-b px-6 py-4">
           <div>
-            <h2 className="text-xl font-bold text-[#1F3A2C]">
-              Quotation
+            <h2 className="text-xl font-semibold text-gray-800">
+              {quotation.quotation_number}
             </h2>
 
             <p className="text-sm text-gray-500">
-              {quotation.quotation_number}
+              Quotation
             </p>
           </div>
 
-          <button
-            onClick={onClose}
-            className="text-2xl text-gray-400 hover:text-gray-600"
-          >
-            ×
+          <button onClick={onClose} className=" rounded-md p-2 text-gray-500 hover:bg-gray-100 disabled:opacity-50">
+            <FontAwesomeIcon icon={faXmark}/>
           </button>
         </div>
 
 
         {/* =================================================
-            ORDER INFORMATION
+            CONTENT
         ================================================= */}
-        <div className="px-6 pt-6">
+        <div className="flex-1 overflow-y-auto p-6">
+
+
+          {/* =================================================
+              ORDER INFORMATION
+          ================================================= */}
           <h3 className="mb-3 text-sm font-semibold text-gray-800">
             Quotation Information
           </h3>
@@ -772,78 +774,94 @@ function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
               <p className="mt-1 font-medium text-gray-800"> {new Date(quotation.created_at).toLocaleDateString()} </p>
             </div>
           </div>
-        </div>
 
 
-
-        {/* Items */}
-        <div className="px-6">
+          {/* =================================================
+              ITEMS
+          ================================================= */}
           <h3 className="mb-3 text-sm font-semibold text-gray-800">
             Quotation Items
           </h3>
 
           <div className="overflow-hidden rounded-lg border">
-            <table className="min-w-full">
-              <thead className="bg-[#F4F8F5]">
+            <table className=" min-w-full">
+
+              <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-600">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
                     Product
                   </th>
 
-                  <th className="px-4 py-3 text-center text-xs font-semibold uppercase text-gray-600">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
                     Quantity
                   </th>
 
-                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-600">
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
+                    Unit
+                  </th>
+
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
                     Unit Price
                   </th>
 
-                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-600">
+                  <th className="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-500">
                     Subtotal
                   </th>
                 </tr>
               </thead>
 
               <tbody>
-                {quotation.quotation_items?.map((item) => (
-                  <tr
-                    key={item.id}
-                    className="border-t border-gray-200"
-                  >
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-gray-800">
+                {quotation.quotation_items.map((item) => (
+                  <tr key={item.id} className="border-t border-gray-200">
+
+                    {/* PRODUCT */}
+                    <td className="px-4 py-4">
+                      <p className="font-medium text-gray-800">
                         {item.products?.product_name}
-                      </div>
+                      </p>
 
                       {item.products?.brand && (
-                        <div className="text-xs text-gray-500">
+                        <p className="text-xs text-gray-500">
                           {item.products.brand}
-                        </div>
+                        </p>
                       )}
                     </td>
 
-                    <td className="px-4 py-3 text-center">
-                      {item.quantity} {item.products?.unit}
+
+                    {/* QUANTITY */}
+                    <td className="px-4 py-4 text-left">
+                      {item.quantity}
                     </td>
 
-                    <td className="px-4 py-3 text-right">
-                      ₱ {Number(item.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+
+                    {/* UNIT */}
+                    <td className="px-4 py-4 text-left">
+                      {item.products.unit}
                     </td>
 
-                    <td className="px-4 py-3 text-right font-medium">
-                      ₱ {Number(item.subtotal).toLocaleString(undefined,{ minimumFractionDigits: 2 })}
+
+                    {/* UNIT PRICE */}
+                    <td className="px-4 py-4 text-left">
+                      ₱ {Number(item.unit_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </td>
+
+
+                    {/* SUBTOTAL */}
+                    <td className="px-4 py-4 text-right">
+                      ₱ {Number(item.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
                   </tr>
                 ))}
               </tbody>
+
             </table>
           </div>
-        </div>
+
 
           {/* =================================================
               SUMMARY
           ================================================= */}
-          <div className="m-6 flex justify-end">
+          <div className="mt-6 flex justify-end">
             <div className="w-full max-w-sm">
           
               <h3 className="mb-3 text-sm font-semibold text-gray-800">
@@ -904,11 +922,15 @@ function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
               
             </div>
           </div>
+        </div>
 
-        {/* Footer */}
-        <div className="bg-gray-50 px-6 py-4">
+
+        {/* =================================================
+            FOOTER
+        ================================================= */}
+        <div className="flex w-full items-center gap-3 bg-gray-50 px-6 py-4">
           {quotation.status === 'rejected' ? (
-            <div className="flex items-center justify-between">
+            <div className="flex w-full items-center justify-between">
               <div>
                 <p className="font-medium text-red-600">
                   Quotation Rejected
@@ -927,7 +949,7 @@ function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
               </button>
             </div>
           ) : quotation.status === 'approved' ? (
-            <div className="flex items-center justify-between">
+            <div className="flex w-full items-center justify-between">
               <div>
                 <p className="font-medium text-green-600">
                   Quotation Approved
@@ -946,7 +968,7 @@ function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
               </button>
             </div>
           ) : isExpired ? (
-            <div className="flex items-center justify-between gap-4">
+            <div className="flex w-full items-center justify-between gap-4">
               <div>
                 <p className="font-medium text-red-600">
                   Quotation Expired
@@ -966,7 +988,7 @@ function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
               </button>
             </div>
           ) : (
-            <div className="flex items-center justify-between">
+            <div className="flex w-full items-center justify-between">
               <button
                 type="button"
                 onClick={downloadPFI}
