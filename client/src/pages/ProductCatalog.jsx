@@ -184,7 +184,7 @@ export default function ProductCatalogPage() {
           Product Catalog
         </h1>
 
-        <p className="text-gray-500">
+        <p className="mt-1 text-gray-500">
           Browse available export products.
         </p>
       </div>
@@ -278,10 +278,7 @@ export default function ProductCatalogPage() {
 
             {products.length > 0 ? (
               products.map((product) => (
-                <tr
-                  key={product.id}
-                  className="border-t border-gray-200 text-sm hover:bg-gray-50"
-                >
+                <tr key={product.id}  className="border-t border-gray-200 text-sm hover:bg-gray-50">
 
                   <td className="px-5 py-3">
                     {product.sku}
@@ -328,7 +325,6 @@ export default function ProductCatalogPage() {
                       <div className="flex items-center justify-start gap-2"> 
                         <IconButton icon={faPen} title="Edit Product" color="amber" disabled={false} onClick={() => handleEditProduct(product)}/>
                         <IconButton icon={faTrash} title="Delete Product" color="red" disabled={false} onClick={() => handleDeleteProduct(product)}/>
-
                       </div>
                     </td>
                   )}

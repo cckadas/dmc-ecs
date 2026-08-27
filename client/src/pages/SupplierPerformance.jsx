@@ -69,7 +69,7 @@ export default function SupplierPerformancePage() {
             Supplier Performance
           </h1>
 
-          <p className="text-gray-500">
+          <p className="mt-1 text-gray-500">
             Monitor and evaluate supplier performance.
           </p>
         </div>

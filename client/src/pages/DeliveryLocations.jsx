@@ -154,7 +154,7 @@ export default function DeliveryLocationsPage() {
             Delivery Locations
           </h1>
 
-          <p className="text-gray-500">
+          <p className="mt-1 text-gray-500">
             Manage your saved delivery addresses.
           </p>
         </div>

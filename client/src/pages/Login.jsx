@@ -73,7 +73,19 @@ export default function LoginPage() {
     const userRole = profile.role
 
     if(userRole === "admin"){
-      navigate("/admin/dashboard")
+      navigate("/admin/executive-dashboard")
+    }
+
+    else if(userRole === "management"){
+      navigate("/management/executive-dashboard")
+    }
+
+    else if(userRole === "sales"){
+      navigate("/sales/dashboard")
+    }
+
+    else if(userRole === "procurement"){
+      navigate("/procurement/dashboard")
     }
 
     else if(userRole === "warehouse"){

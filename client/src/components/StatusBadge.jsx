@@ -14,11 +14,26 @@ import {
   faReceipt,
   faCircleXmark,
   faDolly,
+  faPaperPlane,
+  faTruckRampBox,
+  faCheckCircle,
+  faBoxOpen,
+  faWarehouse,
+  faCartFlatbed,
+  faPlaneDeparture,
+  faInbox,
+  faLanguage,
+  faFileCircleCheck,
+  faPrint,
+  faStickyNote,
 } from '@fortawesome/free-solid-svg-icons'
 
 export default function StatusBadge({ status }) {
   const statusStyles = {
 
+    // -------------------------------------------------
+    // GENERAL
+    // -------------------------------------------------
     'pending': {
       style: 'bg-amber-50 text-amber-700 border-amber-200',
       icon: faClock,
@@ -76,6 +91,28 @@ export default function StatusBadge({ status }) {
     },
 
 
+    // -------------------------------------------------
+    // PAYMENT
+    // -------------------------------------------------
+    'unpaid': {
+      style: 'bg-gray-50 text-gray-600 border-gray-200',
+      icon: faCreditCard,
+    },
+
+    'down payment received': {
+      style: 'bg-blue-50 text-blue-600 border-blue-200',
+      icon: faCreditCard,
+    },
+
+    'fully paid': {
+      style: 'bg-green-50 text-green-600 border-green-200',
+      icon: faCreditCard,
+    },
+
+
+    // -------------------------------------------------
+    // CUSTOMER ORDER
+    // -------------------------------------------------
     'submitted': {
       style: 'bg-sky-50 text-sky-700 border-sky-200',
       icon: faReceipt,
@@ -96,6 +133,83 @@ export default function StatusBadge({ status }) {
       icon: faDolly,
     },
 
+    'warehouse preparation': {
+      style: 'bg-cyan-50 text-cyan-700 border-cyan-200',
+      icon: faWarehouse,
+    },
+
+    'ready for shipment': {
+      style: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+      icon: faCartFlatbed,
+    },
+
+    'shipped': {
+      style: 'bg-green-50 text-green-700 border-green-200',
+      icon: faPlaneDeparture,
+    },
+
+
+    // -------------------------------------------------
+    // PURCHASE ORDER
+    // -------------------------------------------------
+    'sent to supplier': {
+      style: 'bg-amber-50 text-amber-700 border-amber-200',
+      icon: faPaperPlane,
+    },
+
+    'payment sent to supplier': {
+      style: 'bg-sky-50 text-sky-700 border-sky-200',
+      icon: faReceipt,
+    },
+
+    'awaiting delivery': {
+      style: 'bg-sky-50 text-sky-700 border-sky-200',
+      icon: faTruckRampBox,
+    },
+
+    'partially delivered': {
+      style: 'bg-lime-50 text-lime-700 border-lime-200',
+      icon: faBoxOpen,
+    },
+
+    'fully delivered': {
+      style: 'bg-green-50 text-green-700 border-green-200',
+      icon: faCheckCircle,
+    },
+
+
+    // -------------------------------------------------
+    // COMPLIANCE LABEL
+    // -------------------------------------------------
+    'not started': {
+      style: 'bg-gray-50 text-gray-700 border-gray-200',
+      icon: faClock,
+    },
+
+    'original label received': {
+      style: 'bg-amber-50 text-amber-700 border-amber-200',
+      icon: faInbox,
+    },
+
+    'awaiting customer translated design': {
+      style: 'bg-blue-50 text-blue-700 border-blue-200',
+      icon: faLanguage,
+    },
+
+    'customer design label received': {
+      style: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+      icon: faFileCircleCheck,
+    },
+
+    'printed & awaiting application': {
+      style: 'bg-purple-50 text-purple-700 border-purple-200',
+      icon: faPrint,
+    },
+
+    'applied to units': {
+      style: 'bg-green-50 text-green-700 border-green-200',
+      icon: faStickyNote,
+    },
   }
 
   const normalizedStatus = status?.toLowerCase()

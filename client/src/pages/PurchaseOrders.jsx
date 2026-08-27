@@ -10,7 +10,8 @@ import {
   faFolderOpen,
   faPlus,
   faXmark,
-  faFileInvoice
+  faFileInvoice,
+  faMoneyBillTransfer,
 } from '@fortawesome/free-solid-svg-icons'
 
 import StatusBadge from '../components/StatusBadge'
@@ -25,12 +26,14 @@ export default function PurchaseOrdersPage() {
   const [customerOrders, setCustomerOrders] = useState([])
   const [suppliers, setSuppliers] = useState([])
   const [selectedPO, setSelectedPO] = useState(null)
+  const [selectedSupplierGroup, setSelectedSupplierGroup] = useState(null)
   const [showViewModal, setShowViewModal] = useState(false)
   const [showAddModal, setShowAddModal] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadingCustomerOrders, setLoadingCustomerOrders] = useState(false)
   const [loadingSuppliers, setLoadingSuppliers] = useState(false)
   const [creatingPO, setCreatingPO] = useState(false)
+  const [showSupplierPFIModal, setShowSupplierPFIModal] = useState(false)
 
 
   // =====================================================
@@ -60,6 +63,11 @@ export default function PurchaseOrdersPage() {
           status,
           created_at,
           updated_at,
+          supplier_pfi_file_path,
+          supplier_pfi_amount,
+          payment_amount,
+          payment_date,
+          payment_proof_path,
 
           products (
             id,
@@ -346,6 +354,15 @@ export default function PurchaseOrdersPage() {
   }
 
 
+  // =============================================
+  // OPEN SUPPLIER PFI / PAYMENT MODAL
+  // =============================================
+  function openSupplierPFIModal(po, supplierGroup) {
+    setSelectedPO(po)
+    setSelectedSupplierGroup(supplierGroup)
+    setShowSupplierPFIModal(true)
+  }
+
 
   // =====================================================
   // CREATE PURCHASE ORDER
@@ -433,7 +450,7 @@ export default function PurchaseOrdersPage() {
           expected_delivery_date: expectedDeliveryDate,
           customer_order_id: customerOrderId,
           po_number: poNumber,
-          status: 'pending'
+          status: 'sent to supplier'
         })
         .select()
         .single()
@@ -454,7 +471,7 @@ export default function PurchaseOrdersPage() {
           ordered_quantity: Number(item.ordered_quantity),
           received_quantity: 0,
           unit_price: Number(item.unit_price),
-          status: 'pending'
+          status: 'sent to supplier'
         }))
 
 
@@ -565,21 +582,20 @@ export default function PurchaseOrdersPage() {
             Purchase Orders
           </h1>
 
-          <p className="text-gray-500">
+          <p className="mt-1 text-gray-500">
             View and manage purchase orders.
           </p>
         </div>
 
-
-        <button
-          onClick={openAddModal}
-          className="flex items-center gap-2 rounded-lg bg-[#1F3A2C] px-4 py-2.5 text-sm font-medium text-white shadow-sm  hover:bg-[#294D3A]"
-        >
-
-          <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5"/>
-          Add Purchase Order
-        </button>
-
+        {(profile?.role === 'admin' || profile?.role === 'procurement') && (
+          <button
+            onClick={openAddModal}
+            className="flex items-center gap-2 rounded-lg bg-[#1F3A2C] px-4 py-2.5 text-sm font-medium text-white shadow-sm  hover:bg-[#294D3A]"
+          >
+            <FontAwesomeIcon icon={faPlus} className="h-3.5 w-3.5"/>
+            Add Purchase Order
+          </button>
+        )}
       </div>
 
 
@@ -619,9 +635,11 @@ export default function PurchaseOrdersPage() {
                 Date
               </th>
 
+              {(profile?.role === 'admin' || profile?.role === 'procurement') && (
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
                 Action
               </th>
+              )}
             </tr>
           </thead>
 
@@ -629,7 +647,7 @@ export default function PurchaseOrdersPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan="8" className="py-10 text-center text-sm text-gray-500">
+                <td colSpan={(profile?.role === 'admin' || profile?.role === 'procurement') ? 8 : 7} className="py-10 text-center text-sm text-gray-500">
                   Loading purchase orders...
                 </td>
               </tr>
@@ -721,15 +739,19 @@ export default function PurchaseOrdersPage() {
 
 
                     {/* ACTION */}
-                    <td className="px-5 py-4">
-                      <IconButton icon={faFolderOpen} title="View Purchase Order" color="blue" disabled={false} onClick={() => openViewModal(po)}/>
-                    </td>
+                    {(profile?.role === 'admin' || profile?.role === 'procurement') && (
+                      <td className="px-5 py-4">
+                        <div className="flex items-center justify-start gap-2"> 
+                          <IconButton icon={faFolderOpen} title="View Purchase Order" color="blue" disabled={false} onClick={() => openViewModal(po)}/>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 )
               })
             ) : (
               <tr>
-                <td colSpan="8" className="py-10 text-center text-sm text-gray-500">
+                <td colSpan={(profile?.role === 'admin' || profile?.role === 'procurement') ? 8 : 7} className="py-10 text-center text-sm text-gray-500">
                   No purchase orders found.
                 </td>
               </tr>
@@ -759,15 +781,904 @@ export default function PurchaseOrdersPage() {
       {showViewModal && selectedPO && (
         <PurchaseOrderModal
           purchaseOrder={selectedPO}
+          onOpenSupplierPFI={openSupplierPFIModal}
           onClose={() => {
             setShowViewModal(false)
             setSelectedPO(null)
           }}
         />
       )}
+
+
+      {showSupplierPFIModal && selectedPO && selectedSupplierGroup && (
+        <SupplierPFIPaymentModal
+          po={selectedPO}
+          supplierGroup={selectedSupplierGroup}
+          onClose={() => {
+            setShowSupplierPFIModal(false)
+            setSelectedSupplierGroup(null)
+          }}
+          onSuccess={() => {
+            setShowSupplierPFIModal(false)
+            setSelectedPO(null)
+            setSelectedSupplierGroup(null)
+            loadPurchaseOrders()
+          }}
+        />
+      )}
+
     </div>
   )
 }
+
+
+
+
+
+
+
+// =====================================================
+// VIEW PURCHASE ORDER MODAL
+// =====================================================
+function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI}) {
+
+  const items = purchaseOrder.purchase_order_items || []
+
+  // ===================================================
+  // GROUP ITEMS BY SUPPLIER
+  // ===================================================
+  const itemsBySupplier = items.reduce((groups, item) => {
+    const supplierId = item.supplier_id
+
+    if (!groups[supplierId]) {
+      groups[supplierId] = {
+        supplier: item.suppliers || null,
+        items: [],
+      }
+    }
+
+    groups[supplierId].items.push(item)
+
+    return groups
+  }, {})
+
+
+  // ===================================================
+  // PURCHASE TOTAL
+  // ===================================================
+  const purchaseTotal =
+    items.reduce(
+      (total, item) => {
+        return (total + (Number(item.ordered_quantity || 0) * Number(item.unit_price || 0)))
+      },
+      0
+    )
+
+
+  // ===================================================
+  // ORDERED / RECEIVED
+  // ===================================================
+  const totalOrdered = items.reduce(
+    (total, item) =>
+      total + Number(item.ordered_quantity || 0),
+    0
+  )
+
+  const totalReceived = items.reduce(
+    (total, item) =>
+      total + Number(item.received_quantity || 0),
+    0
+  )
+
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-xl">
+
+        {/* =================================================
+            HEADER
+        ================================================= */}
+        <div className="flex items-center justify-between border-b px-6 py-4">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-800">
+              {purchaseOrder.po_number}
+            </h2>
+
+            <p className="text-sm text-gray-500">
+              Purchase Order
+            </p>
+          </div>
+
+          <button onClick={onClose} className=" rounded-md p-2 text-gray-500 hover:bg-gray-100 disabled:opacity-50">
+            <FontAwesomeIcon icon={faXmark}/>
+          </button>
+        </div>
+
+
+        {/* =================================================
+            CONTENT
+        ================================================= */}
+        <div className="flex-1 overflow-y-auto p-6">
+
+
+          {/* =================================================
+              INFORMATION
+          ================================================= */}
+          <h3 className="mb-3 text-sm font-semibold text-gray-800">
+            Purchase Order Information
+          </h3>
+
+          <div className="mb-6 grid grid-cols-1 gap-4 rounded-lg bg-gray-50 p-4 md:grid-cols-4">
+            <div>
+              <p className="text-xs uppercase text-gray-500"> PO Number </p>
+              <p className="mt-1 font-medium text-gray-800"> {purchaseOrder.po_number} </p>
+            </div>
+
+            <div>
+              <p className="text-xs uppercase text-gray-500"> Customer Order </p>
+              <p className="mt-1 font-medium text-gray-800"> {purchaseOrder.customer_orders?.order_number || '-'} </p>
+            </div>
+
+            <div>
+              <p className="text-xs uppercase text-gray-500"> Customer </p>
+              <p className="mt-1 font-medium text-gray-800"> {purchaseOrder.customer_orders?.profile?.name || '-'} </p>
+
+              {purchaseOrder.customer_orders?.profile?.company && (
+                <p className="text-xs text-gray-500">
+                  {purchaseOrder.customer_orders.profile.company}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <p className="text-xs uppercase text-gray-500"> Status </p>
+              <div className="mt-1">
+                <StatusBadge status={purchaseOrder.status}/>
+              </div>
+            </div>
+          </div>
+
+
+          {/* =================================================
+              ITEMS
+          ================================================= */}
+          <h3 className="mb-3 text-sm font-semibold text-gray-800">
+            Purchase Order Items
+          </h3>
+
+          <div className="space-y-6">
+
+            {Object.entries(itemsBySupplier).map(
+              ([supplierId, supplierGroup]) => {
+
+                const supplierItems = supplierGroup.items
+                const supplier = supplierGroup.supplier
+
+                const supplierTotal = supplierItems.reduce(
+                  (total, item) =>
+                    total +
+                    Number(item.ordered_quantity || 0) *
+                    Number(item.unit_price || 0),
+                  0
+                )
+
+                return (
+                  <div key={supplierId} className="overflow-hidden rounded-lg border border-gray-200">
+
+                    {/* =========================================
+                        SUPPLIER HEADER
+                    ========================================= */}
+                    <div className="flex items-center justify-between bg-[#F4F8F5] px-5 py-4">
+                      <div className="flex items-center gap-8">
+                        <div className="mr-4">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                            Supplier
+                          </p>
+
+                          <p className="mt-1 text-base font-semibold text-[#1F3A2C]">
+                            {supplier?.supplier_name || 'Unknown Supplier'}
+                          </p>
+                        </div>
+
+                        <div className="text-left">
+                          <p className="text-xs text-gray-500">
+                            No# of Item {supplierItems.length !== 1 ? 's' : ''}
+                          </p>
+
+                          <p className="mt-1 text-sm font-semibold text-gray-800">
+                            {supplierItems.length} item {supplierItems.length !== 1 ? 's' : ''}
+                          </p>
+                        </div>
+
+                        <div className="text-left">
+                          <p className="text-xs text-gray-500">
+                            Total Amount
+                          </p>
+
+                          <p className="mt-1 text-sm font-semibold text-gray-800">
+                            ₱ {supplierTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-4">
+                        <button
+                          type="button"
+                          onClick={() => onOpenSupplierPFI(purchaseOrder, supplierGroup)}
+                          className="flex items-center gap-2 rounded-lg bg-[#2D5A42] px-4 py-2 text-sm font-medium text-white hover:bg-[#234633]"
+                        >
+                          <FontAwesomeIcon
+                            icon={faFileInvoice}
+                            className="h-3.5 w-3.5"
+                          />
+
+                          Supplier PFI & Payment
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* =========================================
+                        SUPPLIER ITEMS
+                    ========================================= */}
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full">
+
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
+                              Product
+                            </th>
+
+                            <th className="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-500">
+                              Ordered
+                            </th>
+
+                            <th className="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-500">
+                              Received
+                            </th>
+
+                            <th className="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-500">
+                              Unit Price
+                            </th>
+
+                            <th className="px-4 py-3 text-right text-xs font-semibold uppercase text-gray-500">
+                              Total
+                            </th>
+
+                            <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
+                              Status
+                            </th>
+                          </tr>
+                        </thead>
+
+                        <tbody>
+                          {supplierItems.map((item) => {
+                            const itemTotal = Number(item.ordered_quantity || 0) * Number(item.unit_price || 0)
+
+                            return (
+                              <tr key={item.id} className="border-t border-gray-200">
+
+                                {/* PRODUCT */}
+                                <td className="px-4 py-4">
+                                  <p className="font-medium text-gray-800">
+                                    {item.products?.product_name || '-'}
+                                  </p>
+
+                                  {item.products?.brand && (
+                                    <p className="text-xs text-gray-500">
+                                      {item.products.brand}
+                                    </p>
+                                  )}
+                                </td>
+
+                                {/* ORDERED */}
+                                <td className="px-4 py-4 text-right">
+                                  {item.ordered_quantity}
+                                </td>
+
+                                {/* RECEIVED */}
+                                <td className="px-4 py-4 text-right">
+                                  {item.received_quantity}
+                                </td>
+
+                                {/* UNIT PRICE */}
+                                <td className="px-4 py-4 text-right">
+                                  ₱ {Number(item.unit_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </td>
+
+                                {/* TOTAL */}
+                                <td className="px-4 py-4 text-right font-medium">
+                                  ₱ {itemTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </td>
+
+                                {/* STATUS */}
+                                <td className="px-4 py-4">
+                                  <StatusBadge status={item.status} />
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+
+                      </table>
+                    </div>
+                  </div>
+                )
+              }
+            )}
+
+          </div>
+
+          {/* =================================================
+              SUMMARY
+          ================================================= */}
+          <div className="mt-8 flex justify-end">
+            <div className="w-full max-w-sm">
+              <h3 className="mb-3 text-sm font-semibold text-gray-800">
+                Purchase Order Summary
+              </h3>
+
+              <div className="rounded-lg bg-gray-50 p-5">
+                <div className="mb-3 flex justify-between text-sm">
+                  <span className="text-gray-500">
+                    Total Ordered
+                  </span>
+
+                  <span className="font-medium">
+                    {totalOrdered}
+                  </span>
+                </div>
+
+
+                <div className="mb-3 flex justify-between text-sm">
+                  <span className="text-gray-500">
+                    Total Received
+                  </span>
+
+                  <span className="font-medium">
+                    {totalReceived}
+                  </span>
+                </div>
+
+
+                <div className="border-t pt-3">
+                  <div className="flex justify-between">
+                    <span className="font-semibold text-gray-700">
+                      Purchase Total
+                    </span>
+
+                    <span className="text-xl font-bold text-gray-800">
+                      ₱ {purchaseTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+
+        {/* =================================================
+            FOOTER
+        ================================================= */}
+        <div className="flex items-center justify-end gap-3 bg-gray-50 px-6 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+        </div>
+
+      </div>
+    </div>
+  )
+}
+
+
+
+
+
+
+
+
+
+// =============================================
+// SUPPLIER PFI & PAYMENT MODAL
+// =============================================
+function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
+
+  const { toast } = useToast()
+
+  const supplier = supplierGroup?.supplier
+  const supplierItems = supplierGroup?.items || []
+
+  const existingItem = supplierItems.find(
+    item =>
+      item.supplier_pfi_file_path ||
+      item.supplier_pfi_amount ||
+      item.payment_amount ||
+      item.payment_date ||
+      item.payment_proof_path
+  )
+
+  const [supplierPFIPath, setSupplierPFIPath] = useState(existingItem?.supplier_pfi_file_path || null)
+  const [confirmedAmount, setConfirmedAmount] = useState(existingItem?.supplier_pfi_amount || '')
+  const [paymentAmount, setPaymentAmount] = useState(existingItem?.payment_amount || '')
+  const [paymentDate, setPaymentDate] = useState(existingItem?.payment_date || '')
+
+  const [supplierPFI, setSupplierPFI] = useState(null)
+  const [paymentProof, setPaymentProof] = useState(null)
+  const [uploadingPFI, setUploadingPFI] = useState(false)
+  const [markingPaid, setMarkingPaid] = useState(false)
+
+
+  // =============================================
+  // UPLOAD SUPPLIER PFI
+  // =============================================
+  async function uploadSupplierPFI() {
+    if (!supplierPFI) {
+      toast.error('Please select the supplier PFI.')
+      return
+    }
+
+    setUploadingPFI(true)
+
+    const fileExtension = supplierPFI.name.split('.').pop()
+    const filePath = `supplier-pfis/${po.id}/${supplier.id}/supplier-pfi-${Date.now()}.${fileExtension}`
+
+    const { error: uploadError } = await supabase.storage
+      .from('documents')
+      .upload(filePath, supplierPFI, {
+          cacheControl: '3600',
+          upsert: false,
+      })
+
+    if (uploadError) {
+      console.error(uploadError)
+      toast.error('Failed to upload supplier PFI.')
+      setUploadingPFI(false)
+      return
+    }
+
+    const { error: updateError } = await supabase
+      .from('purchase_order_items')
+      .update({
+        supplier_pfi_file_path: filePath,
+        supplier_pfi_amount: Number(confirmedAmount) || 0,
+      })
+      .eq('purchase_order_id', po.id)
+      .eq('supplier_id', supplier.id)
+
+    if (updateError) {
+      console.error(updateError)
+      toast.error('Failed to save supplier PFI.')
+      setUploadingPFI(false)
+      return
+    }
+
+    setSupplierPFIPath(filePath)
+    setSupplierPFI(null)
+
+    toast.success('Supplier PFI uploaded successfully.')
+
+    setUploadingPFI(false)
+  }
+
+
+  // =============================================
+  // VIEW SUPPLIER PFI
+  // =============================================
+  async function viewSupplierPFI() {
+    if (!supplierPFIPath) {
+      toast.error('Supplier PFI is not available.')
+      return
+    }
+
+    const { data, error } = await supabase.storage
+      .from('documents')
+      .createSignedUrl(supplierPFIPath, 60)
+
+    if (error) {
+      console.error(error)
+      toast.error('Failed to open supplier PFI.')
+      return
+    }
+
+    window.open(
+      data.signedUrl,
+      '_blank',
+      'noopener,noreferrer'
+    )
+  }
+
+
+  // =============================================
+  // MARK PO AS PAID
+  // =============================================
+  async function markAsPaid() {
+    if (!supplierPFIPath) {
+      toast.error('Upload the supplier PFI first.')
+      return
+    }
+
+    if (!paymentAmount || Number(paymentAmount) <= 0) {
+      toast.error('Enter the payment amount.')
+      return
+    }
+
+    if (!paymentDate) {
+      toast.error('Enter the payment date.')
+      return
+    }
+
+    if (!paymentProof) {
+      toast.error('Upload DMC proof of payment.')
+      return
+    }
+
+    const confirmed = window.confirm(
+      'Mark this purchase order as paid to the supplier?'
+    )
+
+    if (!confirmed) return
+
+    setMarkingPaid(true)
+
+    try {
+      // -----------------------------------------
+      // UPLOAD DMC PAYMENT PROOF
+      // -----------------------------------------
+      const extension = paymentProof.name.split('.').pop()
+      const paymentProofPath =`supplier-payment-proofs/${po.id}/${supplier.id}/payment-${Date.now()}.${extension}`
+
+      const { error: uploadError } = await supabase.storage
+        .from('payment-proofs')
+        .upload(paymentProofPath, paymentProof, {
+          cacheControl: '3600',
+          upsert: false,
+        })
+
+      if (uploadError) {
+        throw uploadError
+      }
+
+
+      // -----------------------------------------
+      // UPDATE PURCHASE ORDER
+      // -----------------------------------------
+      const { error: itemError } = await supabase
+        .from('purchase_order_items')
+        .update({
+          payment_amount: Number(paymentAmount),
+          payment_date: paymentDate,
+          payment_proof_path: paymentProofPath,
+          status: 'awaiting delivery',
+        })
+        .eq('purchase_order_id', po.id)
+        .eq('supplier_id', supplier.id)
+
+      if (itemError) {
+        throw itemError
+      }
+
+      toast.success('Purchase order marked as paid to supplier.')
+      onSuccess()
+    }
+    
+    catch (error) {
+      console.error(error)
+      toast.error('Failed to mark purchase order as paid.')
+    }
+    
+    finally {
+      setMarkingPaid(false)
+    }
+  }
+
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-xl">
+
+
+        {/* =================================================
+            HEADER
+        ================================================= */}
+        <div className="flex items-center justify-between border-b px-6 py-4">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-800">
+              {supplier?.supplier_name || 'Unknown Supplier'}
+            </h2>
+
+            <p className="text-sm text-gray-500">
+              {po?.po_number} · Supplier PFI & Payment
+            </p>
+          </div>
+
+          <button onClick={onClose} className=" rounded-md p-2 text-gray-500 hover:bg-gray-100 disabled:opacity-50">
+            <FontAwesomeIcon icon={faXmark}/>
+          </button>
+        </div>
+
+
+        {/* =================================================
+            CONTENT
+        ================================================= */}
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="mb-6 grid grid-cols-1 gap-6 md:grid-cols-6">
+
+
+            {/* =====================================================
+                SUPPLIER PFI
+            ===================================================== */}
+            <div className="md:col-span-3">
+              <h3 className="mb-4 text-sm font-semibold text-gray-800">
+              Supplier Pro Forma Invoice
+              </h3>
+
+              <div className="rounded-lg bg-gray-50 p-4">
+
+               {supplierPFIPath ? (
+                <div className="flex items-center justify-between mb-7">
+                  <div>
+                    <p className="font-medium text-gray-800">
+                      Supplier PFI received
+                    </p>
+
+                    <p className="text-xs text-gray-500">
+                      Confirmed supplier amount
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={viewSupplierPFI}
+                    className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                  >
+                    View PFI
+                  </button>
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500 mb-7">
+                  Supplier PFI has not been uploaded yet.
+                </p>
+              )}
+
+                {/* AMOUNT */}
+                <div className="mb-5">
+                  <label className="mb-2 block text-sm font-medium text-gray-700">
+                    Confirmed Supplier Amount
+                  </label>
+
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">
+                      ₱
+                    </span>
+
+                    <input
+                      type="number"
+                      min="0"
+                      step="01"
+                      value={confirmedAmount}
+                      onChange={(e) => setConfirmedAmount(e.target.value)}
+                      placeholder="0.00"
+                      disabled={existingItem}
+                      className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-8 pr-3 text-right outline-none focus:border-[#1F3A2C] focus:ring-1 focus:ring-[#1F3A2C]"
+                    />
+                  </div>
+                </div>
+
+
+                {/* UPLOAD */}
+                <div className="mb-5">
+                  <label className="mb-2 block text-sm font-medium text-gray-700">
+                    Payment Confirmation
+                  </label>
+
+                  <label className="flex cursor-pointer items-center justify-center rounded-lg border-2 border-dashed border-gray-300 bg-white px-4 py-6 text-center transition hover:border-[#1F3A2C] hover:bg-gray-50">
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">
+                        {supplierPFI
+                          ? supplierPFI.name
+                          : existingItem?.supplier_pfi_file_path
+                            ? 'Supplier PFI already uploaded'
+                            : 'Upload Supplier PFI'
+                        }
+                      </p>
+
+                      <p className="mt-1 text-xs text-gray-400">
+                        {supplierPFI
+                          ? 'Ready to upload'
+                          : existingItem?.supplier_pfi_file_path
+                            ? 'A Supplier PFI is already attached'
+                            : 'Image or PDF'
+                        }
+                      </p>
+                    </div>
+
+                    <input
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png"
+                      onChange={(e) => {
+                        setSupplierPFI(e.target.files?.[0] || null)
+                      }}
+                      disabled={existingItem}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+
+
+                {/* CONFIRM PAYMENT */}
+                {supplierPFI && (
+                  <button
+                    type="button"
+                    onClick={uploadSupplierPFI}
+                    disabled={uploadingPFI}
+                    className="mt-3 rounded-lg bg-[#2D5A42] px-4 py-2 text-sm font-medium text-white hover:bg-[#234633] disabled:opacity-50"
+                  >
+                    {uploadingPFI
+                      ? 'Uploading...'
+                      : 'Save Supplier PFI'}
+                  </button>
+                )}
+              </div>            
+            </div>
+
+
+
+
+            {/* =====================================================
+                SUPPLIER PAYMENT
+            ===================================================== */}
+            <div className="md:col-span-3">
+              <h3 className="mb-4 text-sm font-semibold text-gray-800">
+                Payment to Supplier
+              </h3>
+
+              <div className="rounded-lg bg-gray-50 p-4">
+
+                {/* AMOUNT */}
+                <div className="mb-5">
+                  <label className="mb-2 block text-sm font-medium text-gray-700">
+                    Payment Amount
+                  </label>
+
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">
+                      ₱
+                    </span>
+
+                    <input
+                      type="number"
+                      min="0"
+                      step="01"
+                      value={paymentAmount}
+                      onChange={(e) => setPaymentAmount(e.target.value)}
+                      placeholder="0.00"
+                      disabled={existingItem}
+                      className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-8 pr-3 text-right outline-none focus:border-[#1F3A2C] focus:ring-1 focus:ring-[#1F3A2C]"
+                    />
+                  </div>
+                </div>
+
+
+                {/* DATE */}
+                <div className="mb-5">
+                  <label className="mb-2 block text-sm font-medium text-gray-700">
+                    Payment Date
+                  </label>
+
+                  <input
+                    type="date"
+                    value={paymentDate}
+                    onChange={(e) => setPaymentDate(e.target.value)}
+                    min={new Date().toISOString().split('T')[0]}
+                    disabled={existingItem}
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
+                  />
+                </div>
+
+
+                {/* UPLOAD */}
+                <div className="mb-5">
+                  <label className="mb-2 block text-sm font-medium text-gray-700">
+                    DMC Proof of Payment
+                  </label>
+
+                  <label className="flex cursor-pointer items-center justify-center rounded-lg border-2 border-dashed border-gray-300 bg-white px-4 py-6 text-center transition hover:border-[#1F3A2C] hover:bg-gray-50">
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">
+                        {paymentProof
+                          ? paymentProof.name
+                          : existingItem?.payment_proof_path
+                            ? 'Payment proof already uploaded'
+                            : 'Upload Payment Proof'
+                        }
+                      </p>
+
+                      <p className="mt-1 text-xs text-gray-400">
+                        {paymentProof
+                          ? 'Ready to upload'
+                          : existingItem?.payment_proof_path
+                            ? 'A payment proof is already attached'
+                            : 'Image or PDF'
+                        }
+                      </p>
+                    </div>
+
+                    <input
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png"
+                      onChange={(e) => {
+                        setPaymentProof(
+                          e.target.files?.[0] || null
+                        )
+                      }}
+                      disabled={existingItem}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+              </div>            
+            </div>
+
+          </div>
+        </div>
+          
+
+        {/* =================================================
+            FOOTER
+        ================================================= */}
+        <div className="flex items-center justify-end gap-3 bg-gray-50 px-6 py-4">
+          <button
+            onClick={onClose}
+            className="rounded-lg border border-gray-300 bg-white px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Close
+          </button>
+
+          <button
+            onClick={markAsPaid}
+            disabled={ markingPaid || !supplierPFIPath || !paymentDate || !paymentAmount || !paymentProof}
+            className="flex items-center gap-2 rounded-lg bg-[#2D5A42] px-5 py-2 text-sm font-medium text-white hover:bg-[#234633] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <FontAwesomeIcon icon={faMoneyBillTransfer} />
+            {markingPaid ? 'Processing...' : 'Mark as Paid to Supplier'}
+          </button>
+        </div>
+
+
+      </div>
+    </div>
+  )
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -929,9 +1840,9 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
               CUSTOMER ORDER
           ================================================= */}
           <div className="mb-6">
-            <label className="mb-2 block text-sm font-medium text-gray-700">
+            <h3 className="mb-3 text-sm font-semibold text-gray-800">
               Customer Order
-            </label>
+            </h3>
 
             <select
               value={customerOrderId}
@@ -987,9 +1898,9 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
               EXPECTED DELIVERY DATE
           ================================================= */}
           <div className="mb-6">
-            <label className="mb-2 block text-sm font-medium text-gray-700">
+            <h3 className="mb-3 text-sm font-semibold text-gray-800">
               Expected Delivery Date
-            </label>
+            </h3>
 
             <input
               type="date"
@@ -1214,7 +2125,7 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
           >
 
             <FontAwesomeIcon icon={faFileInvoice}/>
-            {creating ? 'Creating...': 'Create Purchase Order'}
+            {creating ? 'Creating Purchase Order...': 'Create Purchase Order'}
           </button>
         </div>
 
@@ -1223,287 +2134,3 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
   )
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-// =====================================================
-// VIEW PURCHASE ORDER MODAL
-// =====================================================
-function PurchaseOrderModal({purchaseOrder, onClose}) {
-
-  const items = purchaseOrder.purchase_order_items || []
-
-  // ===================================================
-  // PURCHASE TOTAL
-  // ===================================================
-  const purchaseTotal =
-    items.reduce(
-      (total, item) => {
-        return (total + (Number(item.ordered_quantity || 0) * Number(item.unit_price || 0)))
-      },
-      0
-    )
-
-
-  // ===================================================
-  // ORDERED / RECEIVED
-  // ===================================================
-  const totalOrdered = items.reduce(
-    (total, item) =>
-      total + Number(item.ordered_quantity || 0),
-    0
-  )
-
-  const totalReceived = items.reduce(
-    (total, item) =>
-      total + Number(item.received_quantity || 0),
-    0
-  )
-
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-xl">
-
-        {/* =================================================
-            HEADER
-        ================================================= */}
-        <div className="flex items-center justify-between border-b px-6 py-4">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-800">
-              {purchaseOrder.po_number}
-            </h2>
-
-            <p className="text-sm text-gray-500">
-              Purchase Order
-            </p>
-          </div>
-
-          <button onClick={onClose} className=" rounded-md p-2 text-gray-500 hover:bg-gray-100 disabled:opacity-50">
-            <FontAwesomeIcon icon={faXmark}/>
-          </button>
-        </div>
-
-
-        {/* =================================================
-            CONTENT
-        ================================================= */}
-        <div className="flex-1 overflow-y-auto p-6">
-
-
-          {/* =================================================
-              INFORMATION
-          ================================================= */}
-          <div className="mb-6 grid grid-cols-1 gap-4 rounded-lg bg-gray-50 p-4 md:grid-cols-4">
-            <div>
-              <p className="text-xs uppercase text-gray-500"> PO Number </p>
-              <p className="mt-1 font-medium text-gray-800"> {purchaseOrder.po_number} </p>
-            </div>
-
-            <div>
-              <p className="text-xs uppercase text-gray-500"> Customer Order </p>
-              <p className="mt-1 font-medium text-gray-800"> {purchaseOrder.customer_orders?.order_number || '-'} </p>
-            </div>
-
-            <div>
-              <p className="text-xs uppercase text-gray-500"> Customer </p>
-              <p className="mt-1 font-medium text-gray-800"> {purchaseOrder.customer_orders?.profile?.name || '-'} </p>
-
-              {purchaseOrder.customer_orders?.profile?.company && (
-                <p className="text-xs text-gray-500">
-                  {purchaseOrder.customer_orders.profile.company}
-                </p>
-              )}
-            </div>
-
-            <div>
-              <p className="text-xs uppercase text-gray-500"> Status </p>
-              <div className="mt-1">
-                <StatusBadge status={purchaseOrder.status}/>
-              </div>
-            </div>
-          </div>
-
-
-          {/* =================================================
-              ITEMS
-          ================================================= */}
-          <h3 className="mb-3 text-sm font-semibold text-gray-800">
-            Purchase Order Items
-          </h3>
-
-          <div className="overflow-hidden rounded-lg border">
-            <table className=" min-w-full">
-
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
-                    Product
-                  </th>
-
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
-                    Supplier
-                  </th>
-
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
-                    Ordered
-                  </th>
-
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
-                    Received
-                  </th>
-
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
-                    Unit Price
-                  </th>
-
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
-                    Total
-                  </th>
-
-                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">
-                    Status
-                  </th>
-                </tr>
-              </thead>
-
-
-              <tbody>
-                {items.map((item) => {
-                  const itemTotal = Number(item.ordered_quantity || 0) * Number(item.unit_price || 0)
-
-                  return (
-                    <tr key={item.customer_order_item_id} className="border-t border-gray-200">
-
-                      {/* PRODUCT */}
-                      <td className="px-4 py-4">
-                        <p className="font-medium text-gray-800">
-                          {item.products?.product_name || '-'}
-                        </p>
-
-                        {item.products?.brand && (
-                          <p className="text-xs text-gray-500">
-                            {item.products.brand}
-                          </p>
-                        )}
-                      </td>
-
-
-                      {/* SUPPLIER */}
-                      <td className="px-4 py-4">
-                        {item.suppliers?.supplier_name || '-'}
-                      </td>
-
-
-                      {/* ORDERED */}
-                      <td className="px-4 py-4 text-right">
-                        {item.ordered_quantity}
-                      </td>
-
-
-                      {/* RECEIVED */}
-                      <td className="px-4 py-4 text-right">
-                        {item.received_quantity}
-                      </td>
-
-
-                      {/* UNIT PRICE */}
-                      <td className="px-4 py-4 text-right">
-                        ₱ {Number(item.unit_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                      </td>
-
-
-                      {/* TOTAL */}
-                      <td className="px-4 py-4 text-right font-medium">
-                        ₱ {itemTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                      </td>
-
-
-                      {/* STATUS */}
-                      <td className="px-4 py-4">
-                        <StatusBadge status={item.status}/>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-
-            </table>
-          </div>
-
-
-          {/* =================================================
-              SUMMARY
-          ================================================= */}
-          <div className="mt-6 flex justify-end">
-            <div className="w-full max-w-sm rounded-lg bg-gray-50 p-5">
-
-              <div className="mb-3 flex justify-between text-sm">
-                <span className="text-gray-500">
-                  Total Ordered
-                </span>
-
-                <span className="font-medium">
-                  {totalOrdered}
-                </span>
-              </div>
-
-
-              <div className="mb-3 flex justify-between text-sm">
-                <span className="text-gray-500">
-                  Total Received
-                </span>
-
-                <span className="font-medium">
-                  {totalReceived}
-                </span>
-              </div>
-
-
-              <div className="border-t pt-3">
-                <div className="flex justify-between">
-                  <span className="font-semibold text-gray-700">
-                    Purchase Total
-                  </span>
-
-                  <span className="text-xl font-bold text-gray-800">
-                    ₱ {purchaseTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                  </span>
-                </div>
-              </div>
-
-            </div>
-          </div>
-        </div>
-
-
-        {/* =================================================
-            FOOTER
-        ================================================= */}
-        <div className="flex items-center justify-end gap-3 bg-gray-50 px-6 py-4">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            Cancel
-          </button>
-        </div>
-
-      </div>
-    </div>
-  )
-}

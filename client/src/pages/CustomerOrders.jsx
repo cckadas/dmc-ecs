@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faFolderOpen, faXmark, faCreditCard, faCircleCheck, faCircleXmark } from '@fortawesome/free-solid-svg-icons'
+import { faFolderOpen, faXmark, faCreditCard, faCircleCheck, faCircleXmark, faTrash } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 
 import IconButton from '../components/IconButton'
@@ -43,7 +43,8 @@ export default function CustomerOrdersPage() {
         status,
         settled_amount,
         payment_bank,
-        payment_proof,
+        payment_proof_dp,
+        payment_proof_complete,
         pfi_file_path,
         created_at,
 
@@ -143,37 +144,170 @@ export default function CustomerOrdersPage() {
   // UPDATE PAYMENT STATUS
   // =============================================
   async function updatePaymentStatus(orderId, status) {
-    const action = status === 'payment verified'
-      ? 'accept'
-      : 'reject'
 
+    const isRejecting = status === 'payment rejected'
+    const action = status === 'payment verified' ? 'accept' : 'reject'
+
+
+    // =============================================
+    // GET REJECTION REASON
+    // =============================================
+    let rejectionReason = null
+
+    if (isRejecting) {
+      rejectionReason = window.prompt('Please provide a reason for rejecting this payment:')
+
+      if (rejectionReason === null) {
+        return
+      }
+
+      rejectionReason = rejectionReason.trim()
+
+      if (!rejectionReason) {
+        toast.error('A rejection reason is required.')
+        return
+      }
+    }
+
+
+    // =============================================
+    // CONFIRM ACTION
+    // =============================================
     const confirmed = window.confirm(
-      `Are you sure you want to ${action} this payment?`
+      isRejecting
+        ? `Are you sure you want to reject this payment?\n\nReason: ${rejectionReason}`
+        : 'Are you sure you want to accept this payment?'
     )
 
     if (!confirmed) return
 
+
+    // =============================================
+    // UPDATE CUSTOMER ORDER
+    // =============================================
+    const updateData = {
+      status,
+      rejection_reason: isRejecting ? rejectionReason : null,
+
+      // Clear settled amount when payment is rejected
+      ...(isRejecting && { settled_amount: 0 }),
+    }
+
     const { error } = await supabase
       .from('customer_orders')
-      .update({
-        status,
-      })
+      .update(updateData)
       .eq('id', orderId)
       .eq('status', 'submitted')
 
     if (error) {
+      console.error('Failed to update payment status:', error)
       toast.error(`Failed to ${action} payment.`)
       return
     }
 
-    // Update selected payment immediately
+
+    // =============================================
+    // UPDATE SELECTED PAYMENT IMMEDIATELY
+    // =============================================
     setSelectedPayment((prev) => ({
       ...prev,
       status,
+      rejection_reason: isRejecting ? rejectionReason : null,
+
+      // Reflect reset immediately in UI
+      ...(isRejecting && { settled_amount: 0 }),
     }))
 
-    toast.success(`Payment ${action} has been successful.`)
+
+    // =============================================
+    // SUCCESS
+    // =============================================
+    toast.success(isRejecting ? 'Payment has been rejected successfully.' : 'Payment has been accepted successfully.')
     await loadCustomerOrders()
+  }
+
+
+  // =============================================
+  // DELETE REJECTED CUSTOMER ORDER
+  // =============================================
+  async function deleteCustomerOrder(order) {
+
+    if (!order?.id) {
+      toast.error('Missing customer order.')
+      return
+    }
+
+    if (order.status !== 'payment rejected') {
+      toast.error('Only rejected payments can be deleted.')
+      return
+    }
+
+    const confirmed = window.confirm(
+      `Are you sure you want to permanently delete order ${order.order_number || ''}?\n\n` +
+      'This will also delete all items belonging to this customer order.\n\n' +
+      'This action cannot be undone.'
+    )
+
+    if (!confirmed) {
+      return
+    }
+
+    setLoading(true)
+
+    try {
+
+      // =============================================
+      // DELETE CUSTOMER ORDER ITEMS
+      // =============================================
+      const { error: itemsError } = await supabase
+        .from('customer_order_items')
+        .delete()
+        .eq('customer_order_id', order.id)
+
+      if (itemsError) {
+        throw itemsError
+      }
+
+
+      // =============================================
+      // DELETE CUSTOMER ORDER
+      // =============================================
+      const { error: orderError } = await supabase
+        .from('customer_orders')
+        .delete()
+        .eq('id', order.id)
+        .eq('status', 'payment rejected')
+
+      if (orderError) {
+        throw orderError
+      }
+
+
+      // =============================================
+      // CLOSE MODALS IF NECESSARY
+      // =============================================
+      setShowModal(false)
+      setSelectedOrder(null)
+      setShowPaymentModal(false)
+      setSelectedPayment(null)
+
+
+      // =============================================
+      // SUCCESS
+      // =============================================
+      toast.success('Rejected customer order deleted successfully.')
+      await loadCustomerOrders()
+
+    }
+
+    catch (error) {
+      console.error('Failed to delete rejected customer order:', error)
+      toast.error(error.message || 'Failed to delete customer order.')
+    }
+
+    finally {
+      setLoading(false)
+    }
   }
 
 
@@ -217,7 +351,7 @@ export default function CustomerOrdersPage() {
           Customer Orders
         </h1>
 
-        <p className="text-gray-500">
+        <p className="mt-1 text-gray-500">
           View and manage customer orders.
         </p>
       </div>
@@ -268,14 +402,9 @@ export default function CustomerOrdersPage() {
 
           {/* TABLE BODY */}
           <tbody>
-
             {loading ? (
-
               <tr>
-                <td
-                  colSpan="8"
-                  className="py-10 text-center text-sm text-gray-500"
-                >
+                <td colSpan="8" className="py-10 text-center text-sm text-gray-500">
                   Loading customer orders...
                 </td>
               </tr>
@@ -283,65 +412,42 @@ export default function CustomerOrdersPage() {
             ) : orders.length > 0 ? (
 
               orders.map((order) => (
-
-                <tr
-                  key={order.id}
-                  className="border-t border-gray-200 text-sm hover:bg-gray-50"
-                >
+                <tr key={order.id} className="border-t border-gray-200 text-sm hover:bg-gray-50">
 
                   {/* ORDER NUMBER */}
                   <td className="px-5 py-3 font-medium text-gray-800">
                     {order.order_number || '-'}
                   </td>
 
-
                   {/* CUSTOMER */}
                   <td className="px-5 py-3">
                     {order.customer?.name || '-'}
                   </td>
-
 
                   {/* COMPANY */}
                   <td className="px-5 py-3">
                     {order.customer?.company || '-'}
                   </td>
 
-
                   {/* QUOTATION */}
                   <td className="px-5 py-3">
                     {order.quotation_number || '-'}
                   </td>
 
-
                   {/* TOTAL */}
                   <td className="px-5 py-3 font-medium">
-                    ₱{' '}
-                    {Number(
-                      order.total_amount || 0
-                    ).toLocaleString(
-                      undefined,
-                      {
-                        minimumFractionDigits: 2,
-                      }
-                    )}
+                    ₱ {Number(order.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </td>
-
 
                   {/* STATUS */}
                   <td className="px-5 py-3">
-                    <StatusBadge
-                      status={order.status}
-                    />
+                    <StatusBadge status={order.status}/>
                   </td>
-
 
                   {/* DATE */}
                   <td className="px-5 py-3">
-                    {new Date(
-                      order.created_at
-                    ).toLocaleDateString()}
+                    {new Date(order.created_at).toLocaleDateString()}
                   </td>
-
 
                   {/* ACTION */}
                   <td className="px-5 py-3">
@@ -350,17 +456,16 @@ export default function CustomerOrdersPage() {
                       {/* VIEW ORDER */}
                       <IconButton icon={faFolderOpen} title="View Purchase Order" color="blue" disabled={false} onClick={() => openOrderModal(order)}/>
 
-
                       {/* PAYMENT */}
-                      <IconButton icon={faCreditCard} title={order.status === 'pending payment' ? 'Payment Not Yet Available' : 'View Payment'} color="green" disabled={order.status === 'pending payment'} onClick={() => openPaymentModal(order)}/>
+                      <IconButton icon={faCreditCard} title={order.status === 'pending payment' ? 'Payment Not Yet Available' : 'View Payment'} color="green" disabled={order.status === 'pending payment'} onClick={() => openPaymentModal(order)}/>                      
                       
+                      {/* DELETE REJECTED ORDER */}
+                      {order.status === 'payment rejected' && (
+                        <IconButton icon={faTrash} title="Delete Rejected Order" color="red" disabled={false} onClick={() => deleteCustomerOrder(order)}/>
+                      )}
 
                     </div>
                   </td>
-
-
-
-
                 </tr>
               ))
             ) : (
@@ -397,9 +502,9 @@ export default function CustomerOrdersPage() {
         />
       )}
     </div>
+
   )
 }
-
 
 
 
@@ -549,7 +654,6 @@ function CustomerOrderModal({ order, onClose }) {
                       {item.products?.product_name || '-'}
                     </td>
 
-
                     {/* QUANTITY */}
                     <td className="px-4 py-4 text-left">
                       {item.quantity}
@@ -560,12 +664,10 @@ function CustomerOrderModal({ order, onClose }) {
                       {item.products?.unit}
                     </td>
 
-
                     {/* UNIT PRICE */}
                     <td className="px-4 py-4 text-left">
                         ₱ {Number(item.unit_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
-
 
                     {/* SUBTOTAL */}
                     <td className="px-4 py-4 text-left">
@@ -585,22 +687,21 @@ function CustomerOrderModal({ order, onClose }) {
           <div className="mt-6 flex justify-end">
             <div className="w-full max-w-sm">
           
-              <h3 className="mb-3 text-sm font-semibold text-gray-800">
-                Order Summary
+              <h3 className="mb-4 text-sm font-semibold text-gray-800">
+                Payment Summary
               </h3>
 
-              <div className="rounded-lg bg-gray-50 p-5">
-                <div className="mb-3 flex justify-between text-sm">
+              <div className="rounded-lg bg-gray-50 p-4">
+                <div className="mb-1 flex justify-between text-sm">
                   <span className="font-semibold text-gray-700">
                     Subtotal
                   </span>
 
                   <span className="text-lg font-bold text-gray-800">
-                    ₱ {Number(order.subtotal || 0).toLocaleString(undefined, {
-                      minimumFractionDigits: 2
-                    })}
+                    ₱ {Number(order.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </span>
                 </div>
+
 
                 <div className="mb-3 flex justify-between text-sm">
                   <span className="font-semibold text-gray-700">
@@ -608,38 +709,44 @@ function CustomerOrderModal({ order, onClose }) {
                   </span>
 
                   <span className="text-lg font-bold text-gray-800">
-                    ₱ {Number(order.shipping_cost || 0).toLocaleString(undefined, {
-                      minimumFractionDigits: 2
-                    })}
+                    ₱ {Number(order.shipping_cost || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </span>
                 </div>
 
-                <div className="border-t pt-3">
+
+                <div className="border-t pt-3 mb-3">
                   <div className="flex justify-between">
                     <span className="font-semibold text-gray-700">
                       Total
                     </span>
 
-                    <span className="text-xl font-bold text-gray-800">
-                      ₱ {Number(order.total_amount || 0).toLocaleString(undefined, {
-                        minimumFractionDigits: 2
-                      })}
+                    <span className="text-lg font-bold text-gray-800">
+                      ₱ {Number(order.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
 
                   <div className="flex justify-between">
-                    <span className="font-semibold text-green-700">
-                      Down Payment
+                    <span className="font-semibold text-amber-700">
+                      Remaining Balance
                     </span>
 
-                    <span className="text-lg font-bold text-green-800">
-                      ₱ {Number(order.down_payment_amount || 0).toLocaleString(undefined, {
-                        minimumFractionDigits: 2
-                      })}
+                    <span className="text-lg font-bold text-amber-800">
+                      ₱ {Math.max(Number(order.total_amount || 0) -  Number(order.settled_amount || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+
+                  <div className="mt-2 flex justify-between">
+                    <span className="font-semibold text-green-700">
+                      Amount Paid
+                    </span>
+
+                    <span className="text-xl font-bold text-green-800">
+                      ₱ {Number(order.settled_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
                 </div>
-              </div>
+
+              </div> 
               
             </div>
           </div>
@@ -668,16 +775,37 @@ function CustomerOrderModal({ order, onClose }) {
 
 
 
-
-
-
-
-
 // =====================================================
 // PAYMENT MODAL
 // =====================================================
 function PaymentModal({ order, onClose, onUpdateStatus }) {
   const settledAmount = Number(order.settled_amount || 0)
+
+
+  // =============================================
+  // VIEW DOCUMENT
+  // =============================================
+  async function viewPayment(path, documentName) {
+    if (!path) {
+      alert(`${documentName} is not available.`);
+      return;
+    }
+
+    const { data, error } = await supabase.storage
+      .from('payment-proofs')
+      .createSignedUrl(path, 60);
+
+    if (error) {
+      console.error('Failed to create signed URL:', error);
+      alert(`Failed to open ${documentName}.`);
+      return;
+    }
+
+    if (data?.signedUrl) {
+      window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+    }
+  }
+
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -708,7 +836,6 @@ function PaymentModal({ order, onClose, onUpdateStatus }) {
             CONTENT
         ================================================= */}
         <div className="flex-1 overflow-y-auto p-6">
-
 
 
           {/* =================================================
@@ -752,7 +879,7 @@ function PaymentModal({ order, onClose, onUpdateStatus }) {
                 Payment Details
               </h3>
 
-              <div className="rounded-lg bg-gray-50 grid grid-cols-1 gap-4 md:grid-cols-3 p-4 ">
+              <div className="rounded-lg bg-gray-50 grid grid-cols-1 gap-4 md:grid-cols-2 p-4 ">
                 <div>
                   <p className="text-xs uppercase text-gray-500">
                     Bank
@@ -769,31 +896,47 @@ function PaymentModal({ order, onClose, onUpdateStatus }) {
                   </p>
 
                   <p className="mt-1 font-medium text-gray-800">
-                    ₱ {settledAmount.toLocaleString(undefined, {
-                      minimumFractionDigits: 2
-                    })}
+                    ₱ {settledAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </p>
                 </div>
 
-                <div>
+                <div className="mt-3">
                   <p className="text-xs uppercase text-gray-500">
                     Payment Proof
                   </p>
 
-                  {order.payment_proof ? (
-                    <a
-                      href={order.payment_proof}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-1 inline-flex rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-600 hover:bg-blue-100"
-                    >
-                      View Payment Proof
-                    </a>
-                  ) : (
-                    <p className="mt-1 text-sm text-gray-400">
-                      No payment proof uploaded.
-                    </p>
-                  )}
+                  <div className="mt-2 flex gap-2">
+
+                    {/* DOWN PAYMENT PROOF */}
+                    {order.payment_proof_dp && (
+                      <button
+                        type="button"
+                        onClick={() => viewPayment(order.payment_proof_dp, "Down Payment Proof")}
+                        className="inline-flex rounded-lg border border-blue-200 bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                      >
+                        View Down Payment Proof
+                      </button>
+                    )}
+
+                    {/* COMPLETE PAYMENT PROOF */}
+                    {order.payment_proof_complete && (
+                      <button
+                        type="button"
+                        onClick={() => viewPayment(order.payment_proof_complete, "Complete Payment Proof")}
+                        className="inline-flex rounded-lg border border-green-200 bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
+                      >
+                        View Complete Payment Proof
+                      </button>
+                    )}
+
+                    {/* NO PROOF */}
+                    {!order.payment_proof_dp && !order.payment_proof_complete && (
+                      <p className="text-sm text-gray-400">
+                        No payment proof uploaded.
+                      </p>
+                    )}
+
+                  </div>
                 </div>
               </div>
             </div>
@@ -808,7 +951,7 @@ function PaymentModal({ order, onClose, onUpdateStatus }) {
               </h3>
 
               <div className="rounded-lg bg-gray-50 p-4">
-                <div className="mb-3 flex justify-between text-sm">
+                <div className="mb-1 flex justify-between text-sm">
                   <span className="font-semibold text-gray-700">
                     Subtotal
                   </span>
@@ -821,7 +964,7 @@ function PaymentModal({ order, onClose, onUpdateStatus }) {
 
                 <div className="mb-3 flex justify-between text-sm">
                   <span className="font-semibold text-gray-700">
-                    Purchase Total
+                    Shipping Cost
                   </span>
 
                   <span className="text-lg font-bold text-gray-800">
@@ -830,24 +973,37 @@ function PaymentModal({ order, onClose, onUpdateStatus }) {
                 </div>
 
 
-                <div className="border-t pt-3">
+                <div className="border-t pt-3 mb-3">
                   <div className="flex justify-between">
                     <span className="font-semibold text-gray-700">
                       Total
                     </span>
 
-                    <span className="text-xl font-bold text-gray-800">
+                    <span className="text-lg font-bold text-gray-800">
                       ₱ {Number(order.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
 
                   <div className="flex justify-between">
-                    <span className="font-semibold text-green-700">
-                      Down Payment
+                    <span className="font-semibold text-amber-700">
+                      Remaining Balance
                     </span>
 
-                    <span className="text-lg font-bold text-green-800">
-                      ₱ {Number(order.down_payment_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <span className="text-lg font-bold text-amber-800">
+                      ₱ {Math.max(Number(order.total_amount || 0) -  Number(order.settled_amount || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                </div>
+
+
+                <div className="border-t pt-3">
+                  <div className="flex justify-between">
+                    <span className="font-semibold text-green-700">
+                      Amount Paid
+                    </span>
+
+                    <span className="text-xl font-bold text-green-800">
+                      ₱ {Number(order.settled_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
                 </div>

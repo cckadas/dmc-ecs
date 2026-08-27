@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faFolderOpen, faFileSignature, faTrash, faXmark, faDownload } from '@fortawesome/free-solid-svg-icons'
+import { faFolderOpen, faFileSignature, faTrash, faXmark, faDownload, faFileInvoice } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 import { generatePFI } from '../services/pfiService'
 
@@ -20,6 +20,7 @@ export default function ProFormaInvoicePage() {
   const [requests, setRequests] = useState([])
   const [currentRequest, setCurrentRequest] = useState(null)
   const [currentQuotation, setCurrentQuotation] = useState(null)
+  const [creatingQuotation, setCreatingQuotation] = useState(false)
 
 
   // =============================================
@@ -74,138 +75,151 @@ export default function ProFormaInvoicePage() {
   // CREATE QUOTATION
   // =============================================
   async function generateQuotation(data) {
-    const quotationNumber = `QT-${Math.random()
-      .toString(36)
-      .substring(2, 8)
-      .toUpperCase()}`
+    
+    setCreatingQuotation(true)
 
-    // Create quotation
-    const { data: quotation, error } = await supabase
-      .from('quotations')
-      .insert({
-        quotation_request_id: currentRequest.id,
-        quotation_number: quotationNumber,
-        subtotal: data.subtotal,
-        shipping_cost: data.shippingCost,
-        total_amount: data.total,
-        down_payment_amount: data.downPayment,
-        expiry_date: data.expiryDate,
-        status: 'pending approval',
-      })
-      .select()
-      .single()
+    try {
+      const quotationNumber = `QT-${Math.random()
+        .toString(36)
+        .substring(2, 8)
+        .toUpperCase()}`
 
-    if (error) {
-      console.error(error)
-      return
-    }
-
-    // Create quotation items
-    const quotationItems = data.items.map((item) => ({
-      quotation_id: quotation.id,
-      product_id: item.product_id,
-      quantity: item.quantity,
-      unit_price: item.unit_price,
-      subtotal: item.quantity * item.unit_price,
-    }))
-
-    const { error: itemError } = await supabase
-      .from('quotation_items')
-      .insert(quotationItems)
-
-    if (itemError) {
-      toast.error(itemError.message)
-
-      // Roll back quotation if item insert fails
-      await supabase
+      // Create quotation
+      const { data: quotation, error } = await supabase
         .from('quotations')
-        .delete()
+        .insert({
+          quotation_request_id: currentRequest.id,
+          quotation_number: quotationNumber,
+          subtotal: data.subtotal,
+          shipping_cost: data.shippingCost,
+          total_amount: data.total,
+          down_payment_amount: data.downPayment,
+          expiry_date: data.expiryDate,
+          status: 'pending approval',
+        })
+        .select()
+        .single()
+
+      if (error) {
+        console.error(error)
+        return
+      }
+
+      // Create quotation items
+      const quotationItems = data.items.map((item) => ({
+        quotation_id: quotation.id,
+        product_id: item.product_id,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        subtotal: item.quantity * item.unit_price,
+      }))
+
+      const { error: itemError } = await supabase
+        .from('quotation_items')
+        .insert(quotationItems)
+
+      if (itemError) {
+        toast.error(itemError.message)
+
+        // Roll back quotation if item insert fails
+        await supabase
+          .from('quotations')
+          .delete()
+          .eq('id', quotation.id)
+
+        return
+      }
+
+
+      // 3. Generate PFI
+      const pfiData = {
+        ...quotation,
+
+        // Profile
+        profile_phone: profile?.contact_number || '-',
+        profile_email: profile?.email || '-',
+
+        // Customer
+        customer_name: currentRequest.profiles?.company || '-',
+
+        // Delivery
+        customer_address: currentRequest.delivery_locations?.address || '-',
+        customer_phone: currentRequest.delivery_locations?.contact_number || '-',
+        customer_email: currentRequest.profiles?.email || '-',
+        customer_country: currentRequest.delivery_locations?.country || '-',
+
+        // Shipping
+        shipping_to: currentRequest.delivery_locations?.address || '-',
+        shipping_location: currentRequest.delivery_locations?.location_name || '-',
+
+        // Quotation
+        delivery_method: 'Standard',
+      }
+
+      const pfi = await generatePFI(pfiData, data.items)
+
+      const pdfBlob = pfi.output('blob')
+
+
+      // 4. Upload PFI to Supabase Storage
+      const filePath = `pfi/${quotation.quotation_number}-PFI.pdf`
+
+      const { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(filePath, pdfBlob, {
+          contentType: 'application/pdf',
+        })
+
+      if (uploadError) {
+        console.error(uploadError)
+        toast.error('PFI upload failed.')
+        return
+      }
+
+
+      // 5. Save PFI path to quotation
+      const { error: pathError } = await supabase
+        .from('quotations')
+        .update({
+          pfi_file_path: filePath,
+        })
         .eq('id', quotation.id)
 
-      return
+      if (pathError) {
+        console.error(pathError)
+        toast.error('Could not attach PFI to quotation.')
+        return
+      }
+
+
+      // 6. Update quotation request
+      const { error: requestError } = await supabase
+        .from('quotation_requests')
+        .update({
+          status: 'priced & sent to customer',
+        })
+        .eq('id', currentRequest.id)
+
+      if (requestError) {
+        toast.error('Failed to update request status.')
+        return
+      }
+
+      toast.success('Quotation and PFI generated successfully.')
+
+      setShowModal(false)
+      setCurrentRequest(null)
+
+      await loadQueues()
     }
 
-
-    // 3. Generate PFI
-    const pfiData = {
-      ...quotation,
-
-      // Profile
-      profile_phone: profile?.contact_number || '-',
-      profile_email: profile?.email || '-',
-
-      // Customer
-      customer_name: currentRequest.profiles?.company || '-',
-
-      // Delivery
-      customer_address: currentRequest.delivery_locations?.address || '-',
-      customer_phone: currentRequest.delivery_locations?.contact_number || '-',
-      customer_email: currentRequest.profiles?.email || '-',
-      customer_country: currentRequest.delivery_locations?.country || '-',
-
-      // Shipping
-      shipping_to: currentRequest.delivery_locations?.address || '-',
-      shipping_location: currentRequest.delivery_locations?.location_name || '-',
-
-      // Quotation
-      delivery_method: 'Standard',
+    catch {
+      toast.error( 'Failed to create quotation.')
     }
 
-    const pfi = await generatePFI(pfiData, data.items)
-
-    const pdfBlob = pfi.output('blob')
-
-
-    // 4. Upload PFI to Supabase Storage
-    const filePath = `pfi/${quotation.quotation_number}-PFI.pdf`
-
-    const { error: uploadError } = await supabase.storage
-      .from('documents')
-      .upload(filePath, pdfBlob, {
-        contentType: 'application/pdf',
-      })
-
-    if (uploadError) {
-      console.error(uploadError)
-      toast.error('PFI upload failed.')
-      return
+    finally {
+      setCreatingQuotation(false)
     }
-
-
-    // 5. Save PFI path to quotation
-    const { error: pathError } = await supabase
-      .from('quotations')
-      .update({
-        pfi_file_path: filePath,
-      })
-      .eq('id', quotation.id)
-
-    if (pathError) {
-      console.error(pathError)
-      toast.error('Could not attach PFI to quotation.')
-      return
-    }
-
-
-    // 6. Update quotation request
-    const { error: requestError } = await supabase
-      .from('quotation_requests')
-      .update({
-        status: 'priced & sent to customer',
-      })
-      .eq('id', currentRequest.id)
-
-    if (requestError) {
-      toast.error('Failed to update request status.')
-      return
-    }
-
-    toast.success('Quotation and PFI generated successfully.')
-
-    setShowModal(false)
-    setCurrentRequest(null)
-
-    await loadQueues()
   }
 
 
@@ -360,7 +374,7 @@ export default function ProFormaInvoicePage() {
             PFI Builder
           </h1>
 
-          <p className="text-gray-500">
+          <p className="mt-1 text-gray-500">
             View customers' quotation requests and generate PFI.
           </p>
         </div>
@@ -470,7 +484,9 @@ export default function ProFormaInvoicePage() {
       {showModal && currentRequest?.status === 'awaiting pricing' && (
         <QuotationModal
           request={currentRequest}
+          creating={creatingQuotation}
           onClose={() => {
+            if (creatingQuotation) { return }
             setShowModal(false)
             setCurrentRequest(null)
           }}
@@ -777,7 +793,7 @@ function QuotationViewModal({ quotation, onClose }) {
 // =====================================================
 // ADD PURCHASE ORDER MODAL
 // =====================================================
-function QuotationModal({ request, onClose, onSubmit }) {
+function QuotationModal({ request, creating, onClose, onSubmit }) {
   const [shippingCost, setShippingCost] = useState(0)
   const [expiryDate, setExpiryDate] = useState('')
   const [items, setItems] = useState(
@@ -821,7 +837,7 @@ function QuotationModal({ request, onClose, onSubmit }) {
             </p>
           </div>
 
-          <button onClick={onClose} className="rounded-md p-2 text-gray-500 hover:bg-gray-100 disabled:opacity-50">
+          <button onClick={onClose} disabled={creating} className="rounded-md p-2 text-gray-500 hover:bg-gray-100 disabled:opacity-50">
             <FontAwesomeIcon icon={faXmark}/>
           </button>
         </div>
@@ -976,6 +992,7 @@ function QuotationModal({ request, onClose, onSubmit }) {
                                     min="0"
                                     step="0.01"
                                     value={item.unit_price}
+                                    disabled={creating}
                                     onChange={(e) => {
                                       const copy = [...items]
                                       copy[index].unit_price = Number(e.target.value)
@@ -1027,6 +1044,7 @@ function QuotationModal({ request, onClose, onSubmit }) {
                       <input
                         type="number"
                         value={shippingCost}
+                        disabled={creating}
                         onChange={(e) => setShippingCost(Number(e.target.value))}
                         className="w-36 rounded-md border border-gray-300 bg-white px-3 py-2 text-right text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
                       />
@@ -1041,6 +1059,7 @@ function QuotationModal({ request, onClose, onSubmit }) {
                       <input
                         type="date"
                         value={expiryDate}
+                        disabled={creating}
                         min={new Date().toISOString().split('T')[0]}
                         onChange={(e) => setExpiryDate(e.target.value)}
                         required
@@ -1096,11 +1115,12 @@ function QuotationModal({ request, onClose, onSubmit }) {
 
 
                     <div className="flex justify-end gap-3">
-                      <button onClick={onClose} className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50" >
+                      <button onClick={onClose} disabled={creating} className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50" >
                         Cancel
                       </button>
 
                       <button
+                        disabled={creating}
                         onClick={() => {
                           if (!expiryDate) {
                             alert('Please select an expiry date.')
@@ -1123,9 +1143,10 @@ function QuotationModal({ request, onClose, onSubmit }) {
                             downPayment,
                           })
                         }}
-                        className="rounded-md bg-[#1F3A2C] px-4 py-2 text-sm font-medium text-white hover:bg-[#2D5A42]"
+                        className="rounded-md bg-[#1F3A2C] px-4 py-2 text-sm font-medium text-white hover:bg-[#2D5A42] disabled:opacity-50"
                       >
-                        Generate Quotation
+                        <FontAwesomeIcon icon={faFileInvoice} />
+                        {creating ? ' Generating Quotation...': ' Generate Quotation'}
                       </button>
                     </div>
                   </div>

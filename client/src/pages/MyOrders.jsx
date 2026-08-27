@@ -44,7 +44,8 @@ export default function MyOrdersPage() {
         down_payment_amount,
         status,
         settled_amount,
-        payment_proof,
+        payment_proof_dp,
+        payment_proof_complete,
         pfi_file_path,
         created_at,
 
@@ -109,7 +110,7 @@ export default function MyOrdersPage() {
           My Orders
         </h1>
 
-        <p className="text-gray-500">
+        <p className="mt-1 text-gray-500">
           View your customer orders and their current status.
         </p>
       </div>

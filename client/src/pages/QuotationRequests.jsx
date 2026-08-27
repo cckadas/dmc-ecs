@@ -22,6 +22,7 @@ export default function QuotationRequestsPage() {
   const [showQuotationModal, setShowQuotationModal] = useState(false)
   const [selectedQuotation, setSelectedQuotation] = useState(null)
   const [loadingQuotation, setLoadingQuotation] = useState(false)
+  const [creatingCO, setCreatingCO] = useState(false)
 
 
   // =============================================
@@ -216,6 +217,11 @@ export default function QuotationRequestsPage() {
         status,
         created_at,
         pfi_file_path,
+
+        quotation_request:quotation_requests (
+          delivery_location_id
+        ),
+
         quotation_items (
           id,
           product_id,
@@ -312,6 +318,8 @@ export default function QuotationRequestsPage() {
   // APPROVE QUOTATION 
   // =============================================
   async function approveQuotation() {
+
+
     const quotation = selectedQuotation
 
     if (!quotation) return
@@ -331,6 +339,8 @@ export default function QuotationRequestsPage() {
     )
 
     if (!confirmed) return
+
+    setCreatingCO(true)
 
 
     try {
@@ -377,7 +387,9 @@ export default function QuotationRequestsPage() {
           shipping_cost: quotation.shipping_cost,
           total_amount: quotation.total_amount,
           down_payment_amount: quotation.down_payment_amount,
+          delivery_location_id: quotation.quotation_request.delivery_location_id,
           pfi_file_path: quotation.pfi_file_path,
+          expiry_date: expiryDate,
           status: 'pending payment',
         })
         .select()
@@ -484,6 +496,10 @@ export default function QuotationRequestsPage() {
       console.error(error)
       alert('Something went wrong while approving the quotation.')
     }
+
+    finally {
+      setCreatingCO(false)
+    }
   }
 
 
@@ -512,7 +528,7 @@ export default function QuotationRequestsPage() {
             Quotation Requests
           </h1>
 
-          <p className="text-gray-500">
+          <p className="mt-1 text-gray-500">
             View your submitted quotation requests.
           </p>
         </div>
@@ -647,7 +663,9 @@ export default function QuotationRequestsPage() {
         loading={loadingQuotation}
         onApprove={approveQuotation}
         onReject={rejectQuotation}
+        creating={creatingCO}
         onClose={() => {
+          if (creatingCO) { return }
           setShowQuotationModal(false)
           setSelectedQuotation(null)
         }}
@@ -663,7 +681,7 @@ export default function QuotationRequestsPage() {
 // =============================================
 // QUOTATION MODAL
 // =============================================
-function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
+function QuotationModal({ quotation, loading, creating,onClose, onApprove, onReject }) {
   if (loading) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -676,7 +694,19 @@ function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
 
   if (!quotation) return null
 
-  const isExpired = new Date() > new Date(`${quotation.expiry_date}T23:59:59`)
+  const today = new Date()
+  const isExpired = today > new Date(`${quotation.expiry_date}T23:59:59`)
+
+  const expiryDate = new Date(quotation.expiry_date)
+
+  today.setHours(0, 0, 0, 0)
+  expiryDate.setHours(0, 0, 0, 0)
+
+  const daysUntilExpiry = Math.ceil(
+    (expiryDate - today) / (1000 * 60 * 60 * 24)
+  )
+
+  const isExpiringSoon = daysUntilExpiry <= 3
 
 
   // =============================================
@@ -754,24 +784,24 @@ function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
           </h3>
 
           <div className="mb-6 grid grid-cols-1 gap-4 rounded-lg bg-gray-50 p-4 md:grid-cols-4">
-            <div>
+            <div className="flex flex-col justify-center">
               <p className="text-xs uppercase text-gray-500"> Quotation Number </p>
               <p className="mt-1 font-medium text-gray-800"> {quotation.quotation_number || '-'} </p>
             </div>
 
-            <div>
+            <div className="flex flex-col justify-center">
               <p className="text-xs uppercase text-gray-500"> Status </p>
               <p className="mt-1 font-medium text-gray-800"> <StatusBadge status={quotation.status}/> </p>
             </div>
 
-            <div>
-              <p className="text-xs uppercase text-gray-500"> Expiry Date </p>
-              <p className="mt-1 font-medium text-gray-800"> {new Date(quotation.expiry_date).toLocaleDateString()} </p>
-            </div>        
-
-            <div>
+            <div className="flex flex-col justify-center">
               <p className="text-xs uppercase text-gray-500"> Date Created </p>
               <p className="mt-1 font-medium text-gray-800"> {new Date(quotation.created_at).toLocaleDateString()} </p>
+            </div>
+
+            <div className={`flex flex-col justify-center rounded-md border p-2 ${isExpiringSoon ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>
+              <p className={`text-xs font-semibold uppercase ${isExpiringSoon ? 'text-red-600' : 'text-amber-600'}`}> Expiry Date </p>
+              <p className={`mt-1 font-semibold ${ isExpiringSoon ? 'text-red-800' : 'text-amber-800' }`}> {new Date(quotation.expiry_date).toLocaleDateString()} </p>
             </div>
           </div>
 
@@ -943,7 +973,8 @@ function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
 
               <button
                 onClick={onClose}
-                className="rounded-lg bg-gray-200 px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300"
+                disabled={creating}
+                className="rounded-lg bg-gray-200 px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300 disabled:opacity-50"
               >
                 Close
               </button>
@@ -962,7 +993,8 @@ function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
 
               <button
                 onClick={onClose}
-                className="rounded-lg bg-[#2D5A42] px-5 py-2 text-sm font-medium text-white hover:bg-[#234633]"
+                disabled={creating}
+                className="rounded-lg bg-[#2D5A42] px-5 py-2 text-sm font-medium text-white hover:bg-[#234633] disabled:opacity-50"
               >
                 Close
               </button>
@@ -982,7 +1014,8 @@ function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
 
               <button
                 onClick={onClose}
-                className="rounded-lg bg-gray-200 px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300"
+                disabled={creating}
+                className="rounded-lg bg-gray-200 px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300 disabled:opacity-50"
               >
                 Close
               </button>
@@ -992,7 +1025,7 @@ function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
               <button
                 type="button"
                 onClick={downloadPFI}
-                disabled={!quotation?.pfi_file_path}
+                disabled={!quotation?.pfi_file_path || creating}
                 className="flex shrink-0 items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <FontAwesomeIcon icon={faDownload} />
@@ -1002,23 +1035,26 @@ function QuotationModal({ quotation, loading, onClose, onApprove, onReject }) {
               <div className="flex justify-end gap-3">
                 <button
                   onClick={onClose}
-                  className="rounded-lg border border-gray-300 bg-white px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  disabled={creating}
+                  className="rounded-lg border border-gray-300 bg-white px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                 >
                   Close
                 </button>
 
                 <button
                   onClick={() => onReject(quotation.id)}
-                  className="rounded-lg border border-red-200 bg-red-50 px-5 py-2 text-sm font-medium text-red-600 hover:bg-red-100"
+                  disabled={creating}
+                  className="rounded-lg border border-red-600 bg-red-600 px-5 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
                 >
-                  Reject
+                  Reject Quotation
                 </button>
 
                 <button
                   onClick={() => onApprove(quotation.id)}
-                  className="rounded-lg bg-[#2D5A42] px-5 py-2 text-sm font-medium text-white hover:bg-[#234633]"
+                  disabled={creating}
+                  className="rounded-lg bg-[#2D5A42] px-5 py-2 text-sm font-medium text-white hover:bg-[#234633] disabled:opacity-50"
                 >
-                  Approve Quotation
+                  {creating ? 'Creating Your Order...': 'Approve Quotation'}
                 </button>
               </div>
             </div>

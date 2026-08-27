@@ -56,6 +56,8 @@ export default function IconButton({
       onClick={onClick}
       disabled={disabled}
       className={`
+        aspect-square
+        shrink-0
         rounded-md
         border
         ${styles.border}

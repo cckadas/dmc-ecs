@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
+import { useAuth } from '../context/AuthContext'
 import { createCustomer } from '../services/userService'
 import { faFolderOpen, faTrash } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
@@ -10,6 +11,7 @@ import IconButton from '../components/IconButton'
 
 
 export default function CustomersPage() {
+  const { profile } = useAuth()
   const { toast } = useToast()
 
   const [customers, setCustomers] = useState([])
@@ -79,7 +81,7 @@ export default function CustomersPage() {
             Customers
           </h1>
 
-          <p className="text-gray-500">
+          <p className="mt-1 text-gray-500">
             Manage customer records.
           </p>
         </div>
@@ -117,9 +119,11 @@ export default function CustomersPage() {
                 Country
               </th>
 
-              <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
-                Actions
-              </th>
+              {profile?.role === 'admin' && (
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
+                  Actions
+                </th>
+              )}
             </tr>
           </thead>
 
@@ -150,21 +154,21 @@ export default function CustomersPage() {
                     {customer.country || '-'}
                   </td>
 
-                  <td className="px-5 py-3">
+                  {profile?.role === 'admin' && (
+                    <td className="px-5 py-3">
                       <div className="flex items-center justify-start gap-2"> 
-                        {/* View */} 
                         <IconButton icon={faFolderOpen} title="View Customer" color="blue" disabled={false} onClick={() => {}}/>
-                        
-                        {/* Delete */} 
+
                         <IconButton icon={faTrash} title="Delete" color="red" disabled={false} onClick={() => {}}/>
                       </div>
-                  </td>
+                    </td>
+                  )}
                 </tr>
               ))
             ) : (
               <tr>
                 <td
-                  colSpan={6}
+                  colSpan={profile?.role === 'admin' ? 6 : 5}
                   className="py-10 text-center text-sm text-gray-500"
                 >
                   No customers found.

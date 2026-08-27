@@ -191,7 +191,7 @@ export default function SuppliersPage() {
             Suppliers
           </h1>
 
-          <p className="text-gray-500">
+          <p className="mt-1 text-gray-500">
             Manage supplier records.
           </p>
         </div>

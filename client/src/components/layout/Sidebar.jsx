@@ -19,7 +19,9 @@ import {
   faUserTag,
   faBagShopping,
   faWallet,
-  faFileSignature
+  faFileSignature,
+  faCartFlatbed,
+  faCreditCard
 } from '@fortawesome/free-solid-svg-icons'
 
 import logo from '../../assets/logo.png'
@@ -66,6 +68,12 @@ const sections = [
         icon: faCartShopping,
         roles: ['admin', 'sales'],
       },
+      {
+        label: 'Billings',
+        path: 'billings',
+        icon: faCreditCard,
+        roles: ['admin', 'sales'],
+      },
     ],
   },
 
@@ -76,7 +84,7 @@ const sections = [
         label: 'Purchase Orders',
         path: 'purchase-orders',
         icon: faTruck,
-        roles: ['admin', 'procurement'],
+        roles: ['admin', 'procurement', 'warehouse'],
       },
       {
         label: 'Suppliers',
@@ -88,7 +96,7 @@ const sections = [
         label: 'Supplier Performance',
         path: 'supplier-performance',
         icon: faChartLine,
-        roles: ['admin', 'procurement'],
+        roles: ['admin', 'management', 'procurement'],
       },
     ],
   },
@@ -100,23 +108,35 @@ const sections = [
         label: 'Receiving',
         path: 'receiving',
         icon: faDolly,
-        roles: ['admin', 'warehouse'],
+        roles: ['warehouse'],
       },
       {
         label: 'Compliance Labels',
-        path: 'compliance-labels',
+        path: 'compliance-label-sales',
         icon: faTags,
-        roles: ['admin', 'warehouse'],
+        roles: ['admin', 'sales'],
+      },
+      {
+        label: 'Compliance Labels',
+        path: 'compliance-label-warehouse',
+        icon: faTags,
+        roles: ['warehouse'],
       },
       {
         label: 'Staging',
-        path: 'staging',
+        path: 'staging-tracker',
         icon: faBoxesStacked,
+        roles: ['warehouse'],
+      },
+      {
+        label: 'Warehouse Holdings',
+        path: 'warehouse-holdings',
+        icon: faCartFlatbed,
         roles: ['admin', 'warehouse'],
       },
       {
-        label: 'Locations',
-        path: 'locations',
+        label: 'Warehouse Locations',
+        path: 'warehouse-locations',
         icon: faWarehouse,
         roles: ['admin', 'warehouse'],
       },
@@ -130,7 +150,7 @@ const sections = [
         label: 'Products',
         path: 'product-catalog',
         icon: faBagShopping,
-        roles: ['admin', 'sales'],
+        roles: ['admin', 'sales', 'procurement'],
       },
       {
         label: 'Customers',
@@ -209,7 +229,7 @@ const sections = [
     items: [
       {
         label: 'Compliance Labels',
-        path: 'compliance-labels',
+        path: 'compliance-label-customer',
         icon: faTags,
         roles: ['customer'],
       },
