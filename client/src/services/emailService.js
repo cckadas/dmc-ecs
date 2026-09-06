@@ -24,3 +24,28 @@ export async function sendPurchaseOrderEmails(purchaseOrderId) {
 
   return result
 }
+
+
+export async function sendPaymentProof(supplierId, paymentProofPath) {
+  const response = await fetch(`${API}/send-payment-proof`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      supplierId,
+      paymentProofPath,
+    }),
+  })
+
+  const result = await response.json()
+
+  if (!response.ok || !result.success) {
+    throw new Error(
+      result.error ||
+      'Failed to send Payment Proof emails.'
+    )
+  }
+
+  return result
+}

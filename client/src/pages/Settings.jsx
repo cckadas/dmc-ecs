@@ -23,15 +23,17 @@ export default function SettingsPage() {
       const tables = [
         'compliance_label_exchanges',
         'customer_order_items',
-        'purchase_order_items',
+        'customer_order_status_history',
         'quotation_items',
         'quotation_request_items',
+        'quotations',
+        'quotation_requests',
+        'purchase_order_items',
         'purchase_orders',
         'customer_orders',
-        'quotation_requests',
-        'quotations',
+        'notifications',
       ]
-
+      
       for (const table of tables) {
         const { error } = await supabase
           .from(table)
@@ -176,8 +178,10 @@ export default function SettingsPage() {
 
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-red-600">
                   <li>Compliance label exchanges</li>
+                  <li>Customer order status history</li>
                   <li>Customer order items</li>
                   <li>Customer orders</li>
+                  <li>Notifications</li>
                   <li>Purchase order items</li>
                   <li>Purchase orders</li>
                   <li>Quotation items</li>

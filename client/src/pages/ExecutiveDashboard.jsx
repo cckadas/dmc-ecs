@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useToast } from '../context/ToastContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faChartLine, faTruck } from '@fortawesome/free-solid-svg-icons'
+import { faChartLine, faTruck, faExclamationTriangle } from '@fortawesome/free-solid-svg-icons'
 
 import CustomerOrderCard from '../components/CustomerOrderCard'
 import PurchaseOrderCard from '../components/PurchaseOrderCard'
@@ -841,26 +841,32 @@ function PredictiveShipmentCard({
       {/* =============================================
           HEADER
       ============================================= */}
+      <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
 
-      <div className="flex items-center gap-3 border-b border-gray-100 px-5 py-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#2D5A42] text-white">
+            <FontAwesomeIcon
+              icon={faTruck}
+              className="h-4 w-4"
+            />
+          </div>
 
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#2D5A42] text-white">
-          <FontAwesomeIcon
-            icon={faTruck}
-            className="h-4 w-4"
-          />
+          <div>
+            <h2 className="font-semibold text-gray-800">
+              Predictive Shipment Readiness
+            </h2>
+
+            <p className="text-xs text-gray-400">
+              Based on historical order performance
+            </p>
+          </div>
         </div>
 
-        <div>
-          <h2 className="font-semibold text-gray-800">
-            Predictive Shipment Readiness
-          </h2>
-
-          <p className="text-xs text-gray-400">
-            Based on historical order performance
-          </p>
-        </div>
-
+        {/* Beta Badge */}
+        <span className="flex items-center gap-1 rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1 font-medium text-[11px] uppercase tracking-wider text-orange-600">
+          <FontAwesomeIcon icon={faExclamationTriangle} className="h-2.5 w-2.5"/>
+          Beta
+        </span>
       </div>
 
       {/* =============================================

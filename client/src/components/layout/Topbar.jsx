@@ -60,14 +60,24 @@ export default function Topbar({ collapsed, onToggleSidebar }) {
           link,
           created_at
         `)
-        .eq('role', role)
         .order('created_at', {
           ascending: false
         })
         .limit(30)
 
       if (role === 'customer') {
-        query = query.eq('user_id', profile.id)
+        query = query
+          .eq('role', 'customer')
+          .eq('user_id', profile.id)
+      } 
+      
+      else if (role === 'admin') {
+        query = query.neq('role', 'customer')
+
+      }
+      
+      else {
+        query = query.eq('role', role)
       }
 
       const { data, error } = await query
@@ -78,13 +88,9 @@ export default function Topbar({ collapsed, onToggleSidebar }) {
       }
 
       setNotifications(data || [])
-    }
-
-    catch (error) {
+    } catch (error) {
       console.error('Notification loading error:', error)
-    }
-    
-    finally {
+    } finally {
       setLoadingNotifications(false)
     }
   }
@@ -273,7 +279,7 @@ export default function Topbar({ collapsed, onToggleSidebar }) {
     setOpenNotifications(false)
 
     if (notification.link) {
-      navigate(notification.link)
+      navigate(`/${role}${notification.link}`)
     }
   }
 

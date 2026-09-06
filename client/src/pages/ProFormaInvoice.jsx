@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
+import { createNotification } from '../services/notificationService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faFolderOpen, faFileSignature, faTrash, faXmark, faDownload, faFileInvoice } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
@@ -36,6 +37,7 @@ export default function ProFormaInvoicePage() {
         status,
         created_at,
         profiles (
+          id,
           company,
           email,
           contact_number,
@@ -204,6 +206,19 @@ export default function ProFormaInvoicePage() {
         toast.error('Failed to update request status.')
         return
       }
+
+
+      // =============================================
+      // SUCCESS
+      // =============================================
+      await createNotification({
+        userId: currentRequest.profiles?.id,
+        role: 'customer',
+        title: `${currentRequest.quotation_reference} PFI now available`,
+        message: `PFI for Quotation Request ${currentRequest.quotation_reference} is ready for review.`,
+        type: 'info',
+        link: '/quotation-requests',
+      })
 
       toast.success('Quotation and PFI generated successfully.')
 

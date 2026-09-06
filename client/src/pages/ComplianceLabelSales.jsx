@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useToast } from '../context/ToastContext'
+import { useAuth } from '../context/AuthContext'
+import { createNotification } from '../services/notificationService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBoxOpen, faFileLines, faXmark, faImage, faPaperPlane, faPrint } from '@fortawesome/free-solid-svg-icons'
 
@@ -13,6 +15,7 @@ import IconButton from '../components/IconButton'
 export default function ComplianceLabelSalesPage() {
 
   const { toast } = useToast()
+  const { profile } = useAuth()
 
   const [customerOrders, setCustomerOrders] = useState([])
   const [loading, setLoading] = useState(true)
@@ -23,361 +26,347 @@ export default function ComplianceLabelSalesPage() {
   const [saving, setSaving] = useState(false)
 
 
-// =====================================================
-// LOAD CUSTOMER ORDERS
-// =====================================================
-async function loadCustomerOrders() {
+  // =====================================================
+  // LOAD CUSTOMER ORDERS
+  // =====================================================
+  async function loadCustomerOrders() {
 
-  setLoading(true)
+    setLoading(true)
 
-  try {
+    try {
 
-    // =================================================
-    // LOAD PURCHASE ORDERS
-    // ONLY INCLUDE DELIVERED PURCHASE ORDERS
-    // =================================================
-    const { data: purchaseOrders, error: purchaseOrderError } = await supabase
-      .from('purchase_orders')
-      .select(`
-        id,
-        po_number,
-        customer_order_id,
-        status,
-        created_at,
-
-        customer_orders (
-          id,
-          order_number,
-          customer_id,
-          quotation_number,
-          total_amount,
-          status,
-          delivery_location_id
-        )
-      `)
-      .in('status', [
-        'fully delivered',
-        'partially delivered'
-      ])
-      .order('created_at', {
-        ascending: false
-      })
-
-    if (purchaseOrderError) {
-      throw purchaseOrderError
-    }
-
-    // =================================================
-    // ONLY KEEP CUSTOMER ORDERS IN WAREHOUSE PREPARATION
-    // =================================================
-    const filteredPurchaseOrders = (purchaseOrders || []).filter(
-      (po) =>
-        po.customer_orders?.status === 'warehouse preparation'
-    )
-
-    if (filteredPurchaseOrders.length === 0) {
-      setCustomerOrders([])
-      return
-    }
-
-
-    // =================================================
-    // GET CUSTOMER ORDER IDS
-    // =================================================
-    const customerOrderIds = [
-      ...new Set(
-        filteredPurchaseOrders
-          .map((po) => po.customer_order_id)
-          .filter(Boolean)
-      )
-    ]
-
-    if (customerOrderIds.length === 0) {
-      setCustomerOrders([])
-      return
-    }
-
-
-    // =================================================
-    // LOAD CUSTOMER ORDER ITEMS
-    // =================================================
-    const { data: orderItems, error: orderItemsError } = await supabase
-      .from('customer_order_items')
-      .select(`
-        id,
-        customer_order_id,
-        product_id,
-        quantity,
-        unit_price,
-        subtotal,
-
-        products (
-          id,
-          product_name,
-          brand,
-          unit
-        )
-      `)
-      .in(
-        'customer_order_id',
-        customerOrderIds
-      )
-
-    if (orderItemsError) {
-      throw orderItemsError
-    }
-
-
-    // =================================================
-    // GET ORDER ITEM IDS
-    // =================================================
-    const orderItemIds = (orderItems || [])
-      .map((item) => item.id)
-      .filter(Boolean)
-
-
-    // =================================================
-    // LOAD COMPLIANCE LABEL EXCHANGES
-    // =================================================
-    let exchangesMap = {}
-
-    if (orderItemIds.length > 0) {
-
-      const { data: exchanges, error: exchangesError } = await supabase
-        .from('compliance_label_exchanges')
+      // =================================================
+      // LOAD PURCHASE ORDERS
+      // ONLY INCLUDE DELIVERED PURCHASE ORDERS
+      // =================================================
+      const { data: purchaseOrders, error: purchaseOrderError } = await supabase
+        .from('purchase_orders')
         .select(`
           id,
-          customer_order_item_id,
-          original_label_path,
-          customer_design_path,
+          po_number,
+          customer_order_id,
           status,
           created_at,
-          updated_at
-        `)
-        .in(
-          'customer_order_item_id',
-          orderItemIds
-        )
 
-      if (exchangesError) {
-        throw exchangesError
-      }
-
-      exchangesMap = (exchanges || []).reduce(
-        (map, exchange) => {
-          map[exchange.customer_order_item_id] = exchange
-          return map
-        },
-        {}
-      )
-    }
-
-
-    // =================================================
-    // LOAD DELIVERY LOCATIONS
-    // =================================================
-    const deliveryLocationIds = [
-      ...new Set(
-        filteredPurchaseOrders
-          .map(
-            (po) =>
-              po.customer_orders?.delivery_location_id
+          customer_orders (
+            id,
+            order_number,
+            customer_id,
+            quotation_number,
+            total_amount,
+            status,
+            delivery_location_id
           )
-          .filter(Boolean)
-      )
-    ]
-
-    let deliveryLocationsMap = {}
-
-    if (deliveryLocationIds.length > 0) {
-
-      const {
-        data: deliveryLocations,
-        error: deliveryLocationError
-      } = await supabase
-        .from('delivery_locations')
-        .select(`
-          id,
-          country
         `)
-        .in(
-          'id',
-          deliveryLocationIds
-        )
-
-      if (deliveryLocationError) {
-        throw deliveryLocationError
-      }
-
-      deliveryLocationsMap = (deliveryLocations || []).reduce(
-        (map, location) => {
-          map[location.id] = location
-          return map
-        },
-        {}
-      )
-    }
-
-
-    // =================================================
-    // LOAD CUSTOMER PROFILES
-    // =================================================
-    const customerIds = [
-      ...new Set(
-        filteredPurchaseOrders
-          .map(
-            (po) =>
-              po.customer_orders?.customer_id
-          )
-          .filter(Boolean)
-      )
-    ]
-
-    let profilesMap = {}
-
-    if (customerIds.length > 0) {
-
-      const {
-        data: profiles,
-        error: profileError
-      } = await supabase
-        .from('profiles')
-        .select(`
-          id,
-          name,
-          email,
-          company
-        `)
-        .in(
-          'id',
-          customerIds
-        )
-
-      if (profileError) {
-        throw profileError
-      }
-
-      profilesMap = (profiles || []).reduce(
-        (map, profile) => {
-          map[profile.id] = profile
-          return map
-        },
-        {}
-      )
-    }
-
-
-    // =================================================
-    // MAP PURCHASE ORDERS
-    // =================================================
-    const purchaseOrdersMap =
-      filteredPurchaseOrders.reduce(
-        (map, po) => {
-
-          map[po.customer_order_id] = po
-
-          return map
-        },
-        {}
-      )
-
-
-    // =================================================
-    // GROUP ITEMS BY CUSTOMER ORDER
-    // =================================================
-    const groupedOrders = {}
-
-    ;(orderItems || []).forEach(
-      (item) => {
-
-        const customerOrderId =
-          item.customer_order_id
-
-        const purchaseOrder =
-          purchaseOrdersMap[customerOrderId]
-
-        if (!purchaseOrder) {
-          return
-        }
-
-
-        // =================================================
-        // CREATE CUSTOMER ORDER GROUP
-        // =================================================
-        if (!groupedOrders[customerOrderId]) {
-
-          const customerOrder =
-            purchaseOrder.customer_orders
-
-          const deliveryLocation =
-            deliveryLocationsMap[
-              customerOrder?.delivery_location_id
-            ] || null
-
-          const customer =
-            profilesMap[
-              customerOrder?.customer_id
-            ] || null
-
-
-          groupedOrders[customerOrderId] = {
-
-            customer_order: {
-              ...customerOrder,
-              profile: customer,
-              delivery_location: deliveryLocation
-            },
-
-            purchase_order: purchaseOrder,
-
-            items: []
-          }
-        }
-
-
-        // =================================================
-        // ADD ITEM
-        // =================================================
-        groupedOrders[customerOrderId].items.push({
-
-          ...item,
-
-          compliance_label_exchange:
-            exchangesMap[item.id] || null
+        .in('status', [
+          'fully delivered',
+          'partially delivered'
+        ])
+        .order('created_at', {
+          ascending: false
         })
+
+      if (purchaseOrderError) {
+        throw purchaseOrderError
       }
-    )
+
+      // =================================================
+      // ONLY KEEP CUSTOMER ORDERS IN WAREHOUSE PREPARATION
+      // =================================================
+      const filteredPurchaseOrders = (purchaseOrders || []).filter(
+        (po) =>
+          po.customer_orders?.status === 'warehouse preparation'
+      )
+
+      if (filteredPurchaseOrders.length === 0) {
+        setCustomerOrders([])
+        return
+      }
 
 
-    // =================================================
-    // SET DATA
-    // =================================================
-    setCustomerOrders(
-      Object.values(groupedOrders)
-    )
+      // =================================================
+      // GET CUSTOMER ORDER IDS
+      // =================================================
+      const customerOrderIds = [
+        ...new Set(
+          filteredPurchaseOrders
+            .map((po) => po.customer_order_id)
+            .filter(Boolean)
+        )
+      ]
 
+      if (customerOrderIds.length === 0) {
+        setCustomerOrders([])
+        return
+      }
+
+
+      // =================================================
+      // LOAD CUSTOMER ORDER ITEMS
+      // =================================================
+      const { data: orderItems, error: orderItemsError } = await supabase
+        .from('customer_order_items')
+        .select(`
+          id,
+          customer_order_id,
+          product_id,
+          quantity,
+          unit_price,
+          subtotal,
+
+          products (
+            id,
+            product_name,
+            brand,
+            unit
+          )
+        `)
+        .in(
+          'customer_order_id',
+          customerOrderIds
+        )
+
+      if (orderItemsError) {
+        throw orderItemsError
+      }
+
+
+      // =================================================
+      // GET ORDER ITEM IDS
+      // =================================================
+      const orderItemIds = (orderItems || [])
+        .map((item) => item.id)
+        .filter(Boolean)
+
+
+      // =================================================
+      // LOAD COMPLIANCE LABEL EXCHANGES
+      // =================================================
+      let exchangesMap = {}
+
+      if (orderItemIds.length > 0) {
+
+        const { data: exchanges, error: exchangesError } = await supabase
+          .from('compliance_label_exchanges')
+          .select(`
+            id,
+            customer_order_item_id,
+            original_label_path,
+            customer_design_path,
+            status,
+            created_at,
+            updated_at
+          `)
+          .in(
+            'customer_order_item_id',
+            orderItemIds
+          )
+
+        if (exchangesError) {
+          throw exchangesError
+        }
+
+        exchangesMap = (exchanges || []).reduce(
+          (map, exchange) => {
+            map[exchange.customer_order_item_id] = exchange
+            return map
+          },
+          {}
+        )
+      }
+
+
+      // =================================================
+      // LOAD DELIVERY LOCATIONS
+      // =================================================
+      const deliveryLocationIds = [
+        ...new Set(
+          filteredPurchaseOrders
+            .map(
+              (po) =>
+                po.customer_orders?.delivery_location_id
+            )
+            .filter(Boolean)
+        )
+      ]
+
+      let deliveryLocationsMap = {}
+
+      if (deliveryLocationIds.length > 0) {
+
+        const {
+          data: deliveryLocations,
+          error: deliveryLocationError
+        } = await supabase
+          .from('delivery_locations')
+          .select(`
+            id,
+            country
+          `)
+          .in(
+            'id',
+            deliveryLocationIds
+          )
+
+        if (deliveryLocationError) {
+          throw deliveryLocationError
+        }
+
+        deliveryLocationsMap = (deliveryLocations || []).reduce(
+          (map, location) => {
+            map[location.id] = location
+            return map
+          },
+          {}
+        )
+      }
+
+
+      // =================================================
+      // LOAD CUSTOMER PROFILES
+      // =================================================
+      const customerIds = [
+        ...new Set(
+          filteredPurchaseOrders
+            .map(
+              (po) =>
+                po.customer_orders?.customer_id
+            )
+            .filter(Boolean)
+        )
+      ]
+
+      let profilesMap = {}
+
+      if (customerIds.length > 0) {
+
+        const {
+          data: profiles,
+          error: profileError
+        } = await supabase
+          .from('profiles')
+          .select(`
+            id,
+            name,
+            email,
+            company
+          `)
+          .in(
+            'id',
+            customerIds
+          )
+
+        if (profileError) {
+          throw profileError
+        }
+
+        profilesMap = (profiles || []).reduce(
+          (map, profile) => {
+            map[profile.id] = profile
+            return map
+          },
+          {}
+        )
+      }
+
+
+      // =================================================
+      // MAP PURCHASE ORDERS
+      // =================================================
+      const purchaseOrdersMap =
+        filteredPurchaseOrders.reduce(
+          (map, po) => {
+
+            map[po.customer_order_id] = po
+
+            return map
+          },
+          {}
+        )
+
+
+      // =================================================
+      // GROUP ITEMS BY CUSTOMER ORDER
+      // =================================================
+      const groupedOrders = {}
+
+      ;(orderItems || []).forEach(
+        (item) => {
+
+          const customerOrderId =
+            item.customer_order_id
+
+          const purchaseOrder =
+            purchaseOrdersMap[customerOrderId]
+
+          if (!purchaseOrder) {
+            return
+          }
+
+
+          // =================================================
+          // CREATE CUSTOMER ORDER GROUP
+          // =================================================
+          if (!groupedOrders[customerOrderId]) {
+
+            const customerOrder =
+              purchaseOrder.customer_orders
+
+            const deliveryLocation =
+              deliveryLocationsMap[
+                customerOrder?.delivery_location_id
+              ] || null
+
+            const customer =
+              profilesMap[
+                customerOrder?.customer_id
+              ] || null
+
+
+            groupedOrders[customerOrderId] = {
+
+              customer_order: {
+                ...customerOrder,
+                profile: customer,
+                delivery_location: deliveryLocation
+              },
+
+              purchase_order: purchaseOrder,
+
+              items: []
+            }
+          }
+
+
+          // =================================================
+          // ADD ITEM
+          // =================================================
+          groupedOrders[customerOrderId].items.push({
+
+            ...item,
+
+            compliance_label_exchange:
+              exchangesMap[item.id] || null
+          })
+        }
+      )
+
+
+      // =================================================
+      // SET DATA
+      // =================================================
+      setCustomerOrders(Object.values(groupedOrders))
+    }
+
+    catch (error) {
+      console.error('Failed to load compliance label orders:', error)
+      toast.error(error.message || 'Failed to load compliance label orders.')
+    }
+
+    finally {
+      setLoading(false)
+    }
   }
-
-  catch (error) {
-
-    console.error(
-      'Failed to load compliance label orders:',
-      error
-    )
-
-    toast.error(
-      error.message ||
-      'Failed to load compliance label orders.'
-    )
-
-  }
-
-  finally {
-
-    setLoading(false)
-
-  }
-}
 
 
   // =============================================
@@ -434,6 +423,38 @@ async function loadCustomerOrders() {
         throw error
       }
 
+      // =============================================
+      // GET CUSTOMER ID
+      // =============================================
+      const { data: customerOrder, error: customerError } = await supabase
+        .from('customer_orders')
+        .select('customer_id, order_number')
+        .eq('id', selectedItem.customer_order_id)
+        .single()
+
+      if (customerError) {
+        throw customerError
+      }
+
+      if (!customerOrder?.customer_id) {
+        throw new Error('Customer ID not found for this order.')
+      }
+
+
+      // =============================================
+      // CREATE NOTIFICATION
+      // =============================================
+      await createNotification({
+        userId: customerOrder.customer_id,
+        role: 'customer',
+        title: `Compliance Label Design Awaiting Translation`,
+        message: `DMC has sent a compliance label photo awaiting for your translated design.`,
+        type: 'info',
+        relatedCustomerOrderId: selectedItem.customer_order_id,
+        link: '/compliance-label-customer',
+      })
+
+          
       // =================================================
       // SUCCESS
       // =================================================
@@ -485,6 +506,15 @@ async function loadCustomerOrders() {
       // =================================================
       // SUCCESS
       // =================================================
+      await createNotification({
+        userId: profile.id,
+        role: 'warehouse',
+        title: `Label Printed & Awaiting Application`,
+        message: `A customer has uploaded their translated compliance label design and it's ready to be laid out`,
+        type: 'info',
+        link: '/compliance-label-warehouse',
+      })
+
       toast.success('Printed and forwarded to warehouse.')
       closeComplianceModal()
       await loadCustomerOrders()

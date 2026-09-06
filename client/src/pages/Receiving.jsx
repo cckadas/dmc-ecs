@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useToast } from '../context/ToastContext'
+import { createNotification } from '../services/notificationService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBoxesPacking, faXmark } from '@fortawesome/free-solid-svg-icons'
 
@@ -752,6 +753,38 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
           if (historyError) {
             throw historyError
           }
+
+
+          // =============================================
+          // GET CUSTOMER ID
+          // =============================================
+          const { data: customerOrder, error: customerError } = await supabase
+            .from('customer_orders')
+            .select('customer_id, order_number')
+            .eq('id', purchaseOrder.customer_order_id)
+            .single()
+
+          if (customerError) {
+            throw customerError
+          }
+
+          if (!customerOrder?.customer_id) {
+            throw new Error('Customer ID not found for this order.')
+          }
+
+
+          // =============================================
+          // CREATE NOTIFICATION
+          // =============================================
+          await createNotification({
+            userId: customerOrder.customer_id,
+            role: 'customer',
+            title: `${customerOrder.order_number} is now in warehouse preparation`,
+            message: `Your order ${customerOrder.order_number} status is now "Warehouse Preparation". Please check your order details for more information.`,
+            type: 'info',
+            relatedCustomerOrderId: purchaseOrder.customer_order_id,
+            link: '/my-orders',
+          })
         }
       }
 

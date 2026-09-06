@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
-import { sendPurchaseOrderEmails } from '../services/emailService'
+import { createNotification } from '../services/notificationService'
+import { sendPurchaseOrderEmails, sendPaymentProof } from '../services/emailService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faFolderOpen,
@@ -522,10 +523,41 @@ export default function PurchaseOrdersPage() {
       }
 
 
+      // =============================================
+      // GET CUSTOMER ID
+      // =============================================
+      const { data: customerOrder, error: customerError } = await supabase
+        .from('customer_orders')
+        .select('customer_id, order_number')
+        .eq('id', customerOrderId)
+        .single()
+
+      if (customerError) {
+        throw customerError
+      }
+
+      if (!customerOrder?.customer_id) {
+        throw new Error('Customer ID not found for this order.')
+      }
+
+
+      // =============================================
+      // CREATE NOTIFICATION
+      // =============================================
+      await createNotification({
+        userId: customerOrder.customer_id,
+        role: 'customer',
+        title: `${customerOrder.order_number} is now in procurement`,
+        message: `Your order ${customerOrder.order_number} status is now "Procurement". Please check your order details for more information.`,
+        type: 'info',
+        relatedCustomerOrderId: customerOrderId,
+        link: '/my-orders',
+      })
+
+
       // -------------------------------------------------
       // SEND PURCHASE ORDER EMAILS
       // -------------------------------------------------
-
       await sendPurchaseOrderEmails(purchaseOrder.id)
 
 
@@ -1375,6 +1407,11 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
       if (itemError) {
         throw itemError
       }
+
+      // -------------------------------------------------
+      // SEND PURCHASE ORDER EMAILS
+      // -------------------------------------------------
+      await sendPaymentProof(supplier.id, paymentProofPath)
 
       toast.success('Purchase order marked as paid to supplier.')
       onSuccess()

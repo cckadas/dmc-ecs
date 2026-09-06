@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useToast } from '../context/ToastContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { createNotification } from '../services/notificationService'
 import { faBoxOpen, faFileLines, faUpload, faXmark, faImage, faCheck, faStickyNote } from '@fortawesome/free-solid-svg-icons'
 
 import StatusBadge from '../components/StatusBadge'
@@ -588,7 +589,7 @@ async function loadCustomerOrders() {
   // =====================================================
   // SEND ITEM TO STAGING
   // =====================================================
-  async function sendToStaging(item) {
+  async function sendToStaging(customerOrder, item) {
 
     if (!item?.id) {
       toast.error('Missing customer order item.')
@@ -709,6 +710,17 @@ async function loadCustomerOrders() {
         if (historyError) {
           throw historyError
         }
+
+
+        await createNotification({
+          userId: customerOrder.customer_id,
+          role: 'customer',
+          title: `${customerOrder.order_number} is ready for shipment`,
+          message: `Your order ${customerOrder.order_number} status is now "Ready for Shipment". Please check your order details for more information.`,
+          type: 'info',
+          relatedCustomerOrderId: customerOrder.id,
+          link: '/my-orders',
+        })
 
         toast.success('All items are ready. Customer order sent to shipment.')
       }
@@ -1030,7 +1042,7 @@ async function loadCustomerOrders() {
                                         title="Label Applied to Units"
                                         color="blue"
                                         disabled={ !exchange?.original_label_path || !exchange?.customer_design_path || exchange.status !== 'printed & awaiting application'}
-                                        onClick={() => sendToStaging(item)}
+                                        onClick={() => sendToStaging(customerOrder,item)}
                                       />
                                     </div>
                                   )}

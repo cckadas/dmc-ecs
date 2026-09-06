@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faCreditCard, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
+import { createNotification } from '../services/notificationService'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
@@ -515,6 +516,16 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
       // =============================================
       // SUCCESS
       // =============================================
+      await createNotification({
+        userId: payment.customer_id,
+        role: 'sales',
+        title: `${payment.order_number} - Payment has been submitted`,
+        message: `Payment for order ${payment.order_number} has been submitted`,
+        type: 'info',
+        relatedCustomerOrderId: payment.id,
+        link: '/customer-orders',
+      })
+
       await onPaymentSubmitted()
       onClose()
     }
