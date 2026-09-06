@@ -1,10 +1,15 @@
 import { useState } from 'react'
+import { useAuth } from '../../context/AuthContext'
 
 import Sidebar from './Sidebar'
 import Topbar from './Topbar'
+import Chatbot from './Chatbot'
 
 export default function Layout({ children }) {
+  const { profile } = useAuth()
+
   const [collapsed, setCollapsed] = useState(false)
+  const isCustomer = profile?.role === 'customer'
 
   return (
     <div className="min-h-screen bg-[#EEF3EF]">
@@ -17,6 +22,10 @@ export default function Layout({ children }) {
           {children}
         </div>
       </main>
+
+      {isCustomer && (
+        <Chatbot />
+      )}
 
     </div>
   )

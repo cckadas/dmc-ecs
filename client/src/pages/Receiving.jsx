@@ -739,6 +739,19 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
           if (customerOrderError) {
             throw customerOrderError
           }
+
+          const { error: historyError } = await supabase
+            .from('customer_order_status_history')
+            .insert({
+              customer_order_id: purchaseOrder.customer_order_id,
+              previous_status: 'procurement',
+              new_status: 'warehouse preparation',
+              changed_at: new Date().toISOString()
+            })
+
+          if (historyError) {
+            throw historyError
+          }
         }
       }
 

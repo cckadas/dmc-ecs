@@ -508,6 +508,19 @@ export default function PurchaseOrdersPage() {
         throw customerOrderError
       }
 
+      const { error: historyError } = await supabase
+        .from('customer_order_status_history')
+        .insert({
+          customer_order_id: customerOrderId,
+          previous_status: 'payment verified',
+          new_status: 'procurement',
+          changed_at: new Date().toISOString()
+        })
+
+      if (historyError) {
+        throw historyError
+      }
+
 
       // -------------------------------------------------
       // SEND PURCHASE ORDER EMAILS

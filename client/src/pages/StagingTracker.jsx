@@ -438,6 +438,19 @@ export default function StagingTrackerPage() {
         throw customerOrderError
       }
 
+      const { error: historyError } = await supabase
+        .from('customer_order_status_history')
+        .insert({
+          customer_order_id: order.id,
+          previous_status: 'warehouse preparation',
+          new_status: 'shipped',
+          changed_at: new Date().toISOString()
+        })
+
+      if (historyError) {
+        throw historyError
+      }
+
 
       // =================================================
       // SUCCESS

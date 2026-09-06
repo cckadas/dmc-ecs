@@ -697,6 +697,19 @@ async function loadCustomerOrders() {
           throw customerOrderError
         }
 
+        const { error: historyError } = await supabase
+          .from('customer_order_status_history')
+          .insert({
+            customer_order_id: item.customer_order_id,
+            previous_status: 'warehouse preparation',
+            new_status: 'ready for shipment',
+            changed_at: new Date().toISOString()
+          })
+
+        if (historyError) {
+          throw historyError
+        }
+
         toast.success('All items are ready. Customer order sent to shipment.')
       }
       

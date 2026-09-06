@@ -38,7 +38,7 @@ export default function DashboardPage() {
     procurement: 0,
     warehousePreparation: 0,
     readyForShipment: 0,
-    completed: 0,
+    shipped: 0,
   })
 
 
@@ -112,14 +112,14 @@ export default function DashboardPage() {
       const procurement = countStatus('procurement')
       const warehousePreparation = countStatus('warehouse preparation')
       const readyForShipment = countStatus('ready for shipment')
-      const completed = countStatus('completed')
+      const shipped = countStatus('shipped')
 
 
       // =================================================
       // TOTAL ACTIVE
       // =================================================
-      const totalActive = orders.filter((order) => order.status !== 'completed' && order.status !== 'cancelled').length
-      const totalOverall = totalActive + completed
+      const totalActive = orders.filter((order) => order.status !== 'shipped' && order.status !== 'cancelled').length
+      const totalOverall = totalActive + shipped
 
 
       // =================================================
@@ -134,7 +134,7 @@ export default function DashboardPage() {
         procurement,
         warehousePreparation,
         readyForShipment,
-        completed,
+        shipped,
       })
     }
 

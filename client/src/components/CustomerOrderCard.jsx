@@ -39,8 +39,8 @@ export default function CustomerOrderCard({ title, subtitle, summary, loading })
       icon: faTruckFast,
     },
     {
-      label: 'Completed',
-      value: summary.completed,
+      label: 'Shipped',
+      value: summary.shipped,
       icon: faCircleCheck,
     },
   ]
