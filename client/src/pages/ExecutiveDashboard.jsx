@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useToast } from '../context/ToastContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faChartLine, faTruck, faExclamationTriangle } from '@fortawesome/free-solid-svg-icons'
+import { faChartLine, faTruck, faExclamationTriangle, faCircleExclamation } from '@fortawesome/free-solid-svg-icons'
 
 import CustomerOrderCard from '../components/CustomerOrderCard'
 import PurchaseOrderCard from '../components/PurchaseOrderCard'
@@ -21,6 +21,8 @@ export default function ExecutiveDashboard() {
   const [activeAnalytics, setActiveAnalytics] = useState('customer')
   const [shipmentPredictionLoading, setShipmentPredictionLoading] = useState(true)
   const [shipmentPredictions, setShipmentPredictions] = useState([])
+  const [supplierPerformanceLoading, setSupplierPerformanceLoading] = useState(true)
+  const [supplierPerformance, setSupplierPerformance] = useState([])
 
 
   // =====================================================
@@ -241,6 +243,83 @@ export default function ExecutiveDashboard() {
 
     finally {
       setComplianceLabelLoading(false)
+    }
+  }
+
+
+  // =====================================================
+  // LOAD SUPPLIER PERFORMANCE
+  // =====================================================
+  async function loadSupplierPerformance() {
+    setSupplierPerformanceLoading(true)
+
+    try {
+
+      // =================================================
+      // LOAD ALL SUPPLIERS
+      // =================================================
+      const { data: suppliers, error: suppliersError } = await supabase
+        .from('suppliers')
+        .select(`
+          id,
+          supplier_name
+        `)
+        .order('supplier_name', {
+          ascending: true,
+        })
+
+      if (suppliersError) {
+        throw suppliersError
+      }
+
+      const allSuppliers = suppliers || []
+
+
+      // =================================================
+      // LOAD SUPPLIER PERFORMANCE
+      // =================================================
+      const { data: performance, error: performanceError } = await supabase
+        .from('supplier_performance')
+        .select(`
+          id,
+          supplier_id,
+          total_orders,
+          on_time_deliveries,
+          late_deliveries,
+          average_lead_time_days,
+          reliability_rating,
+          notes,
+          created_at,
+          updated_at
+        `)
+
+      if (performanceError) {
+        throw performanceError
+      }
+
+      const performanceRecords = performance || []
+
+
+      // =================================================
+      // MATCH EACH SUPPLIER WITH ITS LATEST PERFORMANCE
+      // =================================================
+      const supplierPerformanceData = allSuppliers.map((supplier) => {
+        const supplierRecords = performanceRecords.filter((record) => record.supplier_id === supplier.id)
+        const latestPerformance = supplierRecords.length > 0 ? supplierRecords[0] : null
+
+        return { supplier, performance: latestPerformance }
+      })
+
+      setSupplierPerformance(supplierPerformanceData)
+    }
+
+    catch (error) {
+      console.error('Failed to load supplier performance:', error)
+      toast.error(error.message || 'Failed to load supplier performance.')
+    }
+
+    finally {
+      setSupplierPerformanceLoading(false)
     }
   }
 
@@ -507,7 +586,6 @@ export default function ExecutiveDashboard() {
         // FIND CURRENT STATUS START TIME
         // -----------------------------------------------
         const orderHistory = historyByOrder[order.id] || []
-
         const sortedOrderHistory = [...orderHistory].sort((a, b) => new Date(a.changed_at).getTime() - new Date(b.changed_at).getTime())
 
         let currentStatusStartedAt = null
@@ -658,6 +736,7 @@ export default function ExecutiveDashboard() {
     loadPurchaseOrderSummary()
     loadComplianceLabelSummary()
     loadShipmentPredictions()
+    loadSupplierPerformance()
   }, [])
 
 
@@ -772,9 +851,9 @@ export default function ExecutiveDashboard() {
           loading={shipmentPredictionLoading}
         />
 
-        <EmptyFeatureCard
-          title="Supplier Reliability Reporting"
-          icon={faChartLine}
+        <SupplierPerformanceCard
+          performance={supplierPerformance}
+          loading={supplierPerformanceLoading}
         />
       </div>
 
@@ -786,28 +865,14 @@ export default function ExecutiveDashboard() {
 
 
 
-
-
-
 // =============================================
 // PREDICTIVE SHIPMENT READINESS CARD
 // =============================================
+function PredictiveShipmentCard({ predictions, loading }) {
 
-function PredictiveShipmentCard({
-  predictions,
-  loading,
-}) {
   const formatDate = (date) => {
     if (!date) return '—'
-
-    return new Intl.DateTimeFormat(
-      'en-US',
-      {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-      }
-    ).format(new Date(date))
+    return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(date))
   }
 
   const formatStatus = (status) => {
@@ -815,25 +880,13 @@ function PredictiveShipmentCard({
 
     return status
       .split(' ')
-      .map(
-        (word) =>
-          word.charAt(0).toUpperCase() +
-          word.slice(1)
-      )
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join(' ')
   }
 
-  const onTrackCount =
-    predictions.filter(
-      (prediction) =>
-        prediction.risk === 'on track'
-    ).length
+  const onTrackCount = predictions.filter((prediction) => prediction.risk === 'on track').length
+  const atRiskCount = predictions.filter((prediction) => prediction.risk === 'at risk').length
 
-  const atRiskCount =
-    predictions.filter(
-      (prediction) =>
-        prediction.risk === 'at risk'
-    ).length
 
   return (
     <div className="flex min-h-[220px] flex-col rounded-xl border border-gray-200 bg-white shadow-sm">
@@ -842,13 +895,9 @@ function PredictiveShipmentCard({
           HEADER
       ============================================= */}
       <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
-
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#2D5A42] text-white">
-            <FontAwesomeIcon
-              icon={faTruck}
-              className="h-4 w-4"
-            />
+            <FontAwesomeIcon icon={faTruck} className="h-4 w-4" />
           </div>
 
           <div>
@@ -869,10 +918,10 @@ function PredictiveShipmentCard({
         </span>
       </div>
 
+
       {/* =============================================
           LOADING
       ============================================= */}
-
       {loading && (
         <div className="flex flex-1 items-center justify-center px-6 py-10">
           <p className="text-sm text-gray-400">
@@ -881,131 +930,95 @@ function PredictiveShipmentCard({
         </div>
       )}
 
+
       {/* =============================================
           EMPTY
       ============================================= */}
+      {!loading && predictions.length === 0 && (
+        <div className="flex flex-1 items-center justify-center px-6 py-10">
+          <p className="text-sm text-gray-400">
+            No active orders available for prediction.
+          </p>
+        </div>
+      )}
 
-      {!loading &&
-        predictions.length === 0 && (
-          <div className="flex flex-1 items-center justify-center px-6 py-10">
-            <p className="text-sm text-gray-400">
-              No active orders available for prediction.
-            </p>
-          </div>
-        )}
 
       {/* =============================================
           CONTENT
       ============================================= */}
+      {!loading && predictions.length > 0 && (
+        <div className="flex flex-1 flex-col">
 
-      {!loading &&
-        predictions.length > 0 && (
-          <div className="flex flex-1 flex-col">
+          {/* SUMMARY */}
+          <div className="grid grid-cols-3 border-b border-gray-100">
+            <div className="px-5 py-4">
+              <p className="text-xs text-gray-400">
+                Active Orders
+              </p>
 
-            {/* SUMMARY */}
-
-            <div className="grid grid-cols-3 border-b border-gray-100">
-
-              <div className="px-5 py-4">
-                <p className="text-xs text-gray-400">
-                  Active Orders
-                </p>
-
-                <p className="mt-1 text-2xl font-bold text-gray-800">
-                  {predictions.length}
-                </p>
-              </div>
-
-              <div className="border-l border-gray-100 px-5 py-4">
-                <p className="text-xs text-gray-400">
-                  On Track
-                </p>
-
-                <p className="mt-1 text-2xl font-bold text-[#2D5A42]">
-                  {onTrackCount}
-                </p>
-              </div>
-
-              <div className="border-l border-gray-100 px-5 py-4">
-                <p className="text-xs text-gray-400">
-                  At Risk
-                </p>
-
-                <p className="mt-1 text-2xl font-bold text-red-500">
-                  {atRiskCount}
-                </p>
-              </div>
-
+              <p className="mt-1 text-2xl font-bold text-gray-800">
+                {predictions.length}
+              </p>
             </div>
 
-            {/* ORDER LIST */}
+            <div className="border-l border-gray-100 px-5 py-4">
+              <p className="text-xs text-gray-400">
+                On Track
+              </p>
 
-            <div className="divide-y divide-gray-100">
+              <p className="mt-1 text-2xl font-bold text-[#2D5A42]">
+                {onTrackCount}
+              </p>
+            </div>
 
-              {predictions
-                .slice(0, 6)
-                .map((prediction) => (
+            <div className="border-l border-gray-100 px-5 py-4">
+              <p className="text-xs text-gray-400">
+                At Risk
+              </p>
 
-                  <div
-                    key={prediction.id}
-                    className="px-5 py-4"
-                  >
+              <p className="mt-1 text-2xl font-bold text-red-500">
+                {atRiskCount}
+              </p>
+            </div>
+          </div>
 
+
+          {/* ORDER LIST */}
+          <div className="divide-y divide-gray-100">
+
+            {predictions
+              .slice(0, 6)
+              .map((prediction) => (
+
+                  <div key={prediction.id} className="px-5 py-4">
                     <div className="flex items-start justify-between gap-4">
 
                       {/* ORDER */}
-
                       <div className="min-w-0">
-
                         <p className="truncate text-sm font-semibold text-gray-800">
-                          {prediction.order_number ||
-                            prediction.quotation_number ||
-                            'Customer Order'}
+                          {prediction.order_number || prediction.quotation_number || 'Customer Order'}
                         </p>
 
                         <p className="mt-0.5 text-xs text-gray-400">
-                          {formatStatus(
-                            prediction.currentStatus
-                          )}
+                          {formatStatus( prediction.currentStatus )}
                         </p>
-
                       </div>
 
                       {/* RISK */}
-
-                      <div
-                        className={`
-                          shrink-0 rounded-full px-2.5 py-1
-                          text-[11px] font-semibold
-                          ${
-                            prediction.risk ===
-                            'at risk'
-                              ? 'bg-red-50 text-red-600'
-                              : 'bg-green-50 text-[#2D5A42]'
-                          }
-                        `}
-                      >
-                        {prediction.risk ===
-                        'at risk'
-                          ? 'At Risk'
-                          : 'On Track'}
+                      <div className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${ prediction.risk === 'at risk' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-[#2D5A42]' }`}>
+                        {prediction.risk === 'at risk' ? 'At Risk' : 'On Track'}
                       </div>
-
                     </div>
 
                     {/* PREDICTION DETAILS */}
-
                     <div className="mt-3 grid grid-cols-2 gap-3">
-
                       <div>
                         <p className="text-[11px] text-gray-400">
                           Estimated Ready
                         </p>
 
                         <p className="mt-0.5 text-sm font-medium text-gray-700">
-                          {formatDate(
-                            prediction.estimatedReadyDate
-                          )}
+                          {formatDate( prediction.estimatedReadyDate )}
                         </p>
                       </div>
 
@@ -1015,61 +1028,37 @@ function PredictiveShipmentCard({
                         </p>
 
                         <div className="mt-1 flex items-center gap-2">
-
                           <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-100">
-
-                            <div
-                              className="h-full rounded-full bg-[#2D5A42]"
-                              style={{
-                                width: `${Math.min(
-                                  prediction.confidence,
-                                  100
-                                )}%`,
-                              }}
-                            />
-
+                            <div className="h-full rounded-full bg-[#2D5A42]" style={{ width: `${Math.min(prediction.confidence, 100)}%` }}/>
                           </div>
 
                           <span className="text-xs font-medium text-gray-600">
                             {prediction.confidence}%
                           </span>
-
                         </div>
                       </div>
-
                     </div>
 
                     {/* RISK REASON */}
-
-                    {prediction.risk ===
-                      'at risk' && (
+                    {prediction.risk === 'at risk' && (
                       <p className="mt-3 text-xs leading-5 text-red-500">
                         {prediction.riskReason}
                       </p>
                     )}
-
                   </div>
-
                 ))}
-
             </div>
 
             {/* MORE ORDERS */}
-
             {predictions.length > 6 && (
               <div className="border-t border-gray-100 px-5 py-3">
-
                 <p className="text-center text-xs text-gray-400">
-                  Showing 6 of {predictions.length}{' '}
-                  active orders
+                  Showing 6 of {predictions.length}{' '} active orders
                 </p>
-
               </div>
             )}
-
           </div>
         )}
-
     </div>
   )
 }
@@ -1078,50 +1067,299 @@ function PredictiveShipmentCard({
 
 
 
-
-
-
-
-
-
-
 // =============================================
 // EMPTY FEATURE CARD
 // =============================================
-function EmptyFeatureCard({ title, icon }) {
+function SupplierPerformanceCard({ performance, loading }) {
+
+  // =====================================================
+  // HELPERS
+  // =====================================================
+  const formatRating = (rating) => {
+    if (rating === null || rating === undefined) { return '—' }
+    return Number(rating).toFixed(1)
+  }
+
+  const getRatingPercentage = (rating) => {
+    if (rating === null || rating === undefined) { return 0 }
+    return Math.min(Math.max((Number(rating) / 5) * 100, 0), 100)
+  }
+
+  const getRatingLabel = (rating) => {
+    if (rating === null || rating === undefined) { return 'No rating' }
+
+    const value = Number(rating)
+
+    if (value >= 4.5) { return 'Excellent' }
+    if (value >= 3.5) { return 'Good' }
+    if (value >= 2.5) { return 'Fair' }
+    return 'Poor'
+  }
+
+
+  // =====================================================
+  // SUMMARY
+  // =====================================================
+  const totalSuppliers = performance.length
+  const suppliersWithData = performance.filter((item) => item.performance !== null).length
+  const suppliersWithoutData = totalSuppliers - suppliersWithData
+
+
+  // =====================================================
+  // LOADING
+  // =====================================================
+  if (loading) {
+    return (
+      <div className="flex min-h-[220px] flex-col rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div className="flex items-center gap-3 border-b border-gray-100 px-5 py-4">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#2D5A42] text-white">
+            <FontAwesomeIcon icon={faChartLine} className="h-4 w-4" />
+          </div>
+
+          <div>
+            <h2 className="font-semibold text-gray-800">
+              Supplier Reliability Reporting
+            </h2>
+
+            <p className="text-xs text-gray-400">
+              Supplier performance
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-1 items-center justify-center px-6 py-10">
+          <p className="text-sm text-gray-400">
+            Loading supplier performance...
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+
+  // =====================================================
+  // EMPTY
+  // =====================================================
+  if (performance.length === 0) {
+    return (
+      <div className="flex min-h-[220px] flex-col rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div className="flex items-center gap-3 border-b border-gray-100 px-5 py-4">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#2D5A42] text-white">
+            <FontAwesomeIcon icon={faChartLine} className="h-4 w-4" />
+          </div>
+
+          <div>
+            <h2 className="font-semibold text-gray-800">
+              Supplier Reliability Reporting
+            </h2>
+
+            <p className="text-xs text-gray-400">
+              Supplier performance
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-1 items-center justify-center px-6 text-center">
+          <p className="text-sm text-gray-400">
+            No suppliers available.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+
+  // =====================================================
+  // MAIN CARD
+  // =====================================================
   return (
     <div className="flex min-h-[220px] flex-col rounded-xl border border-gray-200 bg-white shadow-sm">
-
 
       {/* =============================================
           HEADER
       ============================================= */}
-      <div className="flex items-center gap-3 border-b border-gray-100 px-5 py-4">
-        <div
-          className={`flex h-9 w-9 items-center justify-center rounded-lg text-white bg-[#2D5A42]`}
-        >
-          <FontAwesomeIcon icon={icon} className="h-4 w-4"/>
+      <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
+        <div className="flex items-center gap-3">
+
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#2D5A42] text-white">
+            <FontAwesomeIcon icon={faChartLine} className="h-4 w-4" />
+          </div>
+
+          <div>
+            <h2 className="font-semibold text-gray-800">
+              Supplier Reliability Reporting
+            </h2>
+
+            <p className="text-xs text-gray-400">
+              Latest supplier performance
+            </p>
+          </div>
+        </div>
+      </div>
+
+
+      {/* =============================================
+          SUMMARY
+      ============================================= */}
+      <div className="grid grid-cols-3 border-b border-gray-100">
+        <div className="px-5 py-4">
+          <p className="text-xs text-gray-400">
+            Suppliers
+          </p>
+
+          <p className="mt-1 text-2xl font-bold text-gray-800">
+            {totalSuppliers}
+          </p>
         </div>
 
-        <div>
-          <h2 className="font-semibold text-gray-800">
-            {title}
-          </h2>
-
+        <div className="border-l border-gray-100 px-5 py-4">
           <p className="text-xs text-gray-400">
-            Analytics
+            Rated
+          </p>
+
+          <p className="mt-1 text-2xl font-bold text-[#2D5A42]">
+            {suppliersWithData}
+          </p>
+        </div>
+
+        <div className="border-l border-gray-100 px-5 py-4">
+          <p className="text-xs text-gray-400">
+            Unrated
+          </p>
+
+          <p className="mt-1 text-2xl font-bold text-gray-500">
+            {suppliersWithoutData}
           </p>
         </div>
       </div>
 
 
       {/* =============================================
-          EMPTY STATE
+          SUPPLIER LIST
       ============================================= */}
-      <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
-        <p className="text-sm font-medium text-gray-500">
-          Feature Shipping Soon
-        </p>
+      <div className="divide-y divide-gray-100">
+
+        {performance.map((item) => {
+
+          const supplier = item.supplier
+          const supplierRecord = item.performance
+
+          const rating = supplierRecord?.reliability_rating
+          const hasPerformance = supplierRecord !== null && rating !== null && rating !== undefined
+
+          return (
+            <div key={supplier.id} className="px-5 py-4">
+              <div className="flex items-center justify-between gap-4">
+
+                {/* =================================
+                    SUPPLIER NAME
+                ================================= */}
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-gray-800">
+                    {supplier.supplier_name || 'Unnamed Supplier'}
+                  </p>
+
+                  {hasPerformance ? (
+
+                    <p className="mt-0.5 text-xs text-gray-400">
+                      {getRatingLabel(rating)}
+                    </p>
+
+                  ) : (
+
+                    <div className="mt-1 flex items-center gap-1.5">
+                      <FontAwesomeIcon icon={faCircleExclamation} className="h-3 w-3 text-gray-400"/>
+
+                      <p className="text-xs text-gray-400">
+                        No performance data
+                      </p>
+                    </div>
+
+                  )}
+                </div>
+
+                {/* =================================
+                    SCORE
+                ================================= */}
+                {hasPerformance ? (
+
+                  <div className="flex shrink-0 items-center gap-2">
+                    <div className="text-right">
+                      <p className="text-sm font-bold text-gray-800">
+                        {formatRating(rating)}
+                        <span className="ml-0.5 text-xs font-normal text-gray-400">
+                          / 5
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+
+                ) : (
+
+                  <span className="shrink-0 rounded-full bg-gray-50 px-2.5 py-1 text-[11px] font-medium text-gray-400">
+                    Unrated
+                  </span>
+
+                )}
+              </div>
+
+
+              {/* =================================
+                  SCORE BAR
+              ================================= */}
+              {hasPerformance && (
+                <div className="mt-3 flex items-center gap-3">
+                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-100">
+                    <div className="h-full rounded-full bg-[#2D5A42]" style={{ width: `${getRatingPercentage(rating)}%` }}/>
+                  </div>
+
+                  <span className="text-[11px] text-gray-400">
+                    {getRatingLabel(rating)}
+                  </span>
+                </div>
+              )}
+
+
+              {/* =================================
+                  PERFORMANCE DETAILS
+              ================================= */}
+              {hasPerformance && (
+                <div className="mt-3 grid grid-cols-3 gap-3">
+                  <div>
+                    <p className="text-[10px] text-gray-400">
+                      Total Orders
+                    </p>
+
+                    <p className="mt-0.5 text-xs font-medium text-gray-700">
+                      {supplierRecord.total_orders ?? 0}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-[10px] text-gray-400">
+                      On Time
+                    </p>
+
+                    <p className="mt-0.5 text-xs font-medium text-gray-700">
+                      {supplierRecord.on_time_deliveries ?? 0}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-[10px] text-gray-400">
+                      Avg. Lead Time
+                    </p>
+
+                    <p className="mt-0.5 text-xs font-medium text-gray-700">
+                      {supplierRecord.average_lead_time_days !== null && supplierRecord.average_lead_time_days !== undefined ? `${supplierRecord.average_lead_time_days} days` : '—'}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+            </div>
+          )
+        })}
       </div>
     </div>
   )

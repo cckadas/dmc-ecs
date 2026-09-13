@@ -152,6 +152,11 @@ export default function StatusBadge({ status }) {
     // -------------------------------------------------
     // PURCHASE ORDER
     // -------------------------------------------------
+    'overdue': {
+      style: 'bg-red-50 text-red-700 border-red-200',
+      icon: faClock,
+    },
+
     'sent to supplier': {
       style: 'bg-amber-50 text-amber-700 border-amber-200',
       icon: faPaperPlane,

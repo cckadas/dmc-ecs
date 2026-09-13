@@ -427,11 +427,20 @@ export default function StagingTrackerPage() {
       // =================================================
       // UPDATE CUSTOMER ORDER
       // =================================================
+      const estimatedShipDate = new Date()
+      estimatedShipDate.setDate(estimatedShipDate.getDate() + 14 )
+
+      // Format as YYYY-MM-DD for PostgreSQL `date`
+      const formattedShipDate = estimatedShipDate
+        .toISOString()
+        .split('T')[0]
+
       const { error: customerOrderError } =
         await supabase
           .from('customer_orders')
           .update({
-            status: 'shipped'
+            status: 'shipped',
+            estimated_ship_date: formattedShipDate,
           })
           .eq('id', order.id)
 

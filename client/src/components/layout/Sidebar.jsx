@@ -21,7 +21,8 @@ import {
   faWallet,
   faFileSignature,
   faCartFlatbed,
-  faCreditCard
+  faCreditCard,
+  faCircleUser
 } from '@fortawesome/free-solid-svg-icons'
 
 import logo from '../../assets/logo.png'
@@ -157,6 +158,12 @@ const sections = [
         path: 'customers',
         icon: faUserTag,
         roles: ['admin', 'sales'],
+      },
+      {
+        label: 'Accounts',
+        path: 'accounts',
+        icon: faCircleUser,
+        roles: ['admin'],
       },
     ],
   },

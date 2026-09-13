@@ -71,7 +71,8 @@ export default function PaymentsPage() {
         'pending payment',
         'submitted',
         'payment rejected',
-        'payment verified'
+        'payment verified',
+        'procurement'
       ])
       .order('created_at', { ascending: false })
 
@@ -87,6 +88,7 @@ export default function PaymentsPage() {
       'submitted': 2,
       'payment verified': 3,
       'payment rejected': 4,
+      'procurement': 5,
     }
 
     const sortedPayments = (data || []).sort((a, b) => {
@@ -215,6 +217,7 @@ export default function PaymentsPage() {
                   const isSubmitted = payment.status === 'submitted'
                   const isRejected = payment.status === 'payment rejected'
                   const isVerified = payment.status === 'payment verified'
+                  const isProcurement = payment.status === 'procurement'
 
                   const totalAmount = Number(payment.total_amount || 0)
                   const settledAmount = Number(payment.settled_amount || 0)
@@ -306,11 +309,11 @@ export default function PaymentsPage() {
 
                           <IconButton icon={faCreditCard} title="Make Payment" color="green" disabled={false} onClick={() => openPaymentModal(payment) }/>
 
-                        ) : isVerified && remainingBalance > 0 ? (
+                        ) : (isVerified || isProcurement) && remainingBalance > 0 ? (
 
                           <IconButton icon={faCreditCard} title="Pay Remaining Balance" color="green" disabled={false} onClick={() => openPaymentModal(payment)}/>
 
-                        ) : isVerified && remainingBalance <= 0 ? (
+                        ) : (isVerified || isProcurement) && remainingBalance <= 0 ? (
 
                           <span className="text-sm font-medium text-green-600">
                             Payment fully settled

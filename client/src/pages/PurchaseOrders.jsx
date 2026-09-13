@@ -13,6 +13,7 @@ import {
   faXmark,
   faFileInvoice,
   faMoneyBillTransfer,
+  faTriangleExclamation,
 } from '@fortawesome/free-solid-svg-icons'
 
 import StatusBadge from '../components/StatusBadge'
@@ -93,6 +94,7 @@ export default function PurchaseOrdersPage() {
           customer_id,
           quotation_number,
           total_amount,
+          settled_amount,
           status
         )
       `)
@@ -773,7 +775,16 @@ export default function PurchaseOrdersPage() {
 
                     {/* STATUS */}
                     <td className="px-5 py-4">
-                      <StatusBadge status={po.status}/>
+                      <StatusBadge
+                        status={
+                          ["sent to supplier", "awaiting delivery"].includes(po.status) &&
+                          po.expected_delivery_date &&
+                          new Date(po.expected_delivery_date).setHours(0, 0, 0, 0) <
+                          new Date().setHours(0, 0, 0, 0)
+                            ? "Overdue"
+                            : po.status
+                        }
+                      />
                     </td>
 
 
@@ -855,8 +866,6 @@ export default function PurchaseOrdersPage() {
     </div>
   )
 }
-
-
 
 
 
@@ -1225,16 +1234,15 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI}) {
 
 
 
-
-
-
-
 // =============================================
 // SUPPLIER PFI & PAYMENT MODAL
 // =============================================
 function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
 
   const { toast } = useToast()
+
+  const totalAmount = po.customer_orders.total_amount
+  const settledAmount = po.customer_orders.settled_amount
 
   const supplier = supplierGroup?.supplier
   const supplierItems = supplierGroup?.items || []
@@ -1682,64 +1690,45 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
         {/* =================================================
             FOOTER
         ================================================= */}
-        <div className="flex items-center justify-end gap-3 bg-gray-50 px-6 py-4">
-          <button
-            onClick={onClose}
-            className="rounded-lg border border-gray-300 bg-white px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-          >
-            Close
-          </button>
+        <div className="flex items-center justify-between gap-4 bg-gray-50 px-6 py-4">
 
-          <button
-            onClick={markAsPaid}
-            disabled={ markingPaid || !supplierPFIPath || !paymentDate || !paymentAmount || !paymentProof}
-            className="flex items-center gap-2 rounded-lg bg-[#2D5A42] px-5 py-2 text-sm font-medium text-white hover:bg-[#234633] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <FontAwesomeIcon icon={faMoneyBillTransfer} />
-            {markingPaid ? 'Processing...' : 'Mark as Paid to Supplier'}
-          </button>
+          {/* PAYMENT WARNING */}
+          {Number(totalAmount) > Number(settledAmount) && (
+            <div className="flex min-w-0 items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-100">
+                <FontAwesomeIcon icon={faTriangleExclamation} className="text-amber-600" />
+              </div>
+
+              <p className="text-sm font-semibold text-amber-800">
+                The customer still has a remaining balance.
+              </p>
+            </div>
+          )}
+
+          {/* ACTIONS */}
+          <div className="ml-auto flex items-center gap-3">
+            <button
+              onClick={onClose}
+              className="rounded-lg border border-gray-300 bg-white px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              Close
+            </button>
+
+            <button
+              onClick={markAsPaid}
+              disabled={ markingPaid || !supplierPFIPath || !paymentDate || !paymentAmount || !paymentProof }
+              className="flex items-center gap-2 rounded-lg bg-[#2D5A42] px-5 py-2 text-sm font-medium text-white hover:bg-[#234633] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <FontAwesomeIcon icon={faMoneyBillTransfer} />
+              {markingPaid ? 'Processing...' : 'Mark as Paid to Supplier'}
+            </button>
+          </div>
         </div>
-
 
       </div>
     </div>
   )
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -2183,4 +2172,3 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
     </div>
   )
 }
-

@@ -1,5 +1,6 @@
 import { useParams } from "react-router-dom"
 
+import AccountsPage from "./Accounts"
 import BillingsPage from "./Billings"
 import ComplianceLabelCustomerPage from "./ComplianceLabelCustomer"
 import ComplianceLabelSalesPage from "./ComplianceLabelSales"
@@ -30,6 +31,9 @@ export default function PageRouter(){
   const { page } = useParams()
 
   switch(page){
+    
+    case "accounts":
+      return <AccountsPage />
 
     case "billings":
       return <BillingsPage />
@@ -97,7 +101,7 @@ export default function PageRouter(){
     case "warehouse-holdings":
       return <WarehouseHoldingsPage />
 
-    case "warehouse-location":
+    case "warehouse-locations":
       return <WarehouseLocationPage />
 
     default:

@@ -9,6 +9,7 @@ import { useToast } from "../context/ToastContext"
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
+import RoleActivityBadge from '../components/RoleActivityBadge'
 
 
 export default function CustomerOrdersPage() {
@@ -38,6 +39,7 @@ export default function CustomerOrdersPage() {
         quotation_number,
         subtotal,
         shipping_cost,
+        estimated_ship_date,
         total_amount,
         down_payment_amount,
         status,
@@ -390,7 +392,7 @@ export default function CustomerOrdersPage() {
               </th>
 
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
-                Date
+                Estimated Ship Date
               </th>
 
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
@@ -446,7 +448,11 @@ export default function CustomerOrdersPage() {
 
                   {/* DATE */}
                   <td className="px-5 py-3">
-                    {new Date(order.created_at).toLocaleDateString()}
+                    {order.estimated_ship_date && !isNaN(new Date(order.estimated_ship_date).getTime()) ? (
+                      new Date(order.estimated_ship_date).toLocaleDateString()
+                    ) : (
+                      <RoleActivityBadge status="unavailable" />
+                    )}
                   </td>
 
                   {/* ACTION */}
@@ -605,8 +611,14 @@ function CustomerOrderModal({ order, onClose }) {
             </div>
 
             <div>
-              <p className="text-xs uppercase text-gray-500"> Date Created </p>
-              <p className="mt-1 font-medium text-gray-800"> {new Date(order.created_at).toLocaleDateString()} </p>
+              <p className="text-xs uppercase text-gray-500"> Estimated Ship Date </p>
+              <p className="mt-1 font-medium text-gray-800">
+                {order.estimated_ship_date && !isNaN(new Date(order.estimated_ship_date).getTime()) ? (
+                  new Date(order.estimated_ship_date).toLocaleDateString()
+                ) : (
+                  <RoleActivityBadge status="unavailable" />
+                )}
+              </p>
             </div>
           </div>
 
@@ -862,8 +874,14 @@ function PaymentModal({ order, onClose, onUpdateStatus }) {
             </div>
 
             <div>
-              <p className="text-xs uppercase text-gray-500"> Date </p>
-              <p className="mt-1 font-medium text-gray-800"> {new Date(order.created_at).toLocaleDateString()} </p>
+              <p className="text-xs uppercase text-gray-500"> Estimated Ship Date </p>
+              <p className="mt-1 font-medium text-gray-800">
+                {order.estimated_ship_date && !isNaN(new Date(order.estimated_ship_date).getTime()) ? (
+                  new Date(order.estimated_ship_date).toLocaleDateString()
+                ) : (
+                  <RoleActivityBadge status="unavailable" />
+                )}
+              </p>
             </div>
           </div>
 
