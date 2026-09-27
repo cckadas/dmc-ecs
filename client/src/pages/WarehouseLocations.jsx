@@ -533,22 +533,6 @@ function RackCard({ rack, toggling, onToggleOccupied, onEdit }) {
 
 
       {/* =================================================
-          DESCRIPTION
-      ================================================= */}
-      <div className="mt-4 min-h-[42px]">
-        {rack.description ? (
-          <p className="text-sm leading-5 text-gray-500">
-            {rack.description}
-          </p>
-        ) : (
-          <p className="text-sm italic text-gray-400">
-            No description.
-          </p>
-        )}
-      </div>
-
-
-      {/* =================================================
           STATUS
       ================================================= */}
       <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-4">
@@ -560,7 +544,7 @@ function RackCard({ rack, toggling, onToggleOccupied, onEdit }) {
             <IconButton
               icon={occupied ? faToggleOn : faToggleOff}
               title={inactive ? 'Inactive rack' : occupied ? 'Mark as available' : 'Mark as occupied'}
-              color={inactive ? 'gray' : occupied ? 'amber' : 'blue'}
+              color={inactive ? 'gray' : occupied ? 'amber' : 'green'}
               disabled={toggling || inactive}
               onClick={onToggleOccupied}
             />
@@ -722,7 +706,7 @@ function RackEditModal({ rack, isAdmin, saving, onChange, onSave, onClose }) {
                   onClick={() => isAdmin && onChange('is_active', !rack.is_active)}
                   className={`
                     flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition
-                    ${rack.is_active ? 'bg-green-100 text-green-700 hover:bg-green-200': 'bg-gray-200 text-gray-600 hover:bg-gray-300'}
+                    ${rack.is_active ? 'bg-blue-100 text-blue-700 hover:bg-blue-200': 'bg-gray-200 text-gray-600 hover:bg-gray-300'}
                     ${!isAdmin ? 'cursor-not-allowed opacity-70' : ''}
                   `}
                 >
