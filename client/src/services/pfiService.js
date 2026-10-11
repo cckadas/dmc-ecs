@@ -634,7 +634,6 @@ export async function generatePFI(quotation, items) {
       sealSize
     )
 
-    // Label underneath
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(7.5)
     doc.setTextColor(...darkText)

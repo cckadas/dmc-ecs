@@ -43,6 +43,9 @@ export default function DocumentsPage() {
         payment_proof_dp,
         payment_proof_complete,
         pfi_file_path,
+        pack_list_path,
+        cert_shipment_path,
+        cert_clearance_path,
         created_at,
 
         customer_order_items (
@@ -229,19 +232,43 @@ export default function DocumentsPage() {
                       {/* PACKING LIST */}
                       <IconButton
                         icon={faBoxOpen}
-                        title="Packing List — Coming Soon"
+                        title="View Packing List"
                         color="blue"
-                        disabled={true}
-                        onClick={() => {}}
+                        disabled={!order.pack_list_path}
+                        onClick={() =>
+                          viewDocument(
+                            order.pack_list_path,
+                            'Packing List'
+                          )
+                        }
                       />
 
-                      {/* CERTIFICATES */}
+                      {/* CERTIFICATE OF SHIPMENT */}
                       <IconButton
                         icon={faCertificate}
-                        title="Certificates — Coming Soon"
+                        title="View Certificate of Shipment"
                         color="blue"
-                        disabled={true}
-                        onClick={() => {}}
+                        disabled={!order.cert_shipment_path}
+                        onClick={() =>
+                          viewDocument(
+                            order.cert_shipment_path,
+                            'Certificate of Shipment'
+                          )
+                        }
+                      />
+
+                      {/* CERTIFICATE OF CLEARANCE */}
+                      <IconButton
+                        icon={faCertificate}
+                        title="View Certificate of Clearance"
+                        color="blue"
+                        disabled={!order.cert_clearance_path}
+                        onClick={() =>
+                          viewDocument(
+                            order.cert_clearance_path,
+                            'Certificate of Clearance'
+                          )
+                        }
                       />
 
                     </div>

@@ -6,6 +6,8 @@ import { useToast } from '../context/ToastContext'
 import { createNotification } from '../services/notificationService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBoxOpen, faPaperPlane } from '@fortawesome/free-solid-svg-icons'
+import { generatePackingList } from '../services/packingListService'
+import { generateCertificateOfShipment, generateCertificateOfClearance } from '../services/certificateService'
 
 import StatusBadge from '../components/StatusBadge'
 
@@ -357,35 +359,180 @@ export default function StagingTrackerPage() {
       // GET PURCHASE ORDER ITEMS + THEIR RACKS
       // =================================================
       let rackIds = []
+      let purchaseOrderItems = []
 
       if (purchaseOrderIds.length > 0) {
-
-        const { data: purchaseOrderItems, error: itemsError } =
-          await supabase
-            .from('purchase_order_items')
-            .select(`
-              id,
-              warehouse_rack_id
-            `)
-            .in('purchase_order_id', purchaseOrderIds)
+        const { data: items, error: itemsError } = await supabase
+          .from('purchase_order_items')
+          .select(`
+            id,
+            warehouse_rack_id,
+            product_id,
+            ordered_quantity,
+            received_quantity,
+            product:products (
+              product_name,
+              sku,
+              unit
+            )
+          `)
+          .in('purchase_order_id', purchaseOrderIds)
 
         if (itemsError) {
           throw itemsError
         }
 
+        purchaseOrderItems = items || []
 
-        // =================================================
-        // GET UNIQUE RACK IDS
-        // =================================================
         rackIds = [
           ...new Set(
-            (purchaseOrderItems || [])
+            purchaseOrderItems
               .map((item) => item.warehouse_rack_id)
               .filter(Boolean)
           )
         ]
       }
 
+
+      // =================================================
+      // GENERATE AND UPLOAD PACKING LIST
+      // =================================================
+      if (purchaseOrderItems.length === 0) {
+        throw new Error('No purchase order items found for packing list.')
+      }
+
+      // Get customer order number
+      const { data: packingOrder, error: packingOrderError } = await supabase
+        .from('customer_orders')
+        .select('id, order_number')
+        .eq('id', order.id)
+        .single()
+
+      if (packingOrderError) {
+        throw packingOrderError
+      }
+
+      // Generate packing list PDF
+      const packingList = generatePackingList(
+        packingOrder,
+        purchaseOrderItems
+      )
+
+      const pdfBlob = packingList.output('blob')
+
+      // Create storage path
+      const safeOrderNumberA = String(packingOrder.order_number)
+        .replace(/[^a-zA-Z0-9_-]/g, '_')
+
+      const filePath = `packing-lists/${safeOrderNumberA}-PL.pdf`
+
+      // Upload PDF to Supabase Storage
+      const { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(filePath, pdfBlob, {
+          contentType: 'application/pdf',
+          upsert: true,
+        })
+
+      if (uploadError) {
+        throw uploadError
+      }
+
+      // Save packing list path to customer order
+      const { error: pathError } = await supabase
+        .from('customer_orders')
+        .update({
+          pack_list_path: filePath,
+        })
+        .eq('id', order.id)
+
+      if (pathError) {
+        throw pathError
+      }
+
+
+      // =================================================
+      // GENERATE AND UPLOAD CERTIFICATE OF SHIPMENT
+      // =================================================
+      const certificate = generateCertificateOfShipment(
+        packingOrder,
+        purchaseOrderItems
+      )
+
+      const certificateBlob = certificate.output('blob')
+
+      const safeOrderNumberB = String(packingOrder.order_number)
+        .replace(/[^a-zA-Z0-9_-]/g, '_')
+
+      const certificatePath =
+        `certificates/${safeOrderNumberB}-Certificate-of-Shipment.pdf`
+
+      // Upload certificate
+      const { error: certificateUploadError } = await supabase.storage
+        .from('documents')
+        .upload(certificatePath, certificateBlob, {
+          contentType: 'application/pdf',
+          upsert: true,
+        })
+
+      if (certificateUploadError) {
+        throw certificateUploadError
+      }
+
+      // Save certificate path to customer order
+      const { error: certificatePathError } = await supabase
+        .from('customer_orders')
+        .update({
+          cert_shipment_path: certificatePath,
+        })
+        .eq('id', order.id)
+
+      if (certificatePathError) {
+        throw certificatePathError
+      }
+
+
+
+      // =================================================
+      // GENERATE AND UPLOAD CERTIFICATE OF CLEARANCE
+      // =================================================
+      const clearancePdf = generateCertificateOfClearance(
+        packingOrder,
+        purchaseOrderItems
+      )
+
+      const clearanceBlob = clearancePdf.output('blob')
+
+      const safeOrderNumberC = String(
+        packingOrder.order_number || order.id
+      ).replace(/[^a-zA-Z0-9_-]/g, '_')
+
+      const clearancePath =
+        `certificates/${safeOrderNumberC}-Certificate-of-Clearance.pdf`
+
+      // Upload PDF
+      const { error: clearanceUploadError } = await supabase.storage
+        .from('documents')
+        .upload(clearancePath, clearanceBlob, {
+          contentType: 'application/pdf',
+          upsert: true,
+        })
+
+      if (clearanceUploadError) {
+        throw clearanceUploadError
+      }
+
+      // Save path to customer order
+      const { error: clearancePathError } = await supabase
+        .from('customer_orders')
+        .update({
+          cert_clearance_path: clearancePath,
+        })
+        .eq('id', order.id)
+
+      if (clearancePathError) {
+        throw clearancePathError
+      }
 
       // =================================================
       // REMOVE ITEMS FROM WAREHOUSE RACKS
@@ -460,6 +607,16 @@ export default function StagingTrackerPage() {
       if (historyError) {
         throw historyError
       }
+
+
+
+
+
+
+
+
+
+
 
 
       // =============================================
