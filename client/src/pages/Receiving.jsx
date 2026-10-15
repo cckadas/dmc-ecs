@@ -186,6 +186,7 @@ export default function ReceivingPage() {
         name,
         location,
         section,
+        is_active,
         is_occupied
       `)
       .order('rack_id', {
@@ -536,6 +537,13 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
       return
     }
 
+    // Receiving nothing isn't a receipt. 0 stays allowed only as a correction
+    // of an earlier receipt, which is how a wrongly recorded delivery is undone.
+    if (quantity === 0 && currentReceived === 0) {
+      toast.error('Please enter the quantity received.')
+      return
+    }
+
     if (quantity > orderedQuantity) {
       toast.error('Received quantity cannot exceed ordered quantity.')
       return
@@ -571,6 +579,7 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
               id,
               rack_id,
               name,
+              is_active,
               is_occupied
             `)
             .eq('id', rackId)
@@ -579,6 +588,11 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
 
           if (rackError) {
             throw rackError
+          }
+
+          if (!rack.is_active) {
+            toast.error(`Rack ${rack.name || rack.rack_id} is inactive and cannot be used.`)
+            return
           }
 
           if (rack.is_occupied) {
@@ -592,9 +606,12 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
       // =================================================
       // DETERMINE ITEM STATUS
       // =================================================
+      // 0 only happens as a correction. The item was already paid to reach
+      // receiving, so it returns to 'awaiting delivery'. 'sent to supplier'
+      // erased the paid stage and disabled the Receive button, stranding it.
       const itemStatus =
         quantity === 0
-          ? 'sent to supplier'
+          ? 'awaiting delivery'
           : quantity < orderedQuantity
             ? 'partially delivered'
             : 'fully delivered'
@@ -949,7 +966,11 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
                 Select a rack
               </option>
 
-              {warehouseRacks.map((rack) => (
+              {/* Inactive racks are hidden, except the one this item already
+                  sits in, so its current rack still shows as selected. */}
+              {warehouseRacks
+                .filter((rack) => rack.is_active || rack.id === item.warehouse_rack_id)
+                .map((rack) => (
                 <option
                   key={rack.id}
                   value={rack.id}

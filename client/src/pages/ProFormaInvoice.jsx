@@ -8,6 +8,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faFolderOpen, faFileSignature, faTrash, faXmark, faDownload, faFileInvoice } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 import { generatePFI } from '../services/pfiService'
+import { localDateString } from '../utils/dates'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
@@ -397,7 +398,7 @@ export default function ProFormaInvoicePage() {
 
 
       {/* Table */}
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
           <thead className="bg-[#F4F8F5]">
             <tr>
@@ -630,7 +631,7 @@ function QuotationViewModal({ quotation, onClose }) {
             Quotation Items
           </h3>
 
-          <div className="overflow-hidden rounded-lg border">
+          <div className="overflow-x-auto rounded-lg border">
             <table className=" min-w-full">
 
               <thead className="bg-gray-50">
@@ -809,7 +810,9 @@ function QuotationViewModal({ quotation, onClose }) {
 // ADD PURCHASE ORDER MODAL
 // =====================================================
 function QuotationModal({ request, creating, onClose, onSubmit }) {
-  const [shippingCost, setShippingCost] = useState(0)
+  // Prices start empty rather than 0: a 0 already in the field made typing
+  // "15" show "015", and let a ₱0 quotation through by default.
+  const [shippingCost, setShippingCost] = useState('')
   const [expiryDate, setExpiryDate] = useState('')
   const [items, setItems] = useState(
     request.quotation_request_items.map((item) => ({
@@ -820,7 +823,7 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
       quantity: item.quantity,
       notes: item.notes,
       unit: item.products.unit,
-      unit_price: 0,
+      unit_price: '',
     }))
   )
 
@@ -918,7 +921,7 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                 </span>
               </div>
 
-              <div className="overflow-hidden rounded-lg border">
+              <div className="overflow-x-auto rounded-lg border">
                 <table className="min-w-full">
 
                   <thead className="bg-gray-50">
@@ -1010,7 +1013,10 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                                     disabled={creating}
                                     onChange={(e) => {
                                       const copy = [...items]
-                                      copy[index].unit_price = Number(e.target.value)
+                                      copy[index] = {
+                                        ...copy[index],
+                                        unit_price: e.target.value === '' ? '' : Number(e.target.value),
+                                      }
                                       setItems(copy)
                                     }}
                                     placeholder="0.00"
@@ -1058,9 +1064,12 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
 
                       <input
                         type="number"
+                        min="0"
+                        step="0.01"
+                        placeholder="0.00"
                         value={shippingCost}
                         disabled={creating}
-                        onChange={(e) => setShippingCost(Number(e.target.value))}
+                        onChange={(e) => setShippingCost(e.target.value === '' ? '' : Number(e.target.value))}
                         className="w-36 rounded-md border border-gray-300 bg-white px-3 py-2 text-right text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
                       />
                     </div>
@@ -1075,7 +1084,7 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                         type="date"
                         value={expiryDate}
                         disabled={creating}
-                        min={new Date().toISOString().split('T')[0]}
+                        min={localDateString()}
                         onChange={(e) => setExpiryDate(e.target.value)}
                         required
                         className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
@@ -1100,7 +1109,7 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                       </span>
 
                       <span className="font-semibold text-gray-800">
-                        ₱{shippingCost.toLocaleString()}
+                        ₱{Number(shippingCost || 0).toLocaleString()}
                       </span>
                     </div>
 
@@ -1142,6 +1151,27 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                             return
                           }
 
+                          // This button isn't a form submit, so the inputs'
+                          // min/required attributes are never checked — do it here.
+                          if (expiryDate < localDateString()) {
+                            alert('The expiry date cannot be in the past.')
+                            return
+                          }
+
+                          const unpriced = items.find(
+                            (item) => !(Number(item.unit_price) > 0)
+                          )
+
+                          if (unpriced) {
+                            alert(`Please enter a unit price above ₱0 for ${unpriced.product_name}.`)
+                            return
+                          }
+
+                          if (Number(shippingCost || 0) < 0) {
+                            alert('Shipping cost cannot be negative.')
+                            return
+                          }
+
                           const confirmed = window.confirm(
                             'Are you sure you want to generate this quotation?\n\n' +
                             'Once generated, the customer will be able to view and respond to the quotation.'
@@ -1151,7 +1181,7 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
 
                           onSubmit({
                             items,
-                            shippingCost,
+                            shippingCost: Number(shippingCost || 0),
                             expiryDate,
                             subtotal,
                             total,

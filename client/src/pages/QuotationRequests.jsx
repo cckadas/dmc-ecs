@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlus, faTrash, faFileSignature, faDownload, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
+import { MIN_PREFERRED_SHIP_DAYS, localDateString } from '../utils/dates'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
@@ -120,7 +121,7 @@ export default function QuotationRequestsPage() {
       .single()
 
     if (error) {
-      toast.error(error)
+      toast.error(error.message)
       return
     }
 
@@ -544,7 +545,7 @@ export default function QuotationRequestsPage() {
 
 
       {/* Table */}
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
           <thead className="bg-[#F4F8F5]">
             <tr>
@@ -813,7 +814,7 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
             Quotation Items
           </h3>
 
-          <div className="overflow-hidden rounded-lg border">
+          <div className="overflow-x-auto rounded-lg border">
             <table className=" min-w-full">
 
               <thead className="bg-gray-50">
@@ -1072,12 +1073,15 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
 // QUOTATION REQUEST MODAL
 // =============================================
 function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit }) {
+  const { toast } = useToast()
   const [selectedProducts, setSelectedProducts] = useState([])
 
   const [form, setForm] = useState({
     preferred_ship_date: '',
     delivery_location_id: '',
   })
+
+  const earliestShipDate = localDateString(MIN_PREFERRED_SHIP_DAYS)
 
 
   function handleSubmit(e) {
@@ -1088,6 +1092,21 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
       !form.preferred_ship_date ||
       selectedProducts.length === 0
     ) {
+      return
+    }
+
+    // The date picker's min only limits clicking; a typed date bypasses it.
+    if (form.preferred_ship_date < earliestShipDate) {
+      toast.error(`Preferred shipping date must be at least ${MIN_PREFERRED_SHIP_DAYS} days from today (${earliestShipDate} or later).`)
+      return
+    }
+
+    const invalidQuantity = selectedProducts.some(
+      (item) => !Number.isInteger(item.quantity) || item.quantity < 1
+    )
+
+    if (invalidQuantity) {
+      toast.error('Each selected product needs a whole-number quantity of at least 1.')
       return
     }
 
@@ -1120,6 +1139,7 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
               <input
                 type="date"
                 value={form.preferred_ship_date}
+                min={earliestShipDate}
                 onChange={(e) =>
                   setForm({
                     ...form,
@@ -1219,6 +1239,8 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
                           <input
                             type="number"
                             min={1}
+                            step={1}
+                            required
                             value={selected.quantity}
                             onChange={(e) =>
                               setSelectedProducts(
@@ -1226,7 +1248,9 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
                                   p.product_id === product.id
                                     ? {
                                         ...p,
-                                        quantity: Number(e.target.value),
+                                        // Keep a cleared field empty. Number('') is 0,
+                                        // which made typing "5" show "05".
+                                        quantity: e.target.value === '' ? '' : Number(e.target.value),
                                       }
                                     : p
                                 )

@@ -678,7 +678,7 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
             Customer Order Items
           </h3>
 
-          <div className="overflow-hidden rounded-lg border">
+          <div className="overflow-x-auto rounded-lg border">
             <table className="min-w-full">
 
               <thead className="bg-gray-50">
