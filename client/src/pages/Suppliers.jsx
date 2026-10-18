@@ -216,7 +216,7 @@ export default function SuppliersPage() {
 
 
       {/* Table */}
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
           
           <thead className="bg-[#F4F8F5]">

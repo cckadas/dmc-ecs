@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
 import { createNotification } from '../services/notificationService'
 import { sendPurchaseOrderEmails, sendPaymentProof } from '../services/emailService'
+import { MIN_PO_DELIVERY_DAYS, localDateString } from '../utils/dates'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faFolderOpen,
@@ -377,6 +378,14 @@ export default function PurchaseOrdersPage() {
       return
     }
 
+    // The date picker's min only limits clicking; a typed date bypasses it.
+    const earliestDeliveryDate = localDateString(MIN_PO_DELIVERY_DAYS)
+
+    if (expectedDeliveryDate < earliestDeliveryDate) {
+      toast.error(`Expected delivery date must be at least ${MIN_PO_DELIVERY_DAYS} days from today (${earliestDeliveryDate} or later).`)
+      return
+    }
+
     if (!customerOrderId) {
       toast.error('Please select a customer order.')
       return
@@ -408,6 +417,11 @@ export default function PurchaseOrdersPage() {
 
 
     setCreatingPO(true)
+
+    // Set once the PO and its items are saved. Any failure after that point
+    // must not read as "nothing happened", or the user retries and creates a
+    // duplicate PO.
+    let createdPoNumber = null
 
 
     try {
@@ -497,6 +511,8 @@ export default function PurchaseOrdersPage() {
         throw itemsError
       }
 
+      createdPoNumber = poNumber
+
 
       // -------------------------------------------------
       // UPDATE CUSTOMER ORDER STATUS
@@ -544,33 +560,58 @@ export default function PurchaseOrdersPage() {
 
 
       // =============================================
-      // CREATE NOTIFICATION
+      // NOTIFY CUSTOMER AND EMAIL SUPPLIERS
+      //
+      // Both happen after the PO is saved, so a failure here is a warning,
+      // not a failed PO.
       // =============================================
-      await createNotification({
-        userId: customerOrder.customer_id,
-        role: 'customer',
-        title: `${customerOrder.order_number} is now in procurement`,
-        message: `Your order ${customerOrder.order_number} status is now "Procurement". Please check your order details for more information.`,
-        type: 'info',
-        relatedCustomerOrderId: customerOrderId,
-        link: '/my-orders',
-      })
+      const followUpProblems = []
 
+      try {
+        await createNotification({
+          userId: customerOrder.customer_id,
+          role: 'customer',
+          title: `${customerOrder.order_number} is now in procurement`,
+          message: `Your order ${customerOrder.order_number} status is now "Procurement". Please check your order details for more information.`,
+          type: 'info',
+          relatedCustomerOrderId: customerOrderId,
+          link: '/my-orders',
+        })
+      } catch (notificationError) {
+        console.error('Customer notification error:', notificationError)
+        followUpProblems.push('the customer was not notified')
+      }
 
-      // -------------------------------------------------
-      // SEND PURCHASE ORDER EMAILS
-      // -------------------------------------------------
-      await sendPurchaseOrderEmails(purchaseOrder.id)
+      try {
+        await sendPurchaseOrderEmails(purchaseOrder.id)
+      } catch (emailError) {
+        console.error('Purchase order email error:', emailError)
+        followUpProblems.push(`supplier emails were not sent (${emailError.message})`)
+      }
 
 
       toast.success( `Purchase Order ${poNumber} created successfully.`)
+
+      if (followUpProblems.length > 0) {
+        toast.info(`Note: ${followUpProblems.join('; ')}.`)
+      }
+
       setShowAddModal(false)
       await loadPurchaseOrders()
     }
-    
+
     catch (error) {
       console.error('Create purchase order error:', error)
-      toast.error( error.message || 'Failed to create purchase order.')
+
+      if (createdPoNumber) {
+        // The PO was saved before this step failed. Close the form so the
+        // same PO isn't submitted again as a duplicate.
+        toast.error(`Purchase Order ${createdPoNumber} was created, but a later step failed: ${error.message}`)
+        setShowAddModal(false)
+        await loadPurchaseOrders()
+      } else {
+        toast.error( error.message || 'Failed to create purchase order.')
+      }
     }
     
     finally {
@@ -649,7 +690,7 @@ export default function PurchaseOrdersPage() {
       {/* =================================================
           PURCHASE ORDERS TABLE
       ================================================= */}
-      <div className=" overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+      <div className=" overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
           <thead className="bg-[#F4F8F5]">
 
@@ -1416,18 +1457,27 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
         throw itemError
       }
 
-      // -------------------------------------------------
-      // SEND PURCHASE ORDER EMAILS
-      // -------------------------------------------------
-      await sendPaymentProof(supplier.id, paymentProofPath)
-
       toast.success('Purchase order marked as paid to supplier.')
+
+      // -------------------------------------------------
+      // EMAIL PAYMENT PROOF TO SUPPLIER
+      //
+      // The payment is already recorded, so a failed email is a warning,
+      // not a failed payment.
+      // -------------------------------------------------
+      try {
+        await sendPaymentProof(supplier.id, paymentProofPath)
+      } catch (emailError) {
+        console.error('Payment proof email error:', emailError)
+        toast.info(`Note: the payment proof was not emailed to the supplier (${emailError.message}).`)
+      }
+
       onSuccess()
     }
-    
+
     catch (error) {
       console.error(error)
-      toast.error('Failed to mark purchase order as paid.')
+      toast.error(`Failed to mark purchase order as paid: ${error.message}`)
     }
     
     finally {
@@ -1945,13 +1995,13 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
               type="date"
               value={expectedDeliveryDate}
               onChange={(e) => setExpectedDeliveryDate(e.target.value)}
-              min={new Date().toISOString().split('T')[0]}
+              min={localDateString(MIN_PO_DELIVERY_DAYS)}
               disabled={creating}
               className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
             />
 
             <p className="mt-1 text-xs text-gray-500">
-              Select the date when the supplier is expected to deliver the order.
+              Select the date when the supplier is expected to deliver the order — at least {MIN_PO_DELIVERY_DAYS} days from today.
             </p>
           </div>
 
@@ -1985,7 +2035,7 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
                 </span>
               </div>
 
-              <div className="overflow-hidden rounded-lg border">
+              <div className="overflow-x-auto rounded-lg border">
                 <table className="min-w-full">
 
                   <thead className="bg-gray-50">

@@ -113,13 +113,13 @@ export default function MyOrdersPage() {
         </h1>
 
         <p className="mt-1 text-gray-500">
-          View your customer orders and their current status.
+          Track your orders and see where each one is in the process.
         </p>
       </div>
 
 
       {/* TABLE */}
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
 
           {/* TABLE HEADER */}
@@ -318,7 +318,7 @@ function MyOrderModal({ order, onClose }) {
             Order Items
           </h3>
 
-          <div className="overflow-hidden rounded-lg border">
+          <div className="overflow-x-auto rounded-lg border">
             <table className=" min-w-full">
 
               <thead className="bg-gray-50">

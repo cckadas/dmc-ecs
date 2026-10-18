@@ -55,6 +55,20 @@ export default function DeliveryLocationsPage() {
       return
     }
 
+    // Contact number is optional, but if given it must look like a phone
+    // number. Customers are international, so this checks shape and length
+    // (7–15 digits, the international maximum) rather than a PH format.
+    const contactNumber = (formData.contact_number || '').trim()
+
+    if (contactNumber) {
+      const digitCount = contactNumber.replace(/\D/g, '').length
+
+      if (!/^\+?[\d\s\-()]+$/.test(contactNumber) || digitCount < 7 || digitCount > 15) {
+        alert('Please enter a valid contact number: 7 to 15 digits, optionally starting with +.')
+        return
+      }
+    }
+
     let error
 
     if (editingLocation) {
@@ -82,7 +96,7 @@ export default function DeliveryLocationsPage() {
       return
     }
 
-    toast.success("Location edited successfully!")
+    toast.success(editingLocation ? 'Location updated successfully!' : 'Location added successfully!')
     setShowModal(false)
     loadLocations()
   }
@@ -104,7 +118,13 @@ export default function DeliveryLocationsPage() {
       .eq('id', id)
 
     if (error) {
-      toast.success(error.message)
+      // 23503 = foreign-key violation: a quotation request still points at
+      // this location, so the database refuses to delete it.
+      toast.error(
+        error.code === '23503'
+          ? 'This location is used by an existing quotation request, so it cannot be deleted.'
+          : error.message
+      )
       return
     }
 
@@ -170,7 +190,7 @@ export default function DeliveryLocationsPage() {
 
 
       {/* Table */}
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
           <thead className="bg-[#F4F8F5]">
             <tr>
@@ -213,7 +233,7 @@ export default function DeliveryLocationsPage() {
                   <td className="px-5 py-3">
                     <div className="flex gap-2">
                       <IconButton icon={faPen} title="Edit Location" color="amber" disabled={false} onClick={() => openEditModal(location)}/>
-                      <IconButton icon={faTrash} title="Delete Lcoation" color="red" disabled={false} onClick={() => deleteLocation(location.id)}/>
+                      <IconButton icon={faTrash} title="Delete Location" color="red" disabled={false} onClick={() => deleteLocation(location.id)}/>
                     </div>
                   </td>
                 </tr>
@@ -326,7 +346,9 @@ function DeliveryLocationModal({ onClose, onSubmit, location }) {
               </label>
 
               <input
-                type="text"
+                type="tel"
+                inputMode="tel"
+                maxLength={20}
                 name="contact_number"
                 value={form.contact_number}
                 onChange={handleChange}
