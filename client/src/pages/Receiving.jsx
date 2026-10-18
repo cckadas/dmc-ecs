@@ -9,6 +9,7 @@ import { faBoxesPacking, faXmark } from '@fortawesome/free-solid-svg-icons'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
+import TableScroll from '../components/TableScroll'
 
 
 export default function ReceivingPage() {
@@ -276,7 +277,7 @@ export default function ReceivingPage() {
             const remaining = totalOrdered - totalReceived
 
             return (
-              <div key={po.id} className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+              <div key={po.id} className="overflow-clip rounded-xl border border-gray-200 bg-white shadow-sm">
 
                 {/* =================================================
                     PO HEADER
@@ -365,7 +366,7 @@ export default function ReceivingPage() {
                 {/* =================================================
                     ITEMS TABLE
                 ================================================= */}
-                <div className="overflow-x-auto">
+                <TableScroll>
                   <table className="min-w-full">
 
                     <thead className="bg-white">
@@ -474,7 +475,7 @@ export default function ReceivingPage() {
                     </tbody>
 
                   </table>
-                </div>
+                </TableScroll>
               </div>
             )
           })}
@@ -826,7 +827,7 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg overflow-hidden rounded-xl bg-white shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white shadow-xl">
 
         {/* =================================================
             HEADER

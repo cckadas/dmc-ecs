@@ -10,6 +10,7 @@ import StatusBadge from '../components/StatusBadge'
 
 import IconButton from '../components/IconButton'
 import RoleActivityBadge from '../components/RoleActivityBadge'
+import TableScroll from '../components/TableScroll'
 
 
 export default function MyOrdersPage() {
@@ -119,7 +120,7 @@ export default function MyOrdersPage() {
 
 
       {/* TABLE */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+      <TableScroll className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
 
           {/* TABLE HEADER */}
@@ -221,7 +222,7 @@ export default function MyOrdersPage() {
             )}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
 
       {/* MODAL */}
@@ -318,7 +319,7 @@ function MyOrderModal({ order, onClose }) {
             Order Items
           </h3>
 
-          <div className="overflow-x-auto rounded-lg border">
+          <TableScroll className="rounded-lg border">
             <table className=" min-w-full">
 
               <thead className="bg-gray-50">
@@ -392,7 +393,7 @@ function MyOrderModal({ order, onClose }) {
               </tbody>
 
             </table>
-          </div>
+          </TableScroll>
 
 
           {/* =================================================

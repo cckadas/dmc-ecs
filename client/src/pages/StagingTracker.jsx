@@ -10,6 +10,7 @@ import { generatePackingList } from '../services/packingListService'
 import { generateCertificateOfShipment, generateCertificateOfClearance } from '../services/certificateService'
 
 import StatusBadge from '../components/StatusBadge'
+import TableScroll from '../components/TableScroll'
 
 
 export default function StagingTrackerPage() {
@@ -732,7 +733,7 @@ export default function StagingTrackerPage() {
               const items = orderGroup.items || []
 
               return (
-                <div key={customerOrder.id} className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+                <div key={customerOrder.id} className="overflow-clip rounded-xl border border-gray-200 bg-white shadow-sm">
 
                   {/* =================================================
                       CUSTOMER ORDER HEADER
@@ -826,7 +827,7 @@ export default function StagingTrackerPage() {
                   {/* =================================================
                       ITEMS TABLE
                   ================================================= */}
-                  <div className="overflow-x-auto">
+                  <TableScroll>
                     <table className="min-w-full">
 
                       <thead className="bg-white">
@@ -899,7 +900,7 @@ export default function StagingTrackerPage() {
                       </tbody>
 
                     </table>
-                  </div>
+                  </TableScroll>
                 </div>
               )
             }

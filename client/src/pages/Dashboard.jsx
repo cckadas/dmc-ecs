@@ -389,14 +389,14 @@ export default function DashboardPage() {
         },
         {
           label: 'Compliance Labels',
-          path: 'compliance-labels',
+          path: 'compliance-label-warehouse',
           icon: faTags,
           description: 'Manage product compliance labels.',
           roles: ['admin', 'warehouse'],
         },
         {
           label: 'Staging',
-          path: 'staging',
+          path: 'staging-tracker',
           icon: faBoxesStacked,
           description: 'Manage products prepared for shipment.',
           roles: ['admin', 'warehouse'],
@@ -494,7 +494,7 @@ export default function DashboardPage() {
       items: [
         {
           label: 'Compliance Labels',
-          path: 'compliance-labels',
+          path: 'compliance-label-customer',
           icon: faTags,
           description: 'View and manage your compliance labels.',
           roles: ['customer'],

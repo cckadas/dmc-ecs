@@ -7,6 +7,7 @@ import { useToast } from '../context/ToastContext'
 import { createNotification } from '../services/notificationService'
 import { sendPurchaseOrderEmails, sendPaymentProof } from '../services/emailService'
 import { MIN_PO_DELIVERY_DAYS, localDateString } from '../utils/dates'
+import { getCurrentSupplierPrices, lookupSupplierPrice, pricingErrorMessage } from '../services/pricingService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faFolderOpen,
@@ -19,6 +20,7 @@ import {
 
 import StatusBadge from '../components/StatusBadge'
 import IconButton from '../components/IconButton'
+import TableScroll from '../components/TableScroll'
 
 
 export default function PurchaseOrdersPage() {
@@ -409,8 +411,8 @@ export default function PurchaseOrdersPage() {
       }
 
 
-      if (item.unit_price === '' || item.unit_price === null ||  Number(item.unit_price) < 0) {
-        toast.error(`Please enter a valid purchase price for ${item.product_name}.`)
+      if (!(Number(item.unit_price) > 0)) {
+        toast.error(`Please enter a purchase price above ₱0 for ${item.product_name}.`)
         return
       }
     }
@@ -621,35 +623,6 @@ export default function PurchaseOrdersPage() {
 
 
   // =====================================================
-  // GET AVAILABLE SUPPLIERS
-  // =====================================================
-  function getAvailableSuppliers(item) {
-
-    console.log(item)
-    console.log(suppliers)
-
-    const primarySupplier = suppliers.find(
-      (supplier) => supplier.id === item.product_supplier_id && supplier.supplier_type === 'Manufacturer'
-    )
-
-    console.log(primarySupplier)
-
-    const otherSuppliers = suppliers
-      .filter(
-        (supplier) => supplier.supplier_type === 'Distributor' || supplier.supplier_type === 'Supermarket'
-      )
-      .sort((a, b) =>
-        a.supplier_name.localeCompare(b.supplier_name)
-      )
-
-    return [
-      ...(primarySupplier ? [primarySupplier] : []),
-      ...otherSuppliers
-    ]
-  }
-
-
-  // =====================================================
   // INITIAL LOAD
   // =====================================================
   useEffect(() => {
@@ -690,7 +663,7 @@ export default function PurchaseOrdersPage() {
       {/* =================================================
           PURCHASE ORDERS TABLE
       ================================================= */}
-      <div className=" overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+      <TableScroll className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
           <thead className="bg-[#F4F8F5]">
 
@@ -855,7 +828,7 @@ export default function PurchaseOrdersPage() {
             )}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
 
       {showAddModal && (
@@ -864,7 +837,6 @@ export default function PurchaseOrdersPage() {
           suppliers={suppliers}
           loadingCustomerOrders={loadingCustomerOrders}
           loadingSuppliers={loadingSuppliers}
-          getAvailableSuppliers={getAvailableSuppliers}
           creating={creatingPO}
           onCreate={createPurchaseOrder}
           onClose={() => {
@@ -1058,7 +1030,7 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI}) {
                 )
 
                 return (
-                  <div key={supplierId} className="overflow-hidden rounded-lg border border-gray-200">
+                  <div key={supplierId} className="overflow-clip rounded-lg border border-gray-200">
 
                     {/* =========================================
                         SUPPLIER HEADER
@@ -1115,7 +1087,7 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI}) {
                     {/* =========================================
                         SUPPLIER ITEMS
                     ========================================= */}
-                    <div className="overflow-x-auto">
+                    <TableScroll>
                       <table className="min-w-full">
 
                         <thead className="bg-gray-50">
@@ -1196,7 +1168,7 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI}) {
                         </tbody>
 
                       </table>
-                    </div>
+                    </TableScroll>
                   </div>
                 )
               }
@@ -1296,6 +1268,11 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
       item.payment_date ||
       item.payment_proof_path
   )
+
+  // The PFI fields lock once the PFI is saved; the payment fields only once
+  // the supplier has been paid. (Locking both on any saved data meant saving
+  // the PFI first made the supplier impossible to pay.)
+  const supplierPaid = supplierItems.some((item) => item.payment_proof_path)
 
   const [supplierPFIPath, setSupplierPFIPath] = useState(existingItem?.supplier_pfi_file_path || null)
   const [confirmedAmount, setConfirmedAmount] = useState(existingItem?.supplier_pfi_amount || '')
@@ -1572,7 +1549,7 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
                       value={confirmedAmount}
                       onChange={(e) => setConfirmedAmount(e.target.value)}
                       placeholder="0.00"
-                      disabled={existingItem}
+                      disabled={Boolean(supplierPFIPath)}
                       className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-8 pr-3 text-right outline-none focus:border-[#1F3A2C] focus:ring-1 focus:ring-[#1F3A2C]"
                     />
                   </div>
@@ -1612,7 +1589,7 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
                       onChange={(e) => {
                         setSupplierPFI(e.target.files?.[0] || null)
                       }}
-                      disabled={existingItem}
+                      disabled={Boolean(supplierPFIPath)}
                       className="hidden"
                     />
                   </label>
@@ -1666,7 +1643,7 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
                       value={paymentAmount}
                       onChange={(e) => setPaymentAmount(e.target.value)}
                       placeholder="0.00"
-                      disabled={existingItem}
+                      disabled={supplierPaid}
                       className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-8 pr-3 text-right outline-none focus:border-[#1F3A2C] focus:ring-1 focus:ring-[#1F3A2C]"
                     />
                   </div>
@@ -1684,7 +1661,7 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
                     value={paymentDate}
                     onChange={(e) => setPaymentDate(e.target.value)}
                     min={new Date().toISOString().split('T')[0]}
-                    disabled={existingItem}
+                    disabled={supplierPaid}
                     className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
                   />
                 </div>
@@ -1725,7 +1702,7 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
                           e.target.files?.[0] || null
                         )
                       }}
-                      disabled={existingItem}
+                      disabled={supplierPaid}
                       className="hidden"
                     />
                   </label>
@@ -1788,10 +1765,14 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
 // =====================================================
 // ADD PURCHASE ORDER MODAL
 // =====================================================
-function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingCustomerOrders, loadingSuppliers, creating, onClose, onCreate }) {
+function AddPurchaseOrderModal({ customerOrders, suppliers, loadingCustomerOrders, loadingSuppliers, creating, onClose, onCreate }) {
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState('')
   const [customerOrderId, setCustomerOrderId] = useState('')
   const [items, setItems] = useState([])
+  const [pricingError, setPricingError] = useState('')
+
+  const supplierName = (supplierId) =>
+    suppliers.find((supplier) => supplier.id === supplierId)?.supplier_name || 'Unknown supplier'
 
   // ---------------------------------------------------
   // SELECT CUSTOMER ORDER
@@ -1818,31 +1799,52 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
       ordered_quantity: Number(item.quantity || 0),
       unit: item.products?.unit || '',
 
-      // Supplier actually selected for the PO
-      supplier_id: '',
+      // Each product has one supplier, so the system sets it — there is no
+      // choice to get wrong.
+      supplier_id: item.products?.supplier_id || '',
 
-      // Supplier assigned to the product
-      product_supplier_id: item.products?.supplier_id || '',
-
-      unit_price: ''
+      // Filled from the supplier's current price list below; still editable
+      // for a negotiated price.
+      unit_price: '',
+      list_price: null,
+      min_order_qty: null,
     }))
 
     setItems(purchaseItems)
+    loadPriceListPrices(purchaseItems)
   }
 
 
   // ===================================================
-  // UPDATE SUPPLIER
+  // FILL PRICES FROM THE SUPPLIERS' PRICE LISTS
   // ===================================================
-  function updateSupplier(index, supplierId) {
-    setItems((current) =>
-      current.map(
-        (item, itemIndex) =>
-          itemIndex === index
-            ? {...item, supplier_id: supplierId}
-            : item
+  async function loadPriceListPrices(purchaseItems) {
+    setPricingError('')
+
+    try {
+      const prices = await getCurrentSupplierPrices(
+        purchaseItems.map((item) => item.product_id)
       )
-    )
+
+      setItems((current) =>
+        current.map((item) => {
+          const listed = lookupSupplierPrice(prices, item.supplier_id, item.product_id)
+
+          // Never overwrite a price someone has already typed.
+          if (item.unit_price !== '') return item
+
+          return {
+            ...item,
+            unit_price: listed ? listed.cost : '',
+            list_price: listed ? listed.cost : null,
+            min_order_qty: listed?.moq ?? null,
+          }
+        })
+      )
+    } catch (error) {
+      console.error('Failed to load price list prices:', error)
+      setPricingError(pricingErrorMessage(error))
+    }
   }
 
 
@@ -2012,7 +2014,15 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
           {selectedOrder && (
             <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50 p-4">
               <p className="text-sm text-blue-800">
-                Select a supplier and enter the supplier purchase price for each product.
+                Each product's supplier is set by the product catalog. Prices are filled in from the supplier's current price list — change one only if a different price was negotiated.
+              </p>
+            </div>
+          )}
+
+          {selectedOrder && pricingError && (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm text-amber-800">
+                {pricingError} Prices can still be entered manually.
               </p>
             </div>
           )}
@@ -2035,7 +2045,7 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
                 </span>
               </div>
 
-              <div className="overflow-x-auto rounded-lg border">
+              <TableScroll className="rounded-lg border">
                 <table className="min-w-full">
 
                   <thead className="bg-gray-50">
@@ -2094,33 +2104,11 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
                               </td>
 
 
-                              {/* SUPPLIER */}
-                              <td className="px-4 py-4">
-                                <select
-                                  value={item.supplier_id}
-                                  onChange={(e) =>
-                                    updateSupplier(
-                                      index,
-                                      e.target.value
-                                    )
-                                  }
-                                  disabled={creating || loadingSuppliers}
-                                  className="w-full min-w-[220px] rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
-                                >
-                                  <option value="">
-                                    {loadingSuppliers ? 'Loading suppliers...' : 'Select supplier'}
-                                  </option>
-
-                                  {getAvailableSuppliers(item).map((supplier) => {
-                                    const isPrimary = supplier.id === item.product_supplier_id && supplier.supplier_type === 'Manufacturer'
-
-                                    return (
-                                      <option key={supplier.id} value={supplier.id}>
-                                        {supplier.supplier_name} {isPrimary ? ' (Primary)' : ''}
-                                      </option>
-                                    )
-                                  })}
-                                </select>
+                              {/* SUPPLIER — fixed by the product, not chosen */}
+                              <td className="min-w-[200px] px-4 py-4">
+                                <p className="font-medium text-gray-800">
+                                  {loadingSuppliers ? 'Loading...' : supplierName(item.supplier_id)}
+                                </p>
                               </td>
 
 
@@ -2147,6 +2135,20 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
                                     className="w-36 rounded-md border border-gray-300 py-2 pl-7 pr-3 text-right text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
                                   />
                                 </div>
+
+                                <p className="mt-1 text-xs text-gray-500">
+                                  {item.list_price == null
+                                    ? 'No price on file — enter manually'
+                                    : Number(item.unit_price) === item.list_price
+                                      ? 'From price list'
+                                      : `Edited — list price ₱${item.list_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+                                </p>
+
+                                {item.min_order_qty && item.ordered_quantity < item.min_order_qty && (
+                                  <p className="mt-1 text-xs font-medium text-amber-700">
+                                    Below supplier minimum of {item.min_order_qty} {item.unit}
+                                  </p>
+                                )}
                               </td>
 
 
@@ -2167,7 +2169,7 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
                     )}
                   </tbody>
                 </table>
-              </div>
+              </TableScroll>
 
 
               {/* =================================================

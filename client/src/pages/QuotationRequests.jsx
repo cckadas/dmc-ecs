@@ -7,9 +7,11 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlus, faTrash, faFileSignature, faDownload, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 import { MIN_PREFERRED_SHIP_DAYS, localDateString } from '../utils/dates'
+import { getCreditStatus, formatPeso } from '../services/creditService'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
+import TableScroll from '../components/TableScroll'
 
 
 export default function QuotationRequestsPage() {
@@ -24,6 +26,27 @@ export default function QuotationRequestsPage() {
   const [selectedQuotation, setSelectedQuotation] = useState(null)
   const [loadingQuotation, setLoadingQuotation] = useState(false)
   const [creatingCO, setCreatingCO] = useState(false)
+  const [credit, setCredit] = useState(null)
+
+
+  // =============================================
+  // LOAD CREDIT STATUS
+  //
+  // Once the unpaid balance reaches DMC's credit limit, new requests and
+  // quotation approvals are blocked until the customer pays.
+  // =============================================
+  async function loadCredit() {
+    try {
+      const status = await getCreditStatus(profile.id)
+      setCredit(status)
+      return status
+    } catch (error) {
+      // Not set up yet, or offline: the database still enforces the limit.
+      console.error('Failed to load credit status:', error)
+      setCredit(null)
+      return null
+    }
+  }
 
 
   // =============================================
@@ -335,6 +358,17 @@ export default function QuotationRequestsPage() {
       return
     }
 
+    // Approving creates an order, which a customer at their credit limit
+    // can't place. Re-checked here in case they paid or ordered elsewhere.
+    const creditStatus = await loadCredit()
+
+    if (creditStatus?.blocked) {
+      alert(
+        `Your unpaid balance of ${formatPeso(creditStatus.outstanding)} has reached your credit limit of ${formatPeso(creditStatus.creditLimit)}. Please pay your open orders before approving this quotation.`
+      )
+      return
+    }
+
     const confirmed = window.confirm(
       'Are you sure you want to approve this quotation?'
     )
@@ -398,7 +432,8 @@ export default function QuotationRequestsPage() {
 
       if (orderError) {
         console.error(orderError)
-        alert('Failed to create customer order.')
+        // The database's own message, e.g. the credit-limit refusal.
+        alert(orderError.message || 'Failed to create customer order.')
         return
       }
 
@@ -512,6 +547,7 @@ export default function QuotationRequestsPage() {
       loadRequests()
       loadDeliveryLocations()
       loadProducts()
+      loadCredit()
     }
   }, [profile])
 
@@ -536,7 +572,9 @@ export default function QuotationRequestsPage() {
 
         <button
           onClick={() => setShowModal(true)}
-          className="flex items-center gap-2 rounded-lg bg-[#2D5A42] px-4 py-2 text-sm font-medium text-white hover:bg-[#234633]"
+          disabled={credit?.blocked}
+          title={credit?.blocked ? 'Your unpaid balance has reached your credit limit' : undefined}
+          className="flex items-center gap-2 rounded-lg bg-[#2D5A42] px-4 py-2 text-sm font-medium text-white hover:bg-[#234633] disabled:cursor-not-allowed disabled:opacity-50"
         >
           <FontAwesomeIcon icon={faPlus}/>
           Create Quotation Request
@@ -544,8 +582,21 @@ export default function QuotationRequestsPage() {
       </div>
 
 
+      {/* Credit limit */}
+      {credit?.blocked && (
+        <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4">
+          <p className="text-sm font-medium text-red-800">
+            Your unpaid balance of {formatPeso(credit.outstanding)} has reached your credit limit of {formatPeso(credit.creditLimit)}.
+          </p>
+          <p className="mt-1 text-sm text-red-700">
+            You can't send new quotation requests or approve quotations until you pay your open orders on the Payments page.
+          </p>
+        </div>
+      )}
+
+
       {/* Table */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+      <TableScroll className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
           <thead className="bg-[#F4F8F5]">
             <tr>
@@ -647,7 +698,7 @@ export default function QuotationRequestsPage() {
 
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
     {showModal && (
       <QuotationRequestModal
@@ -814,7 +865,7 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
             Quotation Items
           </h3>
 
-          <div className="overflow-x-auto rounded-lg border">
+          <TableScroll className="rounded-lg border">
             <table className=" min-w-full">
 
               <thead className="bg-gray-50">
@@ -886,7 +937,7 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
               </tbody>
 
             </table>
-          </div>
+          </TableScroll>
 
 
           {/* =================================================
@@ -1119,7 +1170,7 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-xl">
 
         {/* Header */}
         <div className="border-b bg-[#F4F8F5] px-6 py-4">
@@ -1130,7 +1181,7 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-6 p-6">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-sm font-medium">
                 Preferred Shipping Date
@@ -1179,7 +1230,7 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
             </div>
 
 
-            <div className="col-span-2">
+            <div className="sm:col-span-2">
               <label className="mb-1 block text-sm font-medium">
                 Products
               </label>
@@ -1220,8 +1271,8 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
                           }}
                         />
 
-                      <div className="flex-1">
-                        <p className="font-medium">
+                      <div className="min-w-0 flex-1">
+                        <p className="break-words font-medium">
                           {product.product_name}
                         </p>
 

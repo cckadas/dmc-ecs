@@ -7,6 +7,7 @@ import { faFolderOpen, faPen, faTrash, faFileImport } from '@fortawesome/free-so
 import { useToast } from '../context/ToastContext'
 
 import IconButton from '../components/IconButton'
+import TableScroll from '../components/TableScroll'
 
 
 export default function SuppliersPage() {
@@ -216,7 +217,7 @@ export default function SuppliersPage() {
 
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+      <TableScroll className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
           
           <thead className="bg-[#F4F8F5]">
@@ -334,7 +335,7 @@ export default function SuppliersPage() {
             )}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
 
       {showModal && (
@@ -424,7 +425,7 @@ function AddSupplierModal({ onClose, onSubmit }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-xl">
 
         {/* Header */}
         <div className="border-b bg-[#F4F8F5] px-6 py-4">
@@ -585,7 +586,7 @@ function AddSupplierModal({ onClose, onSubmit }) {
 function ViewSupplierModal({ supplier, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-xl">
 
         {/* Header */}
         <div className="border-b bg-[#F4F8F5] px-6 py-4">
@@ -754,7 +755,7 @@ function EditSupplierModal({ supplier, onClose, onSubmit }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-xl">
 
         {/* Header */}
         <div className="border-b bg-[#F4F8F5] px-6 py-4">
@@ -1097,7 +1098,7 @@ function ImportSuppliersModal({ onClose, onSubmit }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-3xl overflow-hidden rounded-xl bg-white shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl bg-white shadow-xl">
 
         {/* Header */}
         <div className="border-b bg-[#F4F8F5] px-6 py-4">

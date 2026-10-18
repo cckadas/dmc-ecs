@@ -7,6 +7,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faWarehouse, faMagnifyingGlass, faBox, faLocationDot } from '@fortawesome/free-solid-svg-icons'
 
 import StatusBadge from '../components/StatusBadge'
+import TableScroll from '../components/TableScroll'
 
 
 export default function WarehouseHoldingsPage() {
@@ -568,8 +569,8 @@ export default function WarehouseHoldingsPage() {
         /* =================================================
            WAREHOUSE ITEMS TABLE
         ================================================= */
-        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-          <div className="overflow-x-auto">
+        <div className="overflow-clip rounded-xl border border-gray-200 bg-white shadow-sm">
+          <TableScroll>
             <table className="min-w-full">
 
               <thead className="bg-[#F4F8F5]">
@@ -710,7 +711,7 @@ export default function WarehouseHoldingsPage() {
               </tbody>
 
             </table>
-          </div>
+          </TableScroll>
         </div>
       )}
     </div>

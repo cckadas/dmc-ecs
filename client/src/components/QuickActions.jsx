@@ -2,13 +2,16 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faArrowRight, faBolt } from '@fortawesome/free-solid-svg-icons'
 import { useNavigate } from 'react-router-dom'
 
+import { canOpenPage } from './layout/navigation'
+
 
 export default function QuickActions({ sections, role }) {
   const navigate = useNavigate()
 
+  // Only show shortcuts to pages this role can actually open.
   const actions = sections
     .flatMap((section) => section.items)
-    .filter((item) => item.roles.includes(role))
+    .filter((item) => item.roles.includes(role) && canOpenPage(role, item.path))
 
   if (!actions.length) {
     return null

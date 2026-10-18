@@ -10,6 +10,7 @@ import { createNotification } from '../services/notificationService'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
+import TableScroll from '../components/TableScroll'
 
 
 export default function PaymentsPage() {
@@ -45,6 +46,7 @@ export default function PaymentsPage() {
         down_payment_amount,
         status,
         settled_amount,
+        pending_payment_amount,
         payment_bank,
         payment_proof_dp,
         payment_proof_complete,
@@ -67,12 +69,17 @@ export default function PaymentsPage() {
         )
       `)
       .eq('customer_id', profile.id)
+      // Every stage: an unpaid balance counts toward the credit limit until
+      // it is paid, so the customer must be able to pay it at any point.
       .in('status', [
         'pending payment',
         'submitted',
         'payment rejected',
         'payment verified',
-        'procurement'
+        'procurement',
+        'warehouse preparation',
+        'ready for shipment',
+        'shipped'
       ])
       .order('created_at', { ascending: false })
 
@@ -89,6 +96,9 @@ export default function PaymentsPage() {
       'payment verified': 3,
       'payment rejected': 4,
       'procurement': 5,
+      'warehouse preparation': 6,
+      'ready for shipment': 7,
+      'shipped': 8,
     }
 
     const sortedPayments = (data || []).sort((a, b) => {
@@ -150,8 +160,8 @@ export default function PaymentsPage() {
       {/* =============================================
           TABLE
       ============================================= */}
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-        <div className="overflow-x-auto">
+      <div className="overflow-clip rounded-xl border border-gray-200 bg-white shadow-sm">
+        <TableScroll>
           <table className="min-w-full">
 
             <thead className="bg-[#F4F8F5]">
@@ -218,9 +228,14 @@ export default function PaymentsPage() {
                   const isRejected = payment.status === 'payment rejected'
                   const isVerified = payment.status === 'payment verified'
                   const isProcurement = payment.status === 'procurement'
+                  const isLaterStage = ['warehouse preparation', 'ready for shipment', 'shipped'].includes(payment.status)
+                  const canPayBalance = isVerified || isProcurement || isLaterStage
 
+                  // settled_amount = payments sales has verified; a submitted
+                  // payment waits in pending_payment_amount until then.
                   const totalAmount = Number(payment.total_amount || 0)
                   const settledAmount = Number(payment.settled_amount || 0)
+                  const pendingAmount = Number(payment.pending_payment_amount || 0)
                   const remainingBalance = Math.max(totalAmount - settledAmount, 0)
 
                   const expiryDate = new Date(new Date(payment.expiry_date).setDate(new Date(payment.expiry_date).getDate() + 7))
@@ -247,6 +262,12 @@ export default function PaymentsPage() {
                       {/* SETTLED */}
                       <td className="px-5 py-3">
                         ₱ {settledAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+
+                        {pendingAmount > 0 && (
+                          <p className="text-xs text-yellow-700">
+                            + ₱ {pendingAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} awaiting verification
+                          </p>
+                        )}
                       </td>
 
                       {/* REMAINING BALANCE */}
@@ -289,31 +310,33 @@ export default function PaymentsPage() {
 
                       {/* ACTION */}
                       <td className="px-5 py-3">
-                        {expiryDate < new Date() ? (
+                        {/* A missed deadline doesn't cancel what is owed: the
+                            order stays payable and counts toward the credit limit. */}
+                        {expiryDate < new Date() && settledAmount <= 0 && (
+                          <span className="mr-2 text-sm font-medium text-red-600">
+                            Overdue
+                          </span>
+                        )}
 
-                          <span className="text-sm font-medium text-red-600">
-                            Payment deadline has expired
+                        {isSubmitted || pendingAmount > 0 ? (
+
+                          <span className="text-sm font-medium text-yellow-600">
+                            Awaiting payment verification
                           </span>
 
                         ) : isPending && remainingBalance > 0 ? (
 
                           <IconButton icon={faCreditCard} title="Make Payment" color="green" disabled={false} onClick={() => openPaymentModal(payment) }/>
 
-                        ) : isSubmitted ? (
-
-                          <span className="text-sm font-medium text-yellow-600">
-                            Awaiting payment verification
-                          </span>
-
                         ) : isRejected ? (
 
                           <IconButton icon={faCreditCard} title="Make Payment" color="green" disabled={false} onClick={() => openPaymentModal(payment) }/>
 
-                        ) : (isVerified || isProcurement) && remainingBalance > 0 ? (
+                        ) : canPayBalance && remainingBalance > 0 ? (
 
                           <IconButton icon={faCreditCard} title="Pay Remaining Balance" color="green" disabled={false} onClick={() => openPaymentModal(payment)}/>
 
-                        ) : (isVerified || isProcurement) && remainingBalance <= 0 ? (
+                        ) : canPayBalance && remainingBalance <= 0 ? (
 
                           <span className="text-sm font-medium text-green-600">
                             Payment fully settled
@@ -340,7 +363,7 @@ export default function PaymentsPage() {
             </tbody>
 
           </table>
-        </div>
+        </TableScroll>
       </div>
 
 
@@ -373,8 +396,13 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
 
   const totalAmountDue = Number(payment.total_amount || 0)
   const currentSettledAmount = Number(payment.settled_amount || 0)
+  const pendingAmount = Number(payment.pending_payment_amount || 0)
   const remainingBalance = Math.max(totalAmountDue - currentSettledAmount, 0)
   const downPaymentAmount = Number(payment.down_payment_amount || 0)
+
+  // Two payments per order, each checked by sales: the down payment (at
+  // least 50%), then the full remaining balance.
+  const isFirstPayment = currentSettledAmount <= 0
 
   const today = new Date()
   const expiryDate = new Date(new Date(payment.expiry_date).setDate(new Date(payment.expiry_date).getDate() + 7))
@@ -424,10 +452,28 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
     }
 
     // =============================================
-    // PREVENT PAYMENT BELOW AMOUNT DUE
+    // ONE PAYMENT UNDER REVIEW AT A TIME
     // =============================================
-    if (amount < downPaymentAmount) {
+    if (pendingAmount > 0) {
+      alert('A payment for this order is still waiting for verification by DMC.')
+      return
+    }
+
+    // =============================================
+    // PREVENT PAYMENT BELOW AMOUNT DUE
+    // The first payment must cover the down payment; the second must be the
+    // whole remaining balance. (Checking the down payment on the second
+    // payment too meant a customer who paid more than 50% up front could
+    // never pay a balance smaller than the down payment.)
+    // =============================================
+    if (isFirstPayment && amount < downPaymentAmount) {
       alert(`The amount paid cannot go lower than the amount due of ₱ ${downPaymentAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}.`)
+      return
+    }
+
+    // Compared in centavos so 6,600 - 0.000001 rounding doesn't count as short.
+    if (!isFirstPayment && Math.round(amount * 100) !== Math.round(remainingBalance * 100)) {
+      alert(`Please pay the full remaining balance of ₱ ${remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}.`)
       return
     }
 
@@ -443,8 +489,7 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
 
     try {
 
-      const newSettledAmount = currentSettledAmount + amount
-      const isFullyPaid = newSettledAmount >= totalAmountDue
+      const isFullyPaid = currentSettledAmount + amount >= totalAmountDue
 
       const paymentProofColumn = isFullyPaid ? 'payment_proof_complete' : 'payment_proof_dp'
 
@@ -478,8 +523,10 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
       // =============================================
       // SAVE PAYMENT INFORMATION
       // =============================================
+      // The amount waits for sales to check it against the proof. Only then
+      // does it count as paid (settled_amount) and lower the customer's debt.
       const updateData = {
-        settled_amount: newSettledAmount,
+        pending_payment_amount: amount,
         payment_bank:selectedBank,
         [paymentProofColumn]:filePath,
       }
@@ -488,7 +535,7 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
       // =============================================
       // ONLY CHANGE STATUS FOR INITIAL PAYMENT
       // =============================================
-      if (currentSettledAmount <= 0) {
+      if (isFirstPayment) {
         updateData.status = 'submitted'
       }
 
@@ -522,8 +569,8 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
       await createNotification({
         userId: payment.customer_id,
         role: 'sales',
-        title: `${payment.order_number} - Payment has been submitted`,
-        message: `Payment for order ${payment.order_number} has been submitted`,
+        title: `${payment.order_number} - Payment needs verification`,
+        message: `A payment of ₱${amount.toLocaleString(undefined, { minimumFractionDigits: 2 })} for order ${payment.order_number} was submitted. Check it against the proof before approving.`,
         type: 'info',
         relatedCustomerOrderId: payment.id,
         link: '/customer-orders',
@@ -648,7 +695,9 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
           {/* ================================================= 
               PAYMENT REJECTION NOTICE
           ================================================= */}
-          {payment.status === 'payment rejected' && (
+          {/* A rejected balance payment leaves the order's status alone, so
+              its reason shows here too. Approval clears the reason. */}
+          {(payment.status === 'payment rejected' || (!isFirstPayment && payment.rejection_reason)) && (
             <div className="mt-2 rounded-lg border border-red-200 bg-red-50 p-4">
               <p className="text-sm font-semibold text-red-800">
                 Payment Rejected
@@ -678,7 +727,7 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
             Customer Order Items
           </h3>
 
-          <div className="overflow-x-auto rounded-lg border">
+          <TableScroll className="rounded-lg border">
             <table className="min-w-full">
 
               <thead className="bg-gray-50">
@@ -756,7 +805,7 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
               </tbody>
 
             </table>
-          </div>
+          </TableScroll>
 
 
           {/* =============================================
@@ -915,7 +964,12 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
                     </div>
 
                     <p className="mt-1 text-xs text-gray-400">
-                      Maximum payment: ₱ {remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      {isFirstPayment
+                        ? `Down payment: at least ₱ ${downPaymentAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}, up to ₱ ${remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                        : `Balance payment: exactly ₱ ${remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+                    </p>
+                    <p className="mt-1 text-xs text-gray-400">
+                      DMC checks the amount against your proof before it counts as paid.
                     </p>
                   </div>
 

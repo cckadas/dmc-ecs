@@ -15,11 +15,13 @@ import MyOrdersPage from "./MyOrders"
 import PaymentsPage from "./Payments"
 import ProductCatalogPage from "./ProductCatalog"
 import ProFormaInvoicePage from "./ProFormaInvoice"
+import PricingCreditPage from "./PricingCredit"
 import PurchaseOrdersPage from "./PurchaseOrders"
 import QuotationRequestsPage from "./QuotationRequests"
 import ReceivingPage from "./Receiving"
 import SettingsPage from "./Settings"
 import StagingTrackerPage from "./StagingTracker"
+import SupplierPriceListsPage from "./SupplierPriceLists"
 import SuppliersPage from "./Suppliers"
 import SupplierPerformancePage from "./SupplierPerformance"
 import WarehouseHoldingsPage from "./WarehouseHoldings"
@@ -79,6 +81,12 @@ export default function PageRouter(){
 
     case "pfi-builder":
       return <ProFormaInvoicePage />
+
+    case "pricing-credit":
+      return <PricingCreditPage />
+
+    case "price-lists":
+      return <SupplierPriceListsPage />
 
     case "quotation-requests":
       return <QuotationRequestsPage />

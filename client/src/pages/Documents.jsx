@@ -11,6 +11,7 @@ import { useToast } from "../context/ToastContext"
 import StatusBadge from '../components/StatusBadge'
 
 import IconButton from '../components/IconButton'
+import TableScroll from '../components/TableScroll'
 
 
 export default function DocumentsPage() {
@@ -119,7 +120,7 @@ export default function DocumentsPage() {
 
 
       {/* TABLE */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+      <TableScroll className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
 
           {/* TABLE HEADER */}
@@ -285,7 +286,7 @@ export default function DocumentsPage() {
             )}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
 
     </div>

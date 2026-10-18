@@ -8,6 +8,7 @@ import { faPen, faTrash, faPlus } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 
 import IconButton from '../components/IconButton'
+import TableScroll from '../components/TableScroll'
 
 
 export default function DeliveryLocationsPage() {
@@ -190,7 +191,7 @@ export default function DeliveryLocationsPage() {
 
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+      <TableScroll className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
           <thead className="bg-[#F4F8F5]">
             <tr>
@@ -247,7 +248,7 @@ export default function DeliveryLocationsPage() {
             )}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
       {showModal && (
         <DeliveryLocationModal
@@ -294,7 +295,7 @@ function DeliveryLocationModal({ onClose, onSubmit, location }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-xl">
 
         {/* Header */}
         <div className="border-b bg-[#F4F8F5] px-6 py-4">
@@ -308,7 +309,7 @@ function DeliveryLocationModal({ onClose, onSubmit, location }) {
           className="space-y-6 p-6"
         >
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">
                 Location Name
@@ -373,7 +374,7 @@ function DeliveryLocationModal({ onClose, onSubmit, location }) {
               />
             </div>
 
-            <div className="col-span-2">
+            <div className="sm:col-span-2">
               <label className="mb-1 block text-sm font-medium text-gray-700">
                 Address
               </label>

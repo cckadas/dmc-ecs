@@ -10,6 +10,7 @@ import { faBoxOpen, faFileLines, faXmark, faImage, faPaperPlane, faPrint } from 
 
 import StatusBadge from '../components/StatusBadge'
 import IconButton from '../components/IconButton'
+import TableScroll from '../components/TableScroll'
 
 
 export default function ComplianceLabelSalesPage() {
@@ -615,7 +616,7 @@ export default function ComplianceLabelSalesPage() {
               const exchangeCount = items.filter((item) => item.compliance_label_exchange?.status === 'applied to units').length
 
               return (
-                <div key={customerOrder.id} className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+                <div key={customerOrder.id} className="overflow-clip rounded-xl border border-gray-200 bg-white shadow-sm">
 
                   {/* =================================================
                       CUSTOMER ORDER HEADER
@@ -706,7 +707,7 @@ export default function ComplianceLabelSalesPage() {
                   {/* =================================================
                       ITEMS TABLE
                   ================================================= */}
-                  <div className="overflow-x-auto">
+                  <TableScroll>
                     <table className="min-w-full">
 
                       <thead className="bg-white">
@@ -806,7 +807,7 @@ export default function ComplianceLabelSalesPage() {
                       </tbody>
 
                     </table>
-                  </div>
+                  </TableScroll>
                 </div>
               )
             }
@@ -820,7 +821,7 @@ export default function ComplianceLabelSalesPage() {
       ===================================================== */}
       {showModal && selectedItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-xl">
 
             {/* =================================================
                 MODAL HEADER

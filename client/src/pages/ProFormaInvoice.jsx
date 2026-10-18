@@ -9,9 +9,11 @@ import { faFolderOpen, faFileSignature, faTrash, faXmark, faDownload, faFileInvo
 import { useToast } from "../context/ToastContext"
 import { generatePFI } from '../services/pfiService'
 import { localDateString } from '../utils/dates'
+import { getQuotationPricing, pricingErrorMessage } from '../services/pricingService'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
+import TableScroll from '../components/TableScroll'
 
 
 export default function ProFormaInvoicePage() {
@@ -58,7 +60,8 @@ export default function ProFormaInvoicePage() {
             id,
             product_name,
             brand,
-            unit
+            unit,
+            supplier_id
           )
         )
       `)
@@ -398,7 +401,7 @@ export default function ProFormaInvoicePage() {
 
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+      <TableScroll className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
           <thead className="bg-[#F4F8F5]">
             <tr>
@@ -494,7 +497,7 @@ export default function ProFormaInvoicePage() {
 
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
 
       {showModal && currentRequest?.status === 'awaiting pricing' && (
@@ -631,7 +634,7 @@ function QuotationViewModal({ quotation, onClose }) {
             Quotation Items
           </h3>
 
-          <div className="overflow-x-auto rounded-lg border">
+          <TableScroll className="rounded-lg border">
             <table className=" min-w-full">
 
               <thead className="bg-gray-50">
@@ -703,7 +706,7 @@ function QuotationViewModal({ quotation, onClose }) {
               </tbody>
 
             </table>
-          </div>
+          </TableScroll>
 
 
           {/* =================================================
@@ -810,9 +813,8 @@ function QuotationViewModal({ quotation, onClose }) {
 // ADD PURCHASE ORDER MODAL
 // =====================================================
 function QuotationModal({ request, creating, onClose, onSubmit }) {
-  // Prices start empty rather than 0: a 0 already in the field made typing
-  // "15" show "015", and let a ₱0 quotation through by default.
-  const [shippingCost, setShippingCost] = useState('')
+  // Fixed, like the prices: the country's rate per unit x units ordered.
+  const [shipping, setShipping] = useState({ cost: null, source: '' })
   const [expiryDate, setExpiryDate] = useState('')
   const [items, setItems] = useState(
     request.quotation_request_items.map((item) => ({
@@ -823,16 +825,78 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
       quantity: item.quantity,
       notes: item.notes,
       unit: item.products.unit,
-      unit_price: '',
+      supplier_id: item.products.supplier_id,
+
+      // Filled in from the price list and markup below; never typed.
+      unit_price: null,
+      price_source: '',
+      moq: null,
     }))
   )
+  const [pricingError, setPricingError] = useState('')
+  const [loadingPrices, setLoadingPrices] = useState(true)
+
+
+  // ===================================================
+  // SELLING PRICES AND SHIPPING
+  //
+  // Fixed: supplier price + the destination country's markup, and shipping
+  // = the country's rate per unit x units ordered (or the Default rates).
+  // Sales can't type either, so a wrong one can't be sent by accident or on
+  // purpose.
+  // ===================================================
+  useEffect(() => {
+    let active = true
+
+    async function loadPrices() {
+      try {
+        const { prices, shipping: shippingPrice } = await getQuotationPricing({
+          country: request.delivery_locations?.country,
+          lines: request.quotation_request_items.map((item) => ({
+            productId: item.products.id,
+            supplierId: item.products.supplier_id,
+            quantity: item.quantity,
+          })),
+        })
+
+        if (!active) return
+
+        setShipping(shippingPrice)
+
+        setItems((current) =>
+          current.map((item) => {
+            const price = prices[item.product_id]
+            if (!price) return item
+
+            return {
+              ...item,
+              unit_price: price.price,
+              price_source: price.source,
+              moq: price.moq,
+            }
+          })
+        )
+      } catch (error) {
+        console.error('Failed to load prices:', error)
+        if (active) setPricingError(pricingErrorMessage(error))
+      } finally {
+        if (active) setLoadingPrices(false)
+      }
+    }
+
+    loadPrices()
+
+    return () => {
+      active = false
+    }
+  }, [request])
 
   const subtotal = items.reduce(
     (sum, item) => sum + item.quantity * Number(item.unit_price || 0),
     0
   )
 
-  const total = subtotal + Number(shippingCost || 0)
+  const total = subtotal + Number(shipping.cost || 0)
   const downPayment = total * 0.5
 
 
@@ -921,7 +985,15 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                 </span>
               </div>
 
-              <div className="overflow-x-auto rounded-lg border">
+              {pricingError && (
+                <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                  <p className="text-sm text-amber-800">
+                    {pricingError} Quotations can't be generated until this is fixed.
+                  </p>
+                </div>
+              )}
+
+              <TableScroll className="rounded-lg border">
                 <table className="min-w-full">
 
                   <thead className="bg-gray-50">
@@ -956,7 +1028,7 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                   <tbody>
                     {items.length > 0 ? (
                       items.map(
-                        (item, index) => {
+                        (item) => {
                           return (
                             <tr key={item.id} className="border-t border-gray-200">
 
@@ -1000,35 +1072,32 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
 
                               {/* UNIT PRICE */}
                               <td className="px-4 py-4">
-                                <div className="relative">
-                                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">
-                                    ₱
-                                  </span>
+                                {/* Read-only: the price comes from the price list and markup. */}
+                                <p className="font-medium text-gray-800">
+                                  {loadingPrices
+                                    ? 'Loading...'
+                                    : item.unit_price != null
+                                      ? `₱${item.unit_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                                      : '-'}
+                                </p>
 
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={item.unit_price}
-                                    disabled={creating}
-                                    onChange={(e) => {
-                                      const copy = [...items]
-                                      copy[index] = {
-                                        ...copy[index],
-                                        unit_price: e.target.value === '' ? '' : Number(e.target.value),
-                                      }
-                                      setItems(copy)
-                                    }}
-                                    placeholder="0.00"
-                                    className="w-36 rounded-md border border-gray-300 py-2 pl-7 pr-3 text-right text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
-                                  />
-                                </div>
+                                {item.price_source && (
+                                  <p className={`mt-1 max-w-[220px] text-xs ${item.unit_price != null ? 'text-gray-500' : 'font-medium text-red-700'}`}>
+                                    {item.price_source}
+                                  </p>
+                                )}
+
+                                {item.moq && item.quantity < item.moq && (
+                                  <p className="mt-1 text-xs font-medium text-amber-700">
+                                    Below supplier minimum of {item.moq} {item.unit}
+                                  </p>
+                                )}
                               </td>
 
 
                               {/* SUBTOTAL */}
                               <td className="px-4 py-4 text-right font-medium text-gray-800">
-                               ₱{(item.quantity * item.unit_price).toLocaleString()}
+                               {item.unit_price != null ? `₱${(item.quantity * item.unit_price).toLocaleString()}` : '-'}
                               </td>
                             </tr>
                           )
@@ -1043,7 +1112,7 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                     )}
                   </tbody>
                 </table>
-              </div>
+              </TableScroll>
 
 
               {/* =================================================
@@ -1057,21 +1126,27 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                   </h3>
 
                   <div className="rounded-lg bg-gray-50 p-5">
-                    <div className="mb-3 flex items-center justify-between text-sm">
-                      <span className="font-medium text-gray-700">
-                        Shipping Cost
-                      </span>
+                    {/* Read-only: the country's shipping rate x units ordered. */}
+                    <div className="mb-3 text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium text-gray-700">
+                          Shipping Cost
+                        </span>
 
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        placeholder="0.00"
-                        value={shippingCost}
-                        disabled={creating}
-                        onChange={(e) => setShippingCost(e.target.value === '' ? '' : Number(e.target.value))}
-                        className="w-36 rounded-md border border-gray-300 bg-white px-3 py-2 text-right text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
-                      />
+                        <span className="font-medium text-gray-800">
+                          {loadingPrices
+                            ? 'Loading...'
+                            : shipping.cost != null
+                              ? `₱${shipping.cost.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                              : '-'}
+                        </span>
+                      </div>
+
+                      {shipping.source && (
+                        <p className={`mt-1 text-right text-xs ${shipping.cost != null ? 'text-gray-500' : 'font-medium text-red-700'}`}>
+                          {shipping.source}
+                        </p>
+                      )}
                     </div>
 
 
@@ -1109,7 +1184,7 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                       </span>
 
                       <span className="font-semibold text-gray-800">
-                        ₱{Number(shippingCost || 0).toLocaleString()}
+                        ₱{Number(shipping.cost || 0).toLocaleString()}
                       </span>
                     </div>
 
@@ -1144,7 +1219,7 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                       </button>
 
                       <button
-                        disabled={creating}
+                        disabled={creating || loadingPrices}
                         onClick={() => {
                           if (!expiryDate) {
                             alert('Please select an expiry date.')
@@ -1158,17 +1233,19 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                             return
                           }
 
+                          // Every line needs its fixed price; there is no
+                          // manual price to fall back on.
                           const unpriced = items.find(
                             (item) => !(Number(item.unit_price) > 0)
                           )
 
                           if (unpriced) {
-                            alert(`Please enter a unit price above ₱0 for ${unpriced.product_name}.`)
+                            alert(`${unpriced.product_name} can't be priced yet: ${unpriced.price_source || 'prices could not be loaded'}.`)
                             return
                           }
 
-                          if (Number(shippingCost || 0) < 0) {
-                            alert('Shipping cost cannot be negative.')
+                          if (shipping.cost == null) {
+                            alert(`Shipping can't be worked out yet: ${shipping.source || 'rates could not be loaded'}.`)
                             return
                           }
 
@@ -1181,7 +1258,7 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
 
                           onSubmit({
                             items,
-                            shippingCost: Number(shippingCost || 0),
+                            shippingCost: shipping.cost,
                             expiryDate,
                             subtotal,
                             total,

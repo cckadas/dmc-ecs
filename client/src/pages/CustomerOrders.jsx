@@ -6,10 +6,12 @@ import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faFolderOpen, faXmark, faCreditCard, faCircleCheck, faCircleXmark, faTrash } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
+import { createNotification } from '../services/notificationService'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
 import RoleActivityBadge from '../components/RoleActivityBadge'
+import TableScroll from '../components/TableScroll'
 
 
 export default function CustomerOrdersPage() {
@@ -44,6 +46,7 @@ export default function CustomerOrdersPage() {
         down_payment_amount,
         status,
         settled_amount,
+        pending_payment_amount,
         payment_bank,
         payment_proof_dp,
         payment_proof_complete,
@@ -143,12 +146,28 @@ export default function CustomerOrdersPage() {
 
 
   // =============================================
-  // UPDATE PAYMENT STATUS
+  // REVIEW A SUBMITTED PAYMENT
+  //
+  // The amount a customer types can't be trusted until it is checked against
+  // their proof, so it waits in pending_payment_amount. Approving moves it
+  // into settled_amount (what counts as paid, and lowers the customer's
+  // debt); rejecting drops it. The first payment also moves the order to
+  // payment verified / payment rejected; the balance payment leaves the
+  // order's stage alone.
   // =============================================
-  async function updatePaymentStatus(orderId, status) {
+  async function reviewPayment(order, approve) {
 
-    const isRejecting = status === 'payment rejected'
-    const action = status === 'payment verified' ? 'accept' : 'reject'
+    const isRejecting = !approve
+    const action = approve ? 'accept' : 'reject'
+    const isFirstPayment = order.status === 'submitted'
+    const pendingAmount = Number(order.pending_payment_amount || 0)
+    const settledAmount = Number(order.settled_amount || 0)
+    const amountText = `₱ ${pendingAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+
+    if (pendingAmount <= 0 && !isFirstPayment) {
+      toast.error('There is no payment waiting for verification.')
+      return
+    }
 
 
     // =============================================
@@ -177,8 +196,8 @@ export default function CustomerOrdersPage() {
     // =============================================
     const confirmed = window.confirm(
       isRejecting
-        ? `Are you sure you want to reject this payment?\n\nReason: ${rejectionReason}`
-        : 'Are you sure you want to accept this payment?'
+        ? `Reject this payment of ${amountText}?\n\nReason: ${rejectionReason}`
+        : `Approve this payment of ${amountText}?\n\nOnly approve if the proof shows exactly this amount received.`
     )
 
     if (!confirmed) return
@@ -187,19 +206,34 @@ export default function CustomerOrdersPage() {
     // =============================================
     // UPDATE CUSTOMER ORDER
     // =============================================
-    const updateData = {
-      status,
-      rejection_reason: isRejecting ? rejectionReason : null,
+    const updateData = approve
+      ? {
+          settled_amount: settledAmount + pendingAmount,
+          pending_payment_amount: 0,
+          rejection_reason: null,
+          ...(isFirstPayment && { status: 'payment verified' }),
+        }
+      : {
+          pending_payment_amount: 0,
+          rejection_reason: rejectionReason,
+          // A rejected balance proof is cleared so the customer uploads a
+          // new one; a rejected first payment ends the order's payment stage.
+          ...(isFirstPayment ? { status: 'payment rejected' } : { payment_proof_complete: null }),
+        }
 
-      // Clear settled amount when payment is rejected
-      ...(isRejecting && { settled_amount: 0 }),
-    }
-
-    const { error } = await supabase
+    // Guards: act only on the payment that was on screen, not one that
+    // changed since.
+    let query = supabase
       .from('customer_orders')
       .update(updateData)
-      .eq('id', orderId)
-      .eq('status', 'submitted')
+      .eq('id', order.id)
+      .eq('pending_payment_amount', pendingAmount)
+
+    if (isFirstPayment) {
+      query = query.eq('status', 'submitted')
+    }
+
+    const { error } = await query
 
     if (error) {
       console.error('Failed to update payment status:', error)
@@ -211,14 +245,30 @@ export default function CustomerOrdersPage() {
     // =============================================
     // UPDATE SELECTED PAYMENT IMMEDIATELY
     // =============================================
-    setSelectedPayment((prev) => ({
-      ...prev,
-      status,
-      rejection_reason: isRejecting ? rejectionReason : null,
+    setSelectedPayment((prev) => ({ ...prev, ...updateData }))
 
-      // Reflect reset immediately in UI
-      ...(isRejecting && { settled_amount: 0 }),
-    }))
+
+    // =============================================
+    // TELL THE CUSTOMER
+    // A notification failing doesn't undo the review.
+    // =============================================
+    try {
+      await createNotification({
+        userId: order.customer_id,
+        role: 'customer',
+        title: approve
+          ? `${order.order_number} - Payment verified`
+          : `${order.order_number} - Payment rejected`,
+        message: approve
+          ? `Your payment of ${amountText} for order ${order.order_number} has been verified.`
+          : `Your payment of ${amountText} for order ${order.order_number} was rejected: ${rejectionReason}`,
+        type: approve ? 'success' : 'error',
+        relatedCustomerOrderId: order.id,
+        link: '/payments',
+      })
+    } catch (notificationError) {
+      console.error('Failed to notify customer:', notificationError)
+    }
 
 
     // =============================================
@@ -360,7 +410,7 @@ export default function CustomerOrdersPage() {
 
 
       {/* TABLE */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+      <TableScroll className="rounded-xl border border-gray-200 bg-white shadow-sm">
 
         <table className="min-w-full">
 
@@ -444,6 +494,12 @@ export default function CustomerOrdersPage() {
                   {/* STATUS */}
                   <td className="px-5 py-3">
                     <StatusBadge status={order.status}/>
+
+                    {Number(order.pending_payment_amount || 0) > 0 && (
+                      <p className="mt-1 text-xs font-medium text-yellow-700">
+                        Payment to verify
+                      </p>
+                    )}
                   </td>
 
                   {/* DATE */}
@@ -483,7 +539,7 @@ export default function CustomerOrdersPage() {
             )}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
 
       {showModal && selectedOrder && (
@@ -504,7 +560,7 @@ export default function CustomerOrdersPage() {
             setShowPaymentModal(false)
             setSelectedPayment(null)
           }}
-          onUpdateStatus={updatePaymentStatus}
+          onReview={reviewPayment}
         />
       )}
     </div>
@@ -630,7 +686,7 @@ function CustomerOrderModal({ order, onClose }) {
             Customer Order Items
           </h3>
 
-          <div className="overflow-x-auto rounded-lg border">
+          <TableScroll className="rounded-lg border">
             <table className=" min-w-full">
 
               <thead className="bg-gray-50">
@@ -690,7 +746,7 @@ function CustomerOrderModal({ order, onClose }) {
               </tbody>
 
             </table>
-          </div>
+          </TableScroll>
 
 
           {/* =================================================
@@ -790,8 +846,13 @@ function CustomerOrderModal({ order, onClose }) {
 // =====================================================
 // PAYMENT MODAL
 // =====================================================
-function PaymentModal({ order, onClose, onUpdateStatus }) {
+function PaymentModal({ order, onClose, onReview }) {
   const settledAmount = Number(order.settled_amount || 0)
+  const pendingAmount = Number(order.pending_payment_amount || 0)
+
+  // The first payment is reviewed while the order is submitted; a balance
+  // payment is reviewed whenever one is waiting, whatever the order's stage.
+  const canReview = order.status === 'submitted' || pendingAmount > 0
 
 
   // =============================================
@@ -910,13 +971,30 @@ function PaymentModal({ order, onClose, onUpdateStatus }) {
 
                 <div>
                   <p className="text-xs uppercase text-gray-500">
-                    Settled Amount
+                    Verified Paid
                   </p>
 
                   <p className="mt-1 font-medium text-gray-800">
                     ₱ {settledAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </p>
                 </div>
+
+                {/* What the customer says they paid — check it against the proof. */}
+                {pendingAmount > 0 && (
+                  <div className="rounded-md border border-yellow-200 bg-yellow-50 p-3 md:col-span-2">
+                    <p className="text-xs font-semibold uppercase text-yellow-700">
+                      Awaiting your verification
+                    </p>
+
+                    <p className="mt-1 text-lg font-bold text-yellow-900">
+                      ₱ {pendingAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </p>
+
+                    <p className="mt-1 text-xs text-yellow-800">
+                      Open the proof below and approve only if it shows exactly this amount received. Until then it doesn't count as paid.
+                    </p>
+                  </div>
+                )}
 
                 <div className="mt-3">
                   <p className="text-xs uppercase text-gray-500">
@@ -1044,11 +1122,11 @@ function PaymentModal({ order, onClose, onUpdateStatus }) {
             Cancel
           </button>
 
-          {order.status === 'submitted' && (
+          {canReview && (
             <>
               <button
                 type="button"
-                onClick={() => onUpdateStatus(order.id, 'payment rejected')}
+                onClick={() => onReview(order, false)}
                 className="flex items-center gap-2 rounded-md border border-red-600 bg-red-600 px-5 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <FontAwesomeIcon icon={faCircleXmark} />
@@ -1057,7 +1135,7 @@ function PaymentModal({ order, onClose, onUpdateStatus }) {
 
               <button
                 type="button"
-                onClick={() => onUpdateStatus(order.id, 'payment verified')}
+                onClick={() => onReview(order, true)}
                 className="flex items-center gap-2 rounded-md border border-green-600 bg-green-600 px-5 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <FontAwesomeIcon icon={faCircleCheck} />
