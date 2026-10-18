@@ -937,6 +937,39 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI}) {
     0
   )
 
+  // ===================================================
+  // PURCHASE ORDER PROGRESS
+  // ===================================================
+  const progressSteps = [
+    'Sent to Supplier',
+    'Awaiting Delivery',
+    'Partially Delivered',
+    'Fully Delivered',
+  ]
+
+  const normalizedStatus = String(purchaseOrder.status || '').trim().toLowerCase()
+  const isFullyReceived = totalOrdered > 0 && totalReceived >= totalOrdered
+  const expectedDeliveryDate = purchaseOrder.expected_delivery_date ? new Date(purchaseOrder.expected_delivery_date) : null
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  expectedDeliveryDate?.setHours(0, 0, 0, 0)
+
+  const isOverdue = normalizedStatus === 'overdue' || (['sent to supplier', 'awaiting delivery'].includes(normalizedStatus) && expectedDeliveryDate && expectedDeliveryDate < today)
+
+  let currentProgressStep = 0
+
+  if (isFullyReceived || ['fully delivered', 'fully received', 'received', 'completed', 'delivered'].includes(normalizedStatus)) {
+    currentProgressStep = 3
+  }
+  
+  else if (['partially received', 'partially delivered'].includes(normalizedStatus) || totalReceived > 0) {
+    currentProgressStep = 2
+  }
+  
+  else if (['awaiting delivery', 'overdue'].includes(normalizedStatus)) {
+    currentProgressStep = 1
+  }
+
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -967,6 +1000,88 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI}) {
         ================================================= */}
         <div className="flex-1 overflow-y-auto p-6">
 
+          {/* =================================================
+              PURCHASE ORDER PROGRESS
+          ================================================= */}
+          <div className="mb-7">
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-800">
+                  Purchase Order Progress
+                </h3>
+                <p className="mt-1 text-xs text-gray-500">
+                  Track the order from creation through delivery.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {isOverdue && (
+                  <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700">
+                    Overdue
+                  </span>
+                )}
+                <span className="text-xs font-semibold text-[#1F3A2C]">
+                  Step {currentProgressStep + 1} of {progressSteps.length}: {progressSteps[currentProgressStep]}
+                </span>
+              </div>
+            </div>
+
+            <section
+              className="rounded-xl border border-gray-200 bg-white px-5 py-4"
+              aria-label={`Purchase order progress. Current step: ${progressSteps[currentProgressStep]}`}
+            >
+              <div className="overflow-x-auto px-2 pt-2 pb-3">
+                <div className="min-w-[640px]">
+                  <div className="relative">
+                    {/* Inactive progress line */}
+                    <div className="absolute left-[12.5%] right-[12.5%] top-4 h-0.5 bg-gray-200" />
+
+                    {/* Completed progress line */}
+                    <div
+                      className="absolute left-[12.5%] top-4 h-0.5 bg-[#1F3A2C] transition-all duration-300"
+                      style={{ width: `${(currentProgressStep / (progressSteps.length - 1)) * 75}%` }}
+                      aria-hidden="true"
+                    />
+
+                    <ol className="relative grid grid-cols-4">
+                      {progressSteps.map((step, index) => {
+                        const isComplete = index < currentProgressStep
+                        const isCurrent = index === currentProgressStep
+
+                        return (
+                          <li
+                            key={step}
+                            className="flex flex-col items-center text-center"
+                            aria-current={isCurrent ? 'step' : undefined}
+                          >
+                            <span
+                              className={`flex h-8 w-8 items-center justify-center rounded-full border-2 text-xs font-semibold transition-colors ${
+                                isComplete
+                                  ? 'border-[#1F3A2C] bg-[#1F3A2C] text-white'
+                                  : isCurrent
+                                    ? 'border-[#1F3A2C] bg-white text-[#1F3A2C] ring-4 ring-[#1F3A2C]/10'
+                                    : 'border-gray-300 bg-white text-gray-400'
+                              }`}
+                            >
+                              {isComplete ? '✓' : index + 1}
+                            </span>
+                            <span
+                              className={`mt-2 max-w-28 text-xs leading-4 ${
+                                isComplete || isCurrent
+                                  ? 'font-semibold text-[#1F3A2C]'
+                                  : 'text-gray-400'
+                              }`}
+                            >
+                              {step}
+                            </span>
+                          </li>
+                        )
+                      })}
+                    </ol>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
 
           {/* =================================================
               INFORMATION
@@ -1053,7 +1168,7 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI}) {
                           </p>
 
                           <p className="mt-1 text-sm font-semibold text-gray-800">
-                            {supplierItems.length} item {supplierItems.length !== 1 ? 's' : ''}
+                            {supplierItems.length} item{supplierItems.length !== 1 ? 's' : ''}
                           </p>
                         </div>
 
