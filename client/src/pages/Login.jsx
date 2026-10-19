@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faEye, faEyeSlash } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
+import { Link } from 'react-router-dom';
 
 import logo from '../assets/logo.png'
 import bg1 from '../assets/bg_1.jpg'
@@ -202,7 +203,26 @@ export default function LoginPage() {
           {loading ? 'Signing In...' : 'Sign In'}
         </button>
 
-        <p className="mt-6 text-center text-xs text-gray-500">
+
+
+        {/* Terms Agreement */}
+        <p className="mt-6 text-center text-xs leading-5 text-gray-500">
+          By continuing, you acknowledge and agree to DMC ECS's<br/>
+
+          <Link to="/terms-of-service" className="font-medium text-green-700 transition hover:text-green-800 hover:underline">
+            Terms of Service{" "}
+          </Link>
+
+          and{" "}
+
+          <Link to="/privacy-policy" className="font-medium text-green-700 transition hover:text-green-800 hover:underline">
+            Privacy Policy
+          </Link>
+          .
+        </p>
+
+        {/* Copyright */}
+        <p className="mt-5 text-center text-xs text-gray-400">
           © {new Date().getFullYear()} DMC Export Consolidation System
         </p>
 

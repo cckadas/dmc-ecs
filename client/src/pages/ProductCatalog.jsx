@@ -78,7 +78,23 @@ export default function ProductCatalogPage() {
       return
     }
 
-    setProducts(data || [])
+    const sortedProducts = (data || []).sort((a, b) => {
+      if (!search) return 0
+
+      const searchTerm = search.trim().toLowerCase()
+      const nameA = (a.product_name || '').toLowerCase()
+      const nameB = (b.product_name || '').toLowerCase()
+
+      const aStartsWith = nameA.startsWith(searchTerm)
+      const bStartsWith = nameB.startsWith(searchTerm)
+
+      if (aStartsWith && !bStartsWith) return -1
+      if (!aStartsWith && bStartsWith) return 1
+
+      return nameA.localeCompare(nameB)
+    })
+
+    setProducts(sortedProducts)
   }
 
 

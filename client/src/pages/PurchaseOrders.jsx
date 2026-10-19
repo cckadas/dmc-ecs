@@ -723,11 +723,9 @@ export default function PurchaseOrdersPage() {
                 Date
               </th>
 
-              {(profile?.role === 'admin' || profile?.role === 'procurement') && (
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
                 Action
               </th>
-              )}
             </tr>
           </thead>
 
@@ -836,19 +834,17 @@ export default function PurchaseOrdersPage() {
 
 
                     {/* ACTION */}
-                    {(profile?.role === 'admin' || profile?.role === 'procurement') && (
-                      <td className="px-5 py-4">
-                        <div className="flex items-center justify-start gap-2"> 
-                          <IconButton icon={faFolderOpen} title="View Purchase Order" color="blue" disabled={false} onClick={() => openViewModal(po)}/>
-                        </div>
-                      </td>
-                    )}
+                    <td className="px-5 py-4">
+                      <div className="flex items-center justify-start gap-2"> 
+                        <IconButton icon={faFolderOpen} title="View Purchase Order" color="blue" disabled={false} onClick={() => openViewModal(po)}/>
+                      </div>
+                    </td>
                   </tr>
                 )
               })
             ) : (
               <tr>
-                <td colSpan={(profile?.role === 'admin' || profile?.role === 'procurement') ? 8 : 7} className="py-10 text-center text-sm text-gray-500">
+                <td colSpan={8} className="py-10 text-center text-sm text-gray-500">
                   No purchase orders found.
                 </td>
               </tr>
@@ -879,6 +875,7 @@ export default function PurchaseOrdersPage() {
         <PurchaseOrderModal
           purchaseOrder={selectedPO}
           onOpenSupplierPFI={openSupplierPFIModal}
+          profile={profile}
           onClose={() => {
             setShowViewModal(false)
             setSelectedPO(null)
@@ -915,7 +912,7 @@ export default function PurchaseOrdersPage() {
 // =====================================================
 // VIEW PURCHASE ORDER MODAL
 // =====================================================
-function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI}) {
+function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI, profile}) {
 
   const items = purchaseOrder.purchase_order_items || []
 
@@ -1211,20 +1208,22 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI}) {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-4">
-                        <button
-                          type="button"
-                          onClick={() => onOpenSupplierPFI(purchaseOrder, supplierGroup)}
-                          className="flex items-center gap-2 rounded-lg bg-[#2D5A42] px-4 py-2 text-sm font-medium text-white hover:bg-[#234633]"
-                        >
-                          <FontAwesomeIcon
-                            icon={faFileInvoice}
-                            className="h-3.5 w-3.5"
-                          />
+                      {(profile?.role === 'admin' || profile?.role === 'procurement') && (
+                        <div className="flex items-center gap-4">
+                          <button
+                            type="button"
+                            onClick={() => onOpenSupplierPFI(purchaseOrder, supplierGroup)}
+                            className="flex items-center gap-2 rounded-lg bg-[#2D5A42] px-4 py-2 text-sm font-medium text-white hover:bg-[#234633]"
+                          >
+                            <FontAwesomeIcon
+                              icon={faFileInvoice}
+                              className="h-3.5 w-3.5"
+                            />
 
-                          Supplier PFI & Payment
-                        </button>
-                      </div>
+                            Supplier PFI & Payment
+                          </button>
+                        </div>
+                      )}
                     </div>
 
                     {/* =========================================
@@ -1933,8 +1932,8 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
       ordered_quantity: Number(item.quantity || 0),
       unit: item.products?.unit || '',
 
-      // Supplier actually selected for the PO
-      supplier_id: '',
+      // Supplier actually selected for the PO — default to primary supplier
+      supplier_id: item.products?.supplier_id || '',
 
       // Supplier assigned to the product
       product_supplier_id: item.products?.supplier_id || '',
@@ -2212,13 +2211,8 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
                               {/* SUPPLIER */}
                               <td className="px-4 py-4">
                                 <select
-                                  value={item.supplier_id}
-                                  onChange={(e) =>
-                                    updateSupplier(
-                                      index,
-                                      e.target.value
-                                    )
-                                  }
+                                  value={item.supplier_id || ''}
+                                  onChange={(e) => updateSupplier(index, e.target.value)}
                                   disabled={creating || loadingSuppliers}
                                   className="w-full min-w-[220px] rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
                                 >
@@ -2227,11 +2221,14 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
                                   </option>
 
                                   {getAvailableSuppliers(item).map((supplier) => {
-                                    const isPrimary = supplier.id === item.product_supplier_id && supplier.supplier_type === 'Manufacturer'
+                                    const isPrimary =
+                                      supplier.id === item.product_supplier_id &&
+                                      supplier.supplier_type === 'Manufacturer'
 
                                     return (
                                       <option key={supplier.id} value={supplier.id}>
-                                        {supplier.supplier_name} {isPrimary ? ' (Primary)' : ''}
+                                        {supplier.supplier_name}
+                                        {isPrimary ? ' (Primary)' : ''}
                                       </option>
                                     )
                                   })}
