@@ -10,6 +10,7 @@ import { useToast } from "../context/ToastContext"
 import RoleActivityBadge from '../components/RoleActivityBadge'
 import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
+import { getMinimumOrderQuantities } from '../services/pricingService'
 
 
 export default function ProductCatalogPage() {
@@ -28,6 +29,7 @@ export default function ProductCatalogPage() {
   const [categories, setCategories] = useState([])
   const [brands, setBrands] = useState([])
   const [availabilities, setAvailabilities] = useState([])
+  const [minimums, setMinimums] = useState({})
 
 
   // =============================================
@@ -308,6 +310,12 @@ export default function ProductCatalogPage() {
   useEffect(() => {
     loadManufacturers()
     loadFilterOptions()
+
+    // The minimum each product must be ordered in (the supplier's MOQ).
+    // Shown to everyone, customers included; prices stay hidden.
+    getMinimumOrderQuantities()
+      .then(setMinimums)
+      .catch((error) => console.error('Failed to load minimum order quantities:', error))
   }, [])
 
 
@@ -434,6 +442,9 @@ export default function ProductCatalogPage() {
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
                 Unit
               </th>
+              <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
+                Min. Order
+              </th>
 
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
                 Availability
@@ -504,6 +515,11 @@ export default function ProductCatalogPage() {
                       {product.unit}
                     </td>
 
+                    {/* MINIMUM ORDER */}
+                    <td className="px-5 py-3">
+                      {minimums[product.id] ? `${minimums[product.id]} ${product.unit || 'units'}` : '-'}
+                    </td>
+
                     {/* AVAILABILITY */}
                     <td className="px-5 py-3">
                       <RoleActivityBadge status={product.availability}/>
@@ -524,7 +540,7 @@ export default function ProductCatalogPage() {
               })
             ) : (
               <tr>
-                <td colSpan={ profile?.role === 'admin' ? 8 : 7} className="py-10 text-center text-sm text-gray-500">
+                <td colSpan={ profile?.role === 'admin' ? 9 : 8} className="py-10 text-center text-sm text-gray-500">
                   No products found.
                 </td>
               </tr>

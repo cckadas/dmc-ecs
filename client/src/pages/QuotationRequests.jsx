@@ -8,6 +8,7 @@ import { faPlus, faTrash, faFileSignature, faDownload, faXmark } from '@fortawes
 import { useToast } from "../context/ToastContext"
 import { MIN_PREFERRED_SHIP_DAYS, localDateString } from '../utils/dates'
 import { getCreditStatus, formatPeso } from '../services/creditService'
+import { getMinimumOrderQuantities } from '../services/pricingService'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
@@ -113,7 +114,7 @@ export default function QuotationRequestsPage() {
   async function loadProducts() {
     const { data, error } = await supabase
       .from('products')
-      .select('id, product_name, brand, unit')
+      .select('id, product_name, brand, unit, availability')
       .order('product_name')
 
     if (error) {
@@ -160,7 +161,10 @@ export default function QuotationRequestsPage() {
       .insert(items)
 
     if (itemError) {
-      toast.error(itemError)
+      // The request was saved but its products weren't (e.g. one is below
+      // its minimum order), so remove it rather than leave an empty request.
+      await supabase.from('quotation_requests').delete().eq('id', request.id)
+      toast.error(itemError.message || 'Failed to save the requested products.')
       return
     }
 
@@ -1126,6 +1130,7 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
 function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit }) {
   const { toast } = useToast()
   const [selectedProducts, setSelectedProducts] = useState([])
+  const [minimums, setMinimums] = useState({})
 
   const [form, setForm] = useState({
     preferred_ship_date: '',
@@ -1133,6 +1138,19 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
   })
 
   const earliestShipDate = localDateString(MIN_PREFERRED_SHIP_DAYS)
+
+  // Each product's minimum order (its supplier's MOQ); no entry = no minimum.
+  const minimumFor = (productId) => minimums[productId] || 1
+
+  // An unavailable product can't go into a new request. Requests and orders
+  // already in progress aren't affected (the database checks new lines only).
+  const isUnavailable = (product) => (product?.availability || '').toLowerCase() === 'unavailable'
+
+  useEffect(() => {
+    getMinimumOrderQuantities()
+      .then(setMinimums)
+      .catch((error) => console.error('Failed to load minimum order quantities:', error))
+  }, [])
 
 
   function handleSubmit(e) {
@@ -1158,6 +1176,27 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
 
     if (invalidQuantity) {
       toast.error('Each selected product needs a whole-number quantity of at least 1.')
+      return
+    }
+
+    // Also checked by the database when the request is saved.
+    const unavailable = selectedProducts
+      .map((item) => products.find((p) => p.id === item.product_id))
+      .find(isUnavailable)
+
+    if (unavailable) {
+      toast.error(`${unavailable.product_name} is currently unavailable and can't be requested.`)
+      return
+    }
+
+    // The minimum is checked again by the database when the request is saved.
+    const belowMinimum = selectedProducts.find(
+      (item) => item.quantity < minimumFor(item.product_id)
+    )
+
+    if (belowMinimum) {
+      const product = products.find((p) => p.id === belowMinimum.product_id)
+      toast.error(`${product?.product_name || 'A product'} has a minimum order of ${minimumFor(belowMinimum.product_id)} ${product?.unit || 'units'}.`)
       return
     }
 
@@ -1241,23 +1280,27 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
                   const selected = selectedProducts.find(
                     (p) => p.product_id === product.id
                   )
+                  const unavailable = isUnavailable(product)
 
                   return (
                     <div
                       key={product.id}
-                      className="rounded-lg border p-3"
+                      className={`rounded-lg border p-3 ${unavailable ? 'bg-gray-50 opacity-60' : ''}`}
                     >
                       <div className="flex items-center gap-4">
                         <input
                           type="checkbox"
                           checked={!!selected}
+                          disabled={unavailable}
+                          title={unavailable ? 'This product is currently unavailable' : undefined}
                           onChange={(e) => {
                             if (e.target.checked) {
                               setSelectedProducts([
                                 ...selectedProducts,
                                 {
                                   product_id: product.id,
-                                  quantity: 1,
+                                  // Start at the minimum the customer may order.
+                                  quantity: minimumFor(product.id),
                                   notes: '',
                                 },
                               ])
@@ -1284,12 +1327,22 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
                             </span>
                           )}
                         </p>
+
+                        {unavailable ? (
+                          <p className="text-xs font-medium text-red-700">
+                            Unavailable — can't be requested right now
+                          </p>
+                        ) : minimums[product.id] && (
+                          <p className="text-xs font-medium text-amber-700">
+                            Minimum order: {minimums[product.id]} {product.unit || 'units'}
+                          </p>
+                        )}
                       </div>
 
                         {selected && (
                           <input
                             type="number"
-                            min={1}
+                            min={minimumFor(product.id)}
                             step={1}
                             required
                             value={selected.quantity}

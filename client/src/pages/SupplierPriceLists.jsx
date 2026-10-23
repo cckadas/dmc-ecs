@@ -423,7 +423,7 @@ export default function SupplierPriceLists() {
               </h2>
 
               <p className="text-sm text-gray-500">
-                Use the pencil to change a price. The old price is kept as history, so orders already made at it don't change.
+                Use the pencil to change a price. The old price is kept as history, so orders already made at it don't change. The MOQ is shown to customers, who can't request less than it.
               </p>
             </div>
 

@@ -49,6 +49,20 @@ export function lookupSupplierPrice(prices, supplierId, productId) {
 }
 
 
+// Each product's minimum order quantity: the one its supplier's current price
+// list gives. Readable by customers too — the database returns the MOQ only,
+// never the prices (db/migrations/005). Returns { [productId]: moq }.
+export async function getMinimumOrderQuantities() {
+  const { data, error } = await supabase.rpc('product_minimum_order_quantities')
+
+  if (error) throw error
+
+  return Object.fromEntries(
+    (data || []).map((row) => [row.product_id, row.min_order_qty])
+  )
+}
+
+
 export async function getMarkups() {
   const { data, error } = await supabase
     .from('market_markups')
