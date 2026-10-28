@@ -8,7 +8,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faFolderOpen, faFileSignature, faTrash, faXmark, faDownload, faFileInvoice } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 import { generatePFI } from '../services/pfiService'
-import { localDateString } from '../utils/dates'
+import { localDateExcludingSundays, formatDateString, QUOTATION_VALIDITY_DAYS } from '../utils/dates'
 import { getQuotationPricing, pricingErrorMessage } from '../services/pricingService'
 
 import IconButton from '../components/IconButton'
@@ -108,6 +108,8 @@ export default function ProFormaInvoicePage() {
 
       if (error) {
         console.error(error)
+        // The database's own reason, e.g. the expiry-date rule.
+        toast.error(error.message || 'Failed to generate the quotation.')
         return
       }
 
@@ -815,7 +817,10 @@ function QuotationViewModal({ quotation, onClose }) {
 function QuotationModal({ request, creating, onClose, onSubmit }) {
   // Fixed, like the prices: the country's rate per unit x units ordered.
   const [shipping, setShipping] = useState({ cost: null, source: '' })
-  const [expiryDate, setExpiryDate] = useState('')
+  // DMC: a quotation is valid for exactly 7 days, Sundays not counted. Fixed,
+  // not chosen, so it can't be set wrong; the database sets the same date
+  // itself when the quotation is saved (db/migrations/009).
+  const expiryDate = localDateExcludingSundays(QUOTATION_VALIDITY_DAYS)
   const [items, setItems] = useState(
     request.quotation_request_items.map((item) => ({
       id: item.id,
@@ -1150,20 +1155,21 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                     </div>
 
 
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="font-medium text-gray-700">
-                        Expiry Date <span className="text-red-500">*</span>
-                      </span>
+                    {/* Read-only: fixed by DMC's 7-day rule. */}
+                    <div className="text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium text-gray-700">
+                          Expiry Date
+                        </span>
 
-                      <input
-                        type="date"
-                        value={expiryDate}
-                        disabled={creating}
-                        min={localDateString()}
-                        onChange={(e) => setExpiryDate(e.target.value)}
-                        required
-                        className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
-                      />
+                        <span className="font-medium text-gray-800">
+                          {formatDateString(expiryDate)}
+                        </span>
+                      </div>
+
+                      <p className="mt-1 text-right text-xs text-gray-500">
+                        Fixed: {QUOTATION_VALIDITY_DAYS} days from today, Sundays not counted
+                      </p>
                     </div>
 
                     <div className="my-4 border-t border-gray-200" />
@@ -1221,18 +1227,6 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                       <button
                         disabled={creating || loadingPrices}
                         onClick={() => {
-                          if (!expiryDate) {
-                            alert('Please select an expiry date.')
-                            return
-                          }
-
-                          // This button isn't a form submit, so the inputs'
-                          // min/required attributes are never checked — do it here.
-                          if (expiryDate < localDateString()) {
-                            alert('The expiry date cannot be in the past.')
-                            return
-                          }
-
                           // Every line needs its fixed price; there is no
                           // manual price to fall back on.
                           const unpriced = items.find(
