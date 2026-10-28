@@ -411,8 +411,10 @@ export default function PurchaseOrdersPage() {
       }
 
 
+      // The price always comes from the supplier's price list; it can't be
+      // typed. The database refuses any other price too (db/migrations/008).
       if (!(Number(item.unit_price) > 0)) {
-        toast.error(`Please enter a purchase price above ₱0 for ${item.product_name}.`)
+        toast.error(`${item.product_name} has no supplier price yet. Add it in Price Lists first.`)
         return
       }
     }
@@ -1917,10 +1919,8 @@ function AddPurchaseOrderModal({ customerOrders, suppliers, loadingCustomerOrder
       // choice to get wrong.
       supplier_id: item.products?.supplier_id || '',
 
-      // Filled from the supplier's current price list below; still editable
-      // for a negotiated price.
-      unit_price: '',
-      list_price: null,
+      // Filled from the supplier's current price list below; never typed.
+      unit_price: null,
       min_order_qty: null,
     }))
 
@@ -1944,13 +1944,9 @@ function AddPurchaseOrderModal({ customerOrders, suppliers, loadingCustomerOrder
         current.map((item) => {
           const listed = lookupSupplierPrice(prices, item.supplier_id, item.product_id)
 
-          // Never overwrite a price someone has already typed.
-          if (item.unit_price !== '') return item
-
           return {
             ...item,
-            unit_price: listed ? listed.cost : '',
-            list_price: listed ? listed.cost : null,
+            unit_price: listed ? listed.cost : null,
             min_order_qty: listed?.moq ?? null,
           }
         })
@@ -1959,21 +1955,6 @@ function AddPurchaseOrderModal({ customerOrders, suppliers, loadingCustomerOrder
       console.error('Failed to load price list prices:', error)
       setPricingError(pricingErrorMessage(error))
     }
-  }
-
-
-  // ===================================================
-  // UPDATE UNIT PRICE
-  // ===================================================
-  function updateUnitPrice(index, price) {
-    setItems((current) =>
-      current.map(
-        (item, itemIndex) =>
-          itemIndex === index
-            ? {...item, unit_price: price}
-            : item
-      )
-    )
   }
 
 
@@ -2190,7 +2171,7 @@ function AddPurchaseOrderModal({ customerOrders, suppliers, loadingCustomerOrder
                   <tbody>
                     {items.length > 0 ? (
                       items.map(
-                        (item, index) => {
+                        (item) => {
                           const subtotal = Number(item.ordered_quantity || 0) * Number(item.unit_price || 0)
 
                           return (
@@ -2228,34 +2209,17 @@ function AddPurchaseOrderModal({ customerOrders, suppliers, loadingCustomerOrder
 
                               {/* UNIT PRICE */}
                               <td className="px-4 py-4">
-                                <div className="relative">
-                                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">
-                                    ₱
-                                  </span>
+                                {/* Read-only: the supplier's current price-list price. */}
+                                <p className="font-medium text-gray-800">
+                                  {item.unit_price != null
+                                    ? `₱ ${Number(item.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                                    : '-'}
+                                </p>
 
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={item.unit_price}
-                                    onChange={(e) =>
-                                      updateUnitPrice(
-                                        index,
-                                        e.target.value
-                                      )
-                                    }
-                                    disabled={creating}
-                                    placeholder="0.00"
-                                    className="w-36 rounded-md border border-gray-300 py-2 pl-7 pr-3 text-right text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
-                                  />
-                                </div>
-
-                                <p className="mt-1 text-xs text-gray-500">
-                                  {item.list_price == null
-                                    ? 'No price on file — enter manually'
-                                    : Number(item.unit_price) === item.list_price
-                                      ? 'From price list'
-                                      : `Edited — list price ₱${item.list_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+                                <p className={`mt-1 text-xs ${item.unit_price != null ? 'text-gray-500' : 'font-medium text-red-700'}`}>
+                                  {item.unit_price != null
+                                    ? 'From price list'
+                                    : 'No supplier price yet — add it in Price Lists'}
                                 </p>
 
                                 {item.min_order_qty && item.ordered_quantity < item.min_order_qty && (
