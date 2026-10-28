@@ -7,6 +7,7 @@ import customersRouter from './routes/users.js'
 import staffsRouter from './routes/staffs.js'
 import purchaseOrderEmailRouter from './routes/emails.js'
 import paymentProofRouter from './routes/payment.js'
+import chatRouter from './routes/chat.js'
 
 const app = express()
 
@@ -34,6 +35,7 @@ app.use('/api/users', customersRouter)
 app.use('/api/staffs', staffsRouter)
 app.use('/api/send-email', purchaseOrderEmailRouter)
 app.use('/api/send-payment-proof', paymentProofRouter)
+app.use('/api/customer/chat', chatRouter)
 
 
 // =============================================
