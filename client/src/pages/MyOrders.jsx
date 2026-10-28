@@ -7,6 +7,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faFolderOpen, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 import StatusBadge from '../components/StatusBadge'
+import OrderProgress from '../components/OrderProgress'
 
 import IconButton from '../components/IconButton'
 import RoleActivityBadge from '../components/RoleActivityBadge'
@@ -47,6 +48,8 @@ export default function MyOrdersPage() {
         down_payment_amount,
         status,
         settled_amount,
+        pending_payment_amount,
+        expiry_date,
         payment_proof_dp,
         payment_proof_complete,
         pfi_file_path,
@@ -274,6 +277,9 @@ function MyOrderModal({ order, onClose }) {
             CONTENT
         ================================================= */}
         <div className="flex-1 overflow-y-auto p-6">
+
+          <OrderProgress order={order}/>
+
 
 
           {/* =================================================

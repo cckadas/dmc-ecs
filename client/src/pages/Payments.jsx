@@ -7,6 +7,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faCreditCard, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 import { createNotification } from '../services/notificationService'
+import { recordStatusChange } from '../services/predictionService'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
@@ -560,6 +561,11 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
 
         alert('Failed to save payment information.')
         return
+      }
+
+
+      if (isFirstPayment) {
+        await recordStatusChange(payment.id, payment.status, 'submitted')
       }
 
 

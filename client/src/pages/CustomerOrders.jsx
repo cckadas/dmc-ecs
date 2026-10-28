@@ -11,6 +11,8 @@ import { createNotification } from '../services/notificationService'
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
 import RoleActivityBadge from '../components/RoleActivityBadge'
+import OrderProgress from '../components/OrderProgress'
+import { recordStatusChange } from '../services/predictionService'
 import TableScroll from '../components/TableScroll'
 
 
@@ -47,6 +49,7 @@ export default function CustomerOrdersPage() {
         status,
         settled_amount,
         pending_payment_amount,
+        expiry_date,
         payment_bank,
         payment_proof_dp,
         payment_proof_complete,
@@ -246,6 +249,11 @@ export default function CustomerOrdersPage() {
     // UPDATE SELECTED PAYMENT IMMEDIATELY
     // =============================================
     setSelectedPayment((prev) => ({ ...prev, ...updateData }))
+
+
+    if (isFirstPayment) {
+      await recordStatusChange(order.id, 'submitted', approve ? 'payment verified' : 'payment rejected')
+    }
 
 
     // =============================================
@@ -606,6 +614,9 @@ function CustomerOrderModal({ order, onClose }) {
             CONTENT
         ================================================= */}
         <div className="flex-1 overflow-y-auto p-6">
+
+          <OrderProgress order={order}/>
+
 
 
           {/* =================================================
