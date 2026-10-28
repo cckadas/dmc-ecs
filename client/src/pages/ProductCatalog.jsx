@@ -11,6 +11,7 @@ import RoleActivityBadge from '../components/RoleActivityBadge'
 import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
 import { getMinimumOrderQuantities } from '../services/pricingService'
+import { groupByFamily } from '../utils/productGroups'
 
 
 export default function ProductCatalogPage() {
@@ -48,6 +49,8 @@ export default function ProductCatalogPage() {
         availability,
         supplier_id,
         image_path,
+        family,
+        pack_size,
         suppliers (
           supplier_name,
           supplier_type
@@ -224,6 +227,8 @@ export default function ProductCatalogPage() {
           supplier_id:
             product.supplier_id || null,
           image_path: imagePath,
+          family: product.family?.trim() || null,
+          pack_size: product.pack_size?.trim() || null,
         })
 
       if (error) {
@@ -292,6 +297,8 @@ export default function ProductCatalogPage() {
         category: updatedProduct.category,
         availability: updatedProduct.availability,
         supplier_id: updatedProduct.supplier_id || null,
+        family: updatedProduct.family?.trim() || null,
+        pack_size: updatedProduct.pack_size?.trim() || null,
       })
       .eq('id', updatedProduct.id)
 
@@ -456,7 +463,7 @@ export default function ProductCatalogPage() {
               </th>
 
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
-                Unit
+                Pack Size
               </th>
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
                 Min. Order
@@ -476,25 +483,30 @@ export default function ProductCatalogPage() {
 
           <tbody>
             {products.length > 0 ? (
-              products.map((product) => {
+              groupByFamily(products).flatMap((group) =>
+                group.items.map((product, index) => {
 
-                const imageUrl = getImageUrl(product.image_path)
+                const imageUrl = getImageUrl(group.items[0].image_path)
+                const first = index === 0
+                const span = group.items.length
 
                 return (
-                  <tr key={product.id} className="border-t border-gray-200 text-sm hover:bg-gray-50">
+                  <tr key={product.id} className={`text-sm hover:bg-gray-50 ${first ? 'border-t border-gray-200' : ''}`}>
 
-                    {/* IMAGE */}
-                    <td className="px-5 py-3">
+                    {/* IMAGE — shared by the family's sizes */}
+                    {first && (
+                      <td rowSpan={span} className="px-5 py-3 align-top">
 
-                      {imageUrl ? (
-                        <img src={imageUrl} alt={product.product_name} className="h-12 w-12 rounded-lg border border-gray-200 object-cover"/>
-                      ) : (
-                        <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-gray-100 text-gray-400">
-                          <FontAwesomeIcon icon={faImage}/>
-                        </div>
-                      )}
+                        {imageUrl ? (
+                          <img src={imageUrl} alt={group.family} className="h-12 w-12 rounded-lg border border-gray-200 object-cover"/>
+                        ) : (
+                          <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-gray-100 text-gray-400">
+                            <FontAwesomeIcon icon={faImage}/>
+                          </div>
+                        )}
 
-                    </td>
+                      </td>
+                    )}
 
 
                     {/* SKU */}
@@ -504,31 +516,49 @@ export default function ProductCatalogPage() {
 
 
                     {/* PRODUCT */}
-                    <td className="px-5 py-3">
-                      <p className="font-medium text-gray-800">
-                        {product.product_name}
-                      </p>
-
-                      {product.brand && (
-                        <p className="text-sm text-gray-500">
-                          {product.brand}
+                    {first && (
+                      <td rowSpan={span} className="px-5 py-3 align-top">
+                        <p className="font-medium text-gray-800">
+                          {group.family}
                         </p>
-                      )}
-                    </td>
+
+                        {product.brand && (
+                          <p className="text-sm text-gray-500">
+                            {product.brand}
+                          </p>
+                        )}
+
+                        {span > 1 && (
+                          <p className="mt-1 text-xs text-gray-400">
+                            {span} sizes
+                          </p>
+                        )}
+                      </td>
+                    )}
 
                     {/* MANUFACTURER */}
-                    <td className="px-5 py-3 text-gray-700">
-                      {product.suppliers?.supplier_type === 'Manufacturer' ? product.suppliers.supplier_name : '-'}
-                    </td>
+                    {first && (
+                      <td rowSpan={span} className="px-5 py-3 align-top text-gray-700">
+                        {product.suppliers?.supplier_type === 'Manufacturer' ? product.suppliers.supplier_name : '-'}
+                      </td>
+                    )}
 
                     {/* CATEGORY */}
-                    <td className="px-5 py-3">
-                      {product.category}
-                    </td>
+                    {first && (
+                      <td rowSpan={span} className="px-5 py-3 align-top">
+                        {product.category}
+                      </td>
+                    )}
 
-                    {/* UNIT */}
+                    {/* PACK SIZE */}
                     <td className="px-5 py-3">
-                      {product.unit}
+                      {product.pack_size || '-'}
+
+                      {product.unit && (
+                        <p className="text-xs text-gray-500">
+                          per {product.unit}
+                        </p>
+                      )}
                     </td>
 
                     {/* MINIMUM ORDER */}
@@ -553,7 +583,7 @@ export default function ProductCatalogPage() {
                     )}
                   </tr>
                 )
-              })
+              }))
             ) : (
               <tr>
                 <td colSpan={ profile?.role === 'admin' ? 9 : 8} className="py-10 text-center text-sm text-gray-500">
@@ -613,6 +643,8 @@ function AddProductModal({ manufacturers, onClose, onSubmit }) {
     category: '',
     availability: 'Available',
     supplier_id: '',
+    family: '',
+    pack_size: '',
     image: null,
   })
 
@@ -762,6 +794,44 @@ function AddProductModal({ manufacturers, onClose, onSubmit }) {
             </div>
 
 
+            {/* FAMILY */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Product Family
+              </label>
+
+              <input
+                type="text"
+                name="family"
+                value={form.family}
+                onChange={handleChange}
+                placeholder="e.g. Argentina Corned Beef"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
+              />
+
+              <p className="mt-1 text-xs text-gray-500">
+                Sizes with the same family are shown together.
+              </p>
+            </div>
+
+
+            {/* PACK SIZE */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Pack Size
+              </label>
+
+              <input
+                type="text"
+                name="pack_size"
+                value={form.pack_size}
+                onChange={handleChange}
+                placeholder="e.g. 150g x 48"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
+              />
+            </div>
+
+
             {/* CATEGORY */}
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">
@@ -900,6 +970,8 @@ function EditProductModal({ product, manufacturers, onClose, onSubmit }) {
     category: product.category || '',
     availability: product.availability || 'Available',
     supplier_id: product.supplier_id || '',
+    family: product.family || '',
+    pack_size: product.pack_size || '',
   })
 
 
@@ -1020,6 +1092,44 @@ function EditProductModal({ product, manufacturers, onClose, onSubmit }) {
                 placeholder="e.g. Box, Piece, Case"
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
                 required
+              />
+            </div>
+
+
+            {/* FAMILY */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Product Family
+              </label>
+
+              <input
+                type="text"
+                name="family"
+                value={form.family}
+                onChange={handleChange}
+                placeholder="e.g. Argentina Corned Beef"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
+              />
+
+              <p className="mt-1 text-xs text-gray-500">
+                Sizes with the same family are shown together.
+              </p>
+            </div>
+
+
+            {/* PACK SIZE */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Pack Size
+              </label>
+
+              <input
+                type="text"
+                name="pack_size"
+                value={form.pack_size}
+                onChange={handleChange}
+                placeholder="e.g. 150g x 48"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
               />
             </div>
 
