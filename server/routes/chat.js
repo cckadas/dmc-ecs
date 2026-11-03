@@ -1,5 +1,4 @@
 import express from 'express'
-import { supabaseAdmin } from '../supabaseAdmin.js'
 import { SYSTEM_INSTRUCTIONS, PORTAL_FAQ, getSafetyReply } from '../chatbot/rules.js'
 import { buildCustomerContext } from '../chatbot/context.js'
 import { askGemini, AssistantUnavailableError } from '../chatbot/gemini.js'
@@ -32,31 +31,6 @@ function parseBody(body) {
     .filter((entry) => entry.content)
 
   return { message, history }
-}
-
-
-// =============================================
-// SIGNED-IN CUSTOMER ONLY
-// =============================================
-// The browser sends the customer's Supabase session token. The customer id
-// comes from that token, never from the request body, so no one can ask about
-// another customer's orders.
-async function getCustomer(req) {
-  const token = req.headers.authorization?.match(/^Bearer\s+(.+)$/i)?.[1]
-  if (!token) return { status: 401 }
-
-  const { data, error } = await supabaseAdmin.auth.getUser(token)
-  if (error || !data?.user) return { status: 401 }
-
-  const { data: profile, error: profileError } = await supabaseAdmin
-    .from('profiles')
-    .select('role')
-    .eq('id', data.user.id)
-    .single()
-
-  if (profileError || profile?.role?.trim().toLowerCase() !== 'customer') return { status: 403 }
-
-  return { id: data.user.id }
 }
 
 
@@ -105,17 +79,15 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    const customer = await getCustomer(req)
-    if (customer.status === 401) return res.status(401).json({ error: 'Please sign in again.' })
-    if (customer.status === 403) return res.status(403).json({ error: 'The assistant is for customer accounts.' })
-
-    const limit = checkRateLimit(customer.id)
+    // The customer comes from their session token (server/auth.js), never from
+    // the request body, so no one can ask about another customer's orders.
+    const limit = checkRateLimit(req.caller.id)
     if (!limit.allowed) {
       res.set('Retry-After', String(limit.retryAfterSeconds))
       return res.status(429).json({ error: 'You\'ve sent a lot of questions. Please wait a few minutes and try again.' })
     }
 
-    return res.json(await answerCustomerQuestion(customer.id, parsed.message, parsed.history))
+    return res.json(await answerCustomerQuestion(req.caller.id, parsed.message, parsed.history))
   } catch (error) {
     // Only what failed, never what the customer asked.
     console.error('Order assistant failed:', error.message, error.cause?.code || '')

@@ -35,6 +35,7 @@ export default function DeliveryLocationsPage() {
         country
       `)
       .eq('profile_id', profile.id)
+      .eq('is_archived', false)
       .order('created_at', { ascending: false })
 
 
@@ -113,23 +114,22 @@ export default function DeliveryLocationsPage() {
 
     if (!confirmDelete) return
 
-    const { error } = await supabase
-      .from('delivery_locations')
-      .delete()
-      .eq('id', id)
+    // An address used by a past request or order is archived instead, so those
+    // records keep it (db/migrations/011).
+    const { data: outcome, error } = await supabase.rpc('remove_delivery_location', {
+      p_location_id: id,
+    })
 
     if (error) {
-      // 23503 = foreign-key violation: a quotation request still points at
-      // this location, so the database refuses to delete it.
-      toast.error(
-        error.code === '23503'
-          ? 'This location is used by an existing quotation request, so it cannot be deleted.'
-          : error.message
-      )
+      toast.error(error.message)
       return
     }
 
-    toast.success("Location deleted successfully!")
+    toast.success(
+      outcome === 'archived'
+        ? 'Location removed from your list. Your past requests and orders keep it.'
+        : 'Location deleted successfully!'
+    )
     loadLocations()
   }
 

@@ -1,4 +1,5 @@
 import { supabase } from '../supabase'
+import { planContainer } from '../utils/containers'
 
 
 // =============================================================================
@@ -7,10 +8,12 @@ import { supabase } from '../supabase'
 // Buying prices come from each supplier's current price list
 // (supplier_price_list). A quotation's prices are fixed, never typed:
 //   each line = supplier price + the destination country's markup
-//   shipping  = the country's shipping rate per unit x total units ordered
+//   container = the fixed cost of the container size the order needs
+//   shipping  = the destination country's fixed shipping cost
 // using the country's own rates, or the Default row's for a country without
 // its own. Sales cannot change them, so a wrong price can't be entered by
-// accident or on purpose. Rates are set by admin and management only.
+// accident or on purpose. Rates are set by admin and management only, and the
+// database sets the container and shipping costs itself (db/migrations/016).
 // =============================================================================
 
 const priceKey = (supplierId, productId) => `${supplierId}:${productId}`
@@ -63,15 +66,55 @@ export async function getMinimumOrderQuantities() {
 }
 
 
+// Each product's manufacturer name, for the customer catalog. Customers can't read
+// the suppliers table; the database returns manufacturers' names only, never a
+// distributor or any contact details (db/migrations/013). Returns { [productId]: name }.
+export async function getProductManufacturers() {
+  const { data, error } = await supabase.rpc('product_manufacturers')
+
+  if (error) throw error
+
+  return Object.fromEntries(
+    (data || []).map((row) => [row.product_id, row.manufacturer_name])
+  )
+}
+
+
 export async function getMarkups() {
   const { data, error } = await supabase
     .from('market_markups')
-    .select('country, markup_percent, shipping_per_unit')
+    .select('country, markup_percent, shipping_cost')
     .order('country')
 
   if (error) throw error
 
   return data || []
+}
+
+
+export async function getContainerSizes() {
+  const { data, error } = await supabase
+    .from('container_sizes')
+    .select('code, name, inside_cbm, max_weight_kg, cost, sort_order')
+    .order('sort_order')
+
+  if (error) throw error
+
+  return data || []
+}
+
+
+// How full a container's volume may be packed, in percent (100 if not set).
+export async function getContainerFillPercent() {
+  const { data, error } = await supabase
+    .from('business_settings')
+    .select('value')
+    .eq('key', 'container_fill_percent')
+    .maybeSingle()
+
+  if (error) throw error
+
+  return data?.value == null ? 100 : Number(data.value)
 }
 
 
@@ -87,18 +130,22 @@ function findMarkup(markups, country) {
 
 
 // The fixed prices for a quotation.
-// lines: [{ productId, supplierId, quantity }]
+// lines: [{ productId, supplierId, quantity, name, cbm, grossWeightKg }]
 // Returns {
-//   prices:   { [productId]: { price, source, moq } },
-//   shipping: { cost, source },
+//   prices:     { [productId]: { price, source, moq } },
+//   shipping:   { cost, source },
+//   containers: which container the order needs (see planContainer); each
+//               option carries its fixed cost
 // } — a price or cost is null when it can't be worked out yet, and its source
 // then says who has to fix it.
 export async function getQuotationPricing({ country, lines }) {
   const productIds = lines.map((line) => line.productId)
 
-  const [supplierPrices, markups] = await Promise.all([
+  const [supplierPrices, markups, containerSizes, fillPercent] = await Promise.all([
     getCurrentSupplierPrices(productIds),
     getMarkups(),
+    getContainerSizes(),
+    getContainerFillPercent(),
   ])
 
   const markup = findMarkup(markups, country)
@@ -123,20 +170,21 @@ export async function getQuotationPricing({ country, lines }) {
     prices[line.productId] = { price, source, moq }
   }
 
-  const totalUnits = lines.reduce((sum, line) => sum + Number(line.quantity || 0), 0)
-  const rate = markup?.shipping_per_unit == null ? null : Number(markup.shipping_per_unit)
-
-  const shipping = rate == null
+  const shipping = markup?.shipping_cost == null
     ? {
         cost: null,
-        source: `No shipping rate for ${country || 'this country'} — admin or management must set one`,
+        source: `No shipping cost for ${country || 'this country'} — admin or management must set one`,
       }
     : {
-        cost: roundMoney(rate * totalUnits),
-        source: `${markup.country} rate ₱${rate.toLocaleString(undefined, { minimumFractionDigits: 2 })} × ${totalUnits.toLocaleString()} units`,
+        cost: roundMoney(Number(markup.shipping_cost)),
+        source: markup.country.trim().toLowerCase() === 'default'
+          ? `Default shipping cost${country ? ` (none set for ${country})` : ''}`
+          : `Fixed shipping cost for ${markup.country}`,
       }
 
-  return { prices, shipping }
+  const containers = planContainer({ lines, sizes: containerSizes, fillPercent })
+
+  return { prices, shipping, containers }
 }
 
 
@@ -163,7 +211,7 @@ export function pricingErrorMessage(error) {
   const text = `${error?.code || ''} ${error?.message || ''}`
 
   if (/PGRST20[25]|42P01|42883|does not exist|could not find/i.test(text)) {
-    return 'Prices or shipping rates are not fully set up in the database yet — run the scripts in db/migrations (001 and 003) in Supabase.'
+    return 'Prices, shipping or container costs are not fully set up in the database yet — run the scripts in db/migrations (001 and 016) in Supabase.'
   }
 
   return error?.message || 'Could not load prices.'

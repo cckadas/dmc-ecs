@@ -10,7 +10,6 @@ import { MIN_PREFERRED_SHIP_DAYS, localDateString } from '../utils/dates'
 import { getCreditStatus, formatPeso } from '../services/creditService'
 import { getMinimumOrderQuantities } from '../services/pricingService'
 import { groupByFamily, sizeLabel } from '../utils/productGroups'
-import { recordStatusChange } from '../services/predictionService'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
@@ -99,6 +98,7 @@ export default function QuotationRequestsPage() {
       .from('delivery_locations')
       .select('*')
       .eq('profile_id', profile.id)
+      .eq('is_archived', false)
       .order('location_name')
 
     if (error) {
@@ -240,6 +240,8 @@ export default function QuotationRequestsPage() {
         quotation_request_id,
         quotation_number,
         subtotal,
+        container_size,
+        container_cost,
         shipping_cost,
         total_amount,
         down_payment_amount,
@@ -250,6 +252,10 @@ export default function QuotationRequestsPage() {
 
         quotation_request:quotation_requests (
           delivery_location_id
+        ),
+
+        customer_orders (
+          order_number
         ),
 
         quotation_items (
@@ -290,46 +296,14 @@ export default function QuotationRequestsPage() {
 
     if (!confirmed) return
 
-    // Get the quotation request ID
-    const { data: quotation, error: fetchError } = await supabase
-      .from('quotations')
-      .select('quotation_request_id')
-      .eq('id', quotationId)
-      .eq('status', 'pending approval')
-      .single()
+    // In one database step, so the quotation and its request can't disagree.
+    const { error } = await supabase.rpc('reject_quotation', {
+      p_quotation_id: quotationId,
+    })
 
-    if (fetchError || !quotation) {
-      console.error(fetchError)
-      alert('Quotation is no longer available for rejection.')
-      return
-    }
-
-    // Update quotation status
-    const { error: quotationError } = await supabase
-      .from('quotations')
-      .update({
-        status: 'rejected',
-      })
-      .eq('id', quotationId)
-      .eq('status', 'pending approval')
-
-    if (quotationError) {
-      console.error(quotationError)
-      toast.error('Failed to reject quotation.')
-      return
-    }
-
-    // Update quotation request status
-    const { error: requestError } = await supabase
-      .from('quotation_requests')
-      .update({
-        status: 'rejected',
-      })
-      .eq('id', quotation.quotation_request_id)
-
-    if (requestError) {
-      console.error(requestError)
-      toast.error('Quotation was rejected, but failed to update the request status.')
+    if (error) {
+      console.error(error)
+      toast.error(error.message || 'Failed to reject quotation.')
       return
     }
 
@@ -386,155 +360,26 @@ export default function QuotationRequestsPage() {
 
     try {
 
-      // -------------------------------------------------
-      // CREATE CUSTOMER ORDER NUMBER
-      // -------------------------------------------------
-      const now = new Date()
-      const year = now.getFullYear()
+      // Creates the order from the quotation in one database step, which also
+      // numbers it. The quotation and its request are kept, marked approved.
+      const { data: orderNumber, error: approveError } = await supabase.rpc('approve_quotation', {
+        p_quotation_id: quotation.id,
+      })
 
-      const { data: existingORD, error: existingORDError } = await supabase
-        .from('customer_orders')
-        .select('order_number')
-        .like('order_number', `ORD-${year}-%`)
-
-      if (existingORDError) {
-        throw existingORDError
-      }
-
-      let nextNumber = 1
-
-      if (existingORD && existingORD.length > 0) {
-        const numbers = existingORD
-          .map((order) => {
-            const match = order.order_number?.match(/^ORD-\d{4}-(\d+)$/)
-            return match ? Number(match[1]) : 0
-          })
-          .filter((number) => number > 0)
-
-        if (numbers.length > 0) {
-          nextNumber = Math.max(...numbers) + 1
-        }
-      }
-
-      const orderNumber = `ORD-${year}-${String(nextNumber).padStart(5, '0')}`
-
-      const { data: order, error: orderError } = await supabase
-        .from('customer_orders')
-        .insert({
-          order_number: orderNumber,
-          customer_id: profile.id,
-          quotation_number: quotation.quotation_number,
-          subtotal: quotation.subtotal,
-          shipping_cost: quotation.shipping_cost,
-          total_amount: quotation.total_amount,
-          down_payment_amount: quotation.down_payment_amount,
-          delivery_location_id: quotation.quotation_request.delivery_location_id,
-          pfi_file_path: quotation.pfi_file_path,
-          expiry_date: expiryDate,
-          status: 'pending payment',
-        })
-        .select()
-        .single()
-
-      if (orderError) {
-        console.error(orderError)
+      if (approveError) {
+        console.error(approveError)
         // The database's own message, e.g. the credit-limit refusal.
-        alert(orderError.message || 'Failed to create customer order.')
+        alert(approveError.message || 'Failed to approve the quotation.')
         return
       }
 
-      // The order's first step, for the progress tracker and predictions.
-      await recordStatusChange(order.id, 'quotation approved', 'pending payment')
-
-
-      /* CREATE CUSTOMER ORDER ITEMS */
-      const orderItems = quotation.quotation_items.map((item) => ({
-        customer_order_id: order.id,
-        product_id: item.product_id,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        subtotal: item.subtotal,
-      }))
-
-      const { error: itemError } = await supabase
-        .from('customer_order_items')
-        .insert(orderItems)
-
-      if (itemError) {
-        console.error(itemError)
-        await supabase
-          .from('customer_orders')
-          .delete()
-          .eq('id', order.id)
-
-        alert('Failed to create customer order items.')
-        return
-      }
-
-
-      /* DELETE QUOTATION ITEMS */
-      const { error: quotationItemsError } = await supabase
-        .from('quotation_items')
-        .delete()
-        .eq('quotation_id', quotation.id)
-
-      if (quotationItemsError) {
-        console.error(quotationItemsError)
-        alert('Order was created, but quotation items could not be deleted.')
-        return
-      }
-
-
-      /* DELETE QUOTATION */
-      const { error: quotationError } = await supabase
-        .from('quotations')
-        .delete()
-        .eq('id', quotation.id)
-
-      if (quotationError) {
-        console.error(quotationError)
-        alert('Order was created, but quotation could not be deleted.')
-        return
-      }
-
-
-      /* DELETE QUOTATION REQUEST ITEMS */
-      const { error: requestItemsError } = await supabase
-        .from('quotation_request_items')
-        .delete()
-        .eq('quotation_request_id', quotation.quotation_request_id)
-
-      if (requestItemsError) {
-        console.error(requestItemsError)
-        alert(
-          'Order was created, but quotation request items could not be deleted.'
-        )
-        return
-      }
-
-
-      /* DELETE QUOTATION REQUEST */
-      const { error: requestError } = await supabase
-        .from('quotation_requests')
-        .delete()
-        .eq('id', quotation.quotation_request_id)
-
-      if (requestError) {
-        console.error(requestError)
-        alert(
-          'Order was created, but quotation request could not be deleted.'
-        )
-        return
-      }
-
-
-      /* SUCCESS */
-      toast.success('Quotation approved successfully.')
+      toast.success(`Quotation approved. Your order number is ${orderNumber}.`)
 
       setShowQuotationModal(false)
       setSelectedQuotation(null)
 
       await loadRequests()
+      await loadCredit()
     }
     
     catch (error) {
@@ -686,10 +531,10 @@ export default function QuotationRequestsPage() {
                   </td>
 
                   <td className="px-5 py-3">
-                    {request.status === 'priced & sent to customer' ? (
-                      <IconButton icon={faFileSignature} title="View Quotation" color="blue" disabled={false} onClick={() => viewQuotation(request.id)}/>
+                    {request.status === 'awaiting pricing' ? (
+                      <IconButton icon={faTrash} title="Cancel Request" color="red" disabled={false} onClick={() => deleteRequest(request.id)}/>
                     ) : (
-                      <IconButton icon={faTrash} title={request.status === 'awaiting pricing' ? 'Cancel Request' : 'Cannot cancel this request'} color="red" disabled={request.status !== 'awaiting pricing'} onClick={() => deleteRequest(request.id)}/>
+                      <IconButton icon={faFileSignature} title="View Quotation" color="blue" disabled={false} onClick={() => viewQuotation(request.id)}/>
                     )}
                   </td>
                 </tr>
@@ -768,6 +613,8 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
   )
 
   const isExpiringSoon = daysUntilExpiry <= 3
+
+  const order = Array.isArray(quotation.customer_orders) ? quotation.customer_orders[0] : quotation.customer_orders
 
 
   // =============================================
@@ -972,6 +819,20 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
                   </span>
                 </div>
 
+                {quotation.container_cost != null && (
+                  <div className="mb-3 flex justify-between text-sm">
+                    <span className="font-semibold text-gray-700">
+                      Container ({quotation.container_size})
+                    </span>
+
+                    <span className="text-lg font-bold text-gray-800">
+                      ₱ {Number(quotation.container_cost).toLocaleString(undefined, {
+                        minimumFractionDigits: 2
+                      })}
+                    </span>
+                  </div>
+                )}
+
                 <div className="mb-3 flex justify-between text-sm">
                   <span className="font-semibold text-gray-700">
                     Shipping Cost
@@ -1020,45 +881,39 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
             FOOTER
         ================================================= */}
         <div className="flex w-full items-center gap-3 bg-gray-50 px-6 py-4">
-          {quotation.status === 'rejected' ? (
-            <div className="flex w-full items-center justify-between">
+          {['rejected', 'approved', 'cancelled'].includes(quotation.status) ? (
+            <div className="flex w-full items-center justify-between gap-4">
               <div>
-                <p className="font-medium text-red-600">
-                  Quotation Rejected
+                <p className={`font-medium ${quotation.status === 'approved' ? 'text-green-600' : 'text-red-600'}`}>
+                  Quotation {quotation.status === 'approved' ? 'Approved' : quotation.status === 'rejected' ? 'Rejected' : 'Cancelled'}
                 </p>
 
                 <p className="text-sm text-gray-500">
-                  This quotation has already been rejected.
+                  {quotation.status === 'approved' && `This quotation was approved${order?.order_number ? ` and became order ${order.order_number}` : ''}.`}
+                  {quotation.status === 'rejected' && 'This quotation was rejected.'}
+                  {quotation.status === 'cancelled' && 'The order made from this quotation was deleted.'}
                 </p>
               </div>
 
-              <button
-                onClick={onClose}
-                disabled={creating}
-                className="rounded-lg bg-gray-200 px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300 disabled:opacity-50"
-              >
-                Close
-              </button>
-            </div>
-          ) : quotation.status === 'approved' ? (
-            <div className="flex w-full items-center justify-between">
-              <div>
-                <p className="font-medium text-green-600">
-                  Quotation Approved
-                </p>
+              <div className="flex shrink-0 items-center gap-3">
+                <button
+                  type="button"
+                  onClick={downloadPFI}
+                  disabled={!quotation?.pfi_file_path || creating}
+                  className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <FontAwesomeIcon icon={faDownload} />
+                  Download PFI
+                </button>
 
-                <p className="text-sm text-gray-500">
-                  This quotation has already been approved.
-                </p>
+                <button
+                  onClick={onClose}
+                  disabled={creating}
+                  className="rounded-lg bg-gray-200 px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300 disabled:opacity-50"
+                >
+                  Close
+                </button>
               </div>
-
-              <button
-                onClick={onClose}
-                disabled={creating}
-                className="rounded-lg bg-[#2D5A42] px-5 py-2 text-sm font-medium text-white hover:bg-[#234633] disabled:opacity-50"
-              >
-                Close
-              </button>
             </div>
           ) : isExpired ? (
             <div className="flex w-full items-center justify-between gap-4">

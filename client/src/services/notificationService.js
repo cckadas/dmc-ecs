@@ -7,7 +7,9 @@ export async function createNotification({ userId, role, title, message, type = 
     throw new Error('Notification requires a user ID.')
   }
 
-  const { data, error } = await supabase
+  // No reading back: the sender usually can't read a notification addressed to
+  // someone else (db/migrations/013).
+  const { error } = await supabase
     .from('notifications')
     .insert({
       user_id: userId,
@@ -19,13 +21,9 @@ export async function createNotification({ userId, role, title, message, type = 
       related_customer_order_id: relatedCustomerOrderId,
       related_purchase_order_id: relatedPurchaseOrderId,
     })
-    .select()
-    .single()
 
   if (error) {
     console.error('Failed to create notification:', error)
     throw error
   }
-
-  return data
 }

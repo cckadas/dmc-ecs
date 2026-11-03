@@ -8,6 +8,7 @@ import staffsRouter from './routes/staffs.js'
 import purchaseOrderEmailRouter from './routes/emails.js'
 import paymentProofRouter from './routes/payment.js'
 import chatRouter from './routes/chat.js'
+import { requireRole } from './auth.js'
 
 const app = express()
 
@@ -30,12 +31,15 @@ app.use(express.json())
 
 // =============================================
 // ROUTES
+//
+// Each lists who can call it. These roles match the pages that use each route
+// (client/src/components/layout/navigation.js).
 // =============================================
-app.use('/api/users', customersRouter)
-app.use('/api/staffs', staffsRouter)
-app.use('/api/send-email', purchaseOrderEmailRouter)
-app.use('/api/send-payment-proof', paymentProofRouter)
-app.use('/api/customer/chat', chatRouter)
+app.use('/api/users', requireRole('admin', 'sales'), customersRouter)
+app.use('/api/staffs', requireRole('admin'), staffsRouter)
+app.use('/api/send-email', requireRole('admin', 'procurement'), purchaseOrderEmailRouter)
+app.use('/api/send-payment-proof', requireRole('admin', 'procurement'), paymentProofRouter)
+app.use('/api/customer/chat', requireRole('customer'), chatRouter)
 
 
 // =============================================

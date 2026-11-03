@@ -15,12 +15,11 @@ export { ORDER_STATUS_FLOW, normalizeStatus, buildStageStatistics, predictOrder 
 const byTime = (a, b) => new Date(a.changed_at).getTime() - new Date(b.changed_at).getTime()
 
 
-// Every recorded status change, oldest first.
+// Every recorded status change, oldest first. Estimates learn from all orders'
+// timings, which a customer can't read directly, so this comes from the database
+// with other customers' order IDs hidden (db/migrations/013).
 export async function loadStatusHistory() {
-  const { data, error } = await supabase
-    .from('customer_order_status_history')
-    .select('customer_order_id, previous_status, new_status, changed_at')
-    .order('changed_at', { ascending: true })
+  const { data, error } = await supabase.rpc('status_history_for_estimates')
 
   if (error) throw error
 

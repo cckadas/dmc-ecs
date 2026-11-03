@@ -8,6 +8,8 @@ import { createNotification } from '../services/notificationService'
 import { sendPurchaseOrderEmails, sendPaymentProof } from '../services/emailService'
 import { MIN_PO_DELIVERY_DAYS, localDateString } from '../utils/dates'
 import { getCurrentSupplierPrices, lookupSupplierPrice, pricingErrorMessage } from '../services/pricingService'
+import { formatPeso } from '../services/creditService'
+import { summarizeCapacity, formatCbm } from '../utils/warehouseCapacity'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faFolderOpen,
@@ -23,6 +25,10 @@ import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
 
 
+// A file name that won't clash with an earlier upload.
+const uniqueFilePath = (prefix, extension) => `${prefix}-${Date.now()}.${extension}`
+
+
 export default function PurchaseOrdersPage() {
   const { profile } = useAuth()
   const { toast } = useToast()
@@ -34,6 +40,7 @@ export default function PurchaseOrdersPage() {
   const [selectedSupplierGroup, setSelectedSupplierGroup] = useState(null)
   const [showViewModal, setShowViewModal] = useState(false)
   const [showAddModal, setShowAddModal] = useState(false)
+  const [warehouseRacks, setWarehouseRacks] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadingCustomerOrders, setLoadingCustomerOrders] = useState(false)
   const [loadingSuppliers, setLoadingSuppliers] = useState(false)
@@ -73,6 +80,8 @@ export default function PurchaseOrdersPage() {
           payment_amount,
           payment_date,
           payment_proof_path,
+          pfi_difference_reason,
+          payment_difference_reason,
 
           products (
             id,
@@ -215,7 +224,8 @@ export default function PurchaseOrdersPage() {
             product_name,
             brand,
             supplier_id,
-            unit
+            unit,
+            cbm
           )
         )
       `)
@@ -346,8 +356,27 @@ export default function PurchaseOrdersPage() {
 
     await Promise.all([
       loadCustomerOrders(),
-      loadSuppliers()
+      loadSuppliers(),
+      loadWarehouseRacks()
     ])
+  }
+
+
+  // =====================================================
+  // LOAD WAREHOUSE RACKS FOR ADD PO
+  // =====================================================
+  // Only for the free-space note, so a failure here doesn't stop anything.
+  async function loadWarehouseRacks() {
+    const { data, error } = await supabase
+      .from('warehouse_racks')
+      .select('id, is_active, is_occupied, capacity_cbm')
+
+    if (error) {
+      console.error('Failed to load warehouse racks:', error)
+      return
+    }
+
+    setWarehouseRacks(data || [])
   }
 
 
@@ -430,47 +459,16 @@ export default function PurchaseOrdersPage() {
 
     try {
       // -------------------------------------------------
-      // CREATE PURCHASE ORDER NUMBER
-      // -------------------------------------------------
-      const now = new Date()
-      const year = now.getFullYear()
-
-      const { data: existingPO, error: existingPOError } = await supabase
-        .from('purchase_orders')
-        .select('po_number')
-        .like('po_number', `PO-${year}-%`)
-
-      if (existingPOError) {
-        throw existingPOError
-      }
-
-      let nextNumber = 1
-
-      if (existingPO && existingPO.length > 0) {
-        const numbers = existingPO
-          .map((po) => {
-            const match = po.po_number?.match(/^PO-\d{4}-(\d+)$/)
-            return match ? Number(match[1]) : 0
-          })
-          .filter((number) => number > 0)
-
-        if (numbers.length > 0) {
-          nextNumber = Math.max(...numbers) + 1
-        }
-      }
-
-      const poNumber = `PO-${year}-${String(nextNumber).padStart(5, '0')}`
-
-
-      // -------------------------------------------------
       // INSERT PURCHASE ORDER MAIN
+      //
+      // The database gives it the next number (PO-2026-00001), so two POs created
+      // at the same moment can't get the same one.
       // -------------------------------------------------
       const {data: purchaseOrder, error: purchaseOrderError} = await supabase
         .from('purchase_orders')
         .insert({
           expected_delivery_date: expectedDeliveryDate,
           customer_order_id: customerOrderId,
-          po_number: poNumber,
           status: 'sent to supplier'
         })
         .select()
@@ -515,7 +513,7 @@ export default function PurchaseOrdersPage() {
         throw itemsError
       }
 
-      createdPoNumber = poNumber
+      createdPoNumber = purchaseOrder.po_number
 
 
       // -------------------------------------------------
@@ -594,7 +592,7 @@ export default function PurchaseOrdersPage() {
       }
 
 
-      toast.success( `Purchase Order ${poNumber} created successfully.`)
+      toast.success( `Purchase Order ${purchaseOrder.po_number} created successfully.`)
 
       if (followUpProblems.length > 0) {
         toast.info(`Note: ${followUpProblems.join('; ')}.`)
@@ -833,6 +831,7 @@ export default function PurchaseOrdersPage() {
         <AddPurchaseOrderModal
           customerOrders={customerOrders}
           suppliers={suppliers}
+          warehouseRacks={warehouseRacks}
           loadingCustomerOrders={loadingCustomerOrders}
           loadingSuppliers={loadingSuppliers}
           creating={creatingPO}
@@ -1200,6 +1199,19 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI, profile}
                       )}
                     </div>
 
+                    {/* Amounts that don't match stay visible, with why. */}
+                    {(supplierItems[0]?.pfi_difference_reason || supplierItems[0]?.payment_difference_reason) && (
+                      <div className="border-t border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-800">
+                        {supplierItems[0]?.pfi_difference_reason && (
+                          <p>The supplier's amount differs from this PO: {supplierItems[0].pfi_difference_reason}</p>
+                        )}
+
+                        {supplierItems[0]?.payment_difference_reason && (
+                          <p>The payment differs from the supplier's amount: {supplierItems[0].payment_difference_reason}</p>
+                        )}
+                      </div>
+                    )}
+
                     {/* =========================================
                         SUPPLIER ITEMS
                     ========================================= */}
@@ -1394,11 +1406,23 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
   const [confirmedAmount, setConfirmedAmount] = useState(existingItem?.supplier_pfi_amount || '')
   const [paymentAmount, setPaymentAmount] = useState(existingItem?.payment_amount || '')
   const [paymentDate, setPaymentDate] = useState(existingItem?.payment_date || '')
+  const [pfiReason, setPfiReason] = useState(existingItem?.pfi_difference_reason || '')
+  const [paymentReason, setPaymentReason] = useState(existingItem?.payment_difference_reason || '')
 
   const [supplierPFI, setSupplierPFI] = useState(null)
   const [paymentProof, setPaymentProof] = useState(null)
   const [uploadingPFI, setUploadingPFI] = useState(false)
   const [markingPaid, setMarkingPaid] = useState(false)
+
+  // The supplier's PFI must match this PO, and the payment must match the PFI,
+  // unless a reason is recorded. The database checks this too (db/migrations/015).
+  const supplierTotal = supplierItems.reduce(
+    (total, item) => total + Number(item.ordered_quantity || 0) * Number(item.unit_price || 0),
+    0
+  )
+  const amountsDiffer = (a, b) => Math.round(Number(a || 0) * 100) !== Math.round(Number(b || 0) * 100)
+  const pfiDiffers = confirmedAmount !== '' && amountsDiffer(confirmedAmount, supplierTotal)
+  const paymentDiffers = paymentAmount !== '' && amountsDiffer(paymentAmount, confirmedAmount)
 
 
   // =============================================
@@ -1410,10 +1434,20 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
       return
     }
 
+    if (!(Number(confirmedAmount) > 0)) {
+      toast.error('Enter the amount on the supplier\'s PFI.')
+      return
+    }
+
+    if (pfiDiffers && !pfiReason.trim()) {
+      toast.error(`The supplier's amount doesn't match this PO's total of ${formatPeso(supplierTotal)}. Enter the reason for the difference.`)
+      return
+    }
+
     setUploadingPFI(true)
 
     const fileExtension = supplierPFI.name.split('.').pop()
-    const filePath = `supplier-pfis/${po.id}/${supplier.id}/supplier-pfi-${Date.now()}.${fileExtension}`
+    const filePath = uniqueFilePath(`supplier-pfis/${po.id}/${supplier.id}/supplier-pfi`, fileExtension)
 
     const { error: uploadError } = await supabase.storage
       .from('documents')
@@ -1433,14 +1467,15 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
       .from('purchase_order_items')
       .update({
         supplier_pfi_file_path: filePath,
-        supplier_pfi_amount: Number(confirmedAmount) || 0,
+        supplier_pfi_amount: Number(confirmedAmount),
+        pfi_difference_reason: pfiDiffers ? pfiReason.trim() : null,
       })
       .eq('purchase_order_id', po.id)
       .eq('supplier_id', supplier.id)
 
     if (updateError) {
       console.error(updateError)
-      toast.error('Failed to save supplier PFI.')
+      toast.error(updateError.message || 'Failed to save supplier PFI.')
       setUploadingPFI(false)
       return
     }
@@ -1495,6 +1530,11 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
       return
     }
 
+    if (paymentDiffers && !paymentReason.trim()) {
+      toast.error(`The payment doesn't match the supplier's amount of ${formatPeso(confirmedAmount)}. Enter the reason for the difference.`)
+      return
+    }
+
     if (!paymentDate) {
       toast.error('Enter the payment date.')
       return
@@ -1518,7 +1558,7 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
       // UPLOAD DMC PAYMENT PROOF
       // -----------------------------------------
       const extension = paymentProof.name.split('.').pop()
-      const paymentProofPath =`supplier-payment-proofs/${po.id}/${supplier.id}/payment-${Date.now()}.${extension}`
+      const paymentProofPath = uniqueFilePath(`supplier-payment-proofs/${po.id}/${supplier.id}/payment`, extension)
 
       const { error: uploadError } = await supabase.storage
         .from('payment-proofs')
@@ -1539,6 +1579,7 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
         .from('purchase_order_items')
         .update({
           payment_amount: Number(paymentAmount),
+          payment_difference_reason: paymentDiffers ? paymentReason.trim() : null,
           payment_date: paymentDate,
           payment_proof_path: paymentProofPath,
           status: 'awaiting delivery',
@@ -1669,6 +1710,27 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
                       className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-8 pr-3 text-right outline-none focus:border-[#1F3A2C] focus:ring-1 focus:ring-[#1F3A2C]"
                     />
                   </div>
+
+                  <p className="mt-1 text-xs text-gray-500">
+                    This PO's total for this supplier: {formatPeso(supplierTotal)}
+                  </p>
+
+                  {pfiDiffers && (
+                    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                      <p className="text-sm font-medium text-amber-800">
+                        This is {formatPeso(Math.abs(Number(confirmedAmount) - supplierTotal))} {Number(confirmedAmount) > supplierTotal ? 'more' : 'less'} than this PO's total. Why?
+                      </p>
+
+                      <textarea
+                        rows="2"
+                        value={pfiReason}
+                        onChange={(e) => setPfiReason(e.target.value)}
+                        disabled={Boolean(supplierPFIPath)}
+                        placeholder="e.g. the supplier gave a discount"
+                        className="mt-2 w-full resize-none rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#1F3A2C] focus:ring-1 focus:ring-[#1F3A2C] disabled:bg-gray-50"
+                      />
+                    </div>
+                  )}
                 </div>
 
 
@@ -1763,6 +1825,29 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
                       className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-8 pr-3 text-right outline-none focus:border-[#1F3A2C] focus:ring-1 focus:ring-[#1F3A2C]"
                     />
                   </div>
+
+                  {supplierPFIPath && (
+                    <p className="mt-1 text-xs text-gray-500">
+                      The supplier's confirmed amount: {formatPeso(confirmedAmount)}
+                    </p>
+                  )}
+
+                  {paymentDiffers && (
+                    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                      <p className="text-sm font-medium text-amber-800">
+                        This is {formatPeso(Math.abs(Number(paymentAmount) - Number(confirmedAmount || 0)))} {Number(paymentAmount) > Number(confirmedAmount || 0) ? 'more' : 'less'} than the supplier's amount. Why?
+                      </p>
+
+                      <textarea
+                        rows="2"
+                        value={paymentReason}
+                        onChange={(e) => setPaymentReason(e.target.value)}
+                        disabled={supplierPaid}
+                        placeholder="e.g. half now, half on delivery"
+                        className="mt-2 w-full resize-none rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#1F3A2C] focus:ring-1 focus:ring-[#1F3A2C] disabled:bg-gray-50"
+                      />
+                    </div>
+                  )}
                 </div>
 
 
@@ -1881,7 +1966,7 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
 // =====================================================
 // ADD PURCHASE ORDER MODAL
 // =====================================================
-function AddPurchaseOrderModal({ customerOrders, suppliers, loadingCustomerOrders, loadingSuppliers, creating, onClose, onCreate }) {
+function AddPurchaseOrderModal({ customerOrders, suppliers, warehouseRacks, loadingCustomerOrders, loadingSuppliers, creating, onClose, onCreate }) {
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState('')
   const [customerOrderId, setCustomerOrderId] = useState('')
   const [items, setItems] = useState([])
@@ -1914,6 +1999,7 @@ function AddPurchaseOrderModal({ customerOrders, suppliers, loadingCustomerOrder
       brand: item.products?.brand || '',
       ordered_quantity: Number(item.quantity || 0),
       unit: item.products?.unit || '',
+      cbm: Number(item.products?.cbm || 0),
 
       // Each product has one supplier, so the system sets it — there is no
       // choice to get wrong.
@@ -1977,6 +2063,15 @@ function AddPurchaseOrderModal({ customerOrders, suppliers, loadingCustomerOrder
       },
       0
     )
+
+
+  // ===================================================
+  // WAREHOUSE SPACE
+  // ===================================================
+  // A note, not a block: racks can free up before the goods arrive.
+  const purchaseVolume = items.reduce((total, item) => total + Number(item.ordered_quantity || 0) * Number(item.cbm || 0), 0)
+  const capacity = summarizeCapacity(warehouseRacks)
+  const notEnoughSpace = purchaseVolume > capacity.freeCbm
 
 
   // ===================================================
@@ -2109,7 +2204,16 @@ function AddPurchaseOrderModal({ customerOrders, suppliers, loadingCustomerOrder
           {selectedOrder && (
             <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50 p-4">
               <p className="text-sm text-blue-800">
-                Each product's supplier is set by the product catalog. Prices are filled in from the supplier's current price list — change one only if a different price was negotiated.
+                Each product's supplier is set by the product catalog, and its price comes from the supplier's current price list. Neither can be changed here.
+              </p>
+            </div>
+          )}
+
+          {selectedOrder && warehouseRacks.length > 0 && purchaseVolume > 0 && (
+            <div className={`mb-4 rounded-lg border p-4 ${notEnoughSpace ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-white'}`}>
+              <p className={`text-sm ${notEnoughSpace ? 'text-amber-800' : 'text-gray-700'}`}>
+                This order needs about {formatCbm(purchaseVolume)} of warehouse space. {formatCbm(capacity.freeCbm)} is free right now ({capacity.freeRacks} of {capacity.totalRacks} racks).
+                {notEnoughSpace && ' It won\'t all fit unless racks free up before the delivery date, so check with the warehouse first.'}
               </p>
             </div>
           )}
@@ -2117,7 +2221,7 @@ function AddPurchaseOrderModal({ customerOrders, suppliers, loadingCustomerOrder
           {selectedOrder && pricingError && (
             <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
               <p className="text-sm text-amber-800">
-                {pricingError} Prices can still be entered manually.
+                {pricingError}
               </p>
             </div>
           )}

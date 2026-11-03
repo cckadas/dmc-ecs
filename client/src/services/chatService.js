@@ -1,4 +1,4 @@
-import { supabase } from '../supabase'
+import { authHeaders } from './apiAuth'
 
 const API = `${import.meta.env.VITE_SERVER_URL}/api`
 
@@ -7,10 +7,9 @@ const API = `${import.meta.env.VITE_SERVER_URL}/api`
 // server who is asking, so it only ever looks up their own orders. Every
 // failure becomes a message that can be shown in the chat.
 export async function askAssistant({ message, history }) {
-  const { data } = await supabase.auth.getSession()
-  const token = data?.session?.access_token
+  const headers = await authHeaders()
 
-  if (!token) {
+  if (!headers.Authorization) {
     throw new Error('Your session has ended. Please sign in again.')
   }
 
@@ -21,7 +20,7 @@ export async function askAssistant({ message, history }) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
+        ...headers,
       },
       body: JSON.stringify({ message, history }),
     })

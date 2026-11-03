@@ -31,7 +31,14 @@ export default function LoginPage() {
   // =============================================
   // LOGIN
   // =============================================
-  async function handleLogin() {
+  // Runs from the Sign In button and from Enter in either box.
+  async function handleLogin(event) {
+    event?.preventDefault()
+
+    if (loading) {
+      return
+    }
+
     if (!email || !password) {
       toast.error('Please enter your email and password.')
       return
@@ -168,40 +175,45 @@ export default function LoginPage() {
           </p>
         </div>
 
-        <input
-          type="email"
-          placeholder="Email Address"
-          className="mb-4 w-full rounded-lg border border-gray-300 p-3 focus:border-green-600 focus:outline-none focus:ring-2 focus:ring-green-500"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-
-        <div className="relative mb-6">
+        {/* A form, so Enter signs in as well as the button */}
+        <form onSubmit={handleLogin}>
           <input
-            type={showPassword ? 'text' : 'password'}
-            placeholder="Password"
-            className="w-full rounded-lg border border-gray-300 p-3 pr-12 focus:border-green-600 focus:outline-none focus:ring-2 focus:ring-green-500"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            type="email"
+            placeholder="Email Address"
+            autoComplete="email"
+            className="mb-4 w-full rounded-lg border border-gray-300 p-3 focus:border-green-600 focus:outline-none focus:ring-2 focus:ring-green-500"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
           />
 
-          <button
-            type="button"
-            onClick={() => setShowPassword((prev) => !prev)}
-            className="absolute inset-y-0 right-0 flex items-center px-4 text-gray-500 transition hover:text-green-700"
-            aria-label={showPassword ? 'Hide password' : 'Show password'}
-          >
-            <FontAwesomeIcon icon={showPassword ? faEyeSlash : faEye} />
-          </button>
-        </div>
+          <div className="relative mb-6">
+            <input
+              type={showPassword ? 'text' : 'password'}
+              placeholder="Password"
+              autoComplete="current-password"
+              className="w-full rounded-lg border border-gray-300 p-3 pr-12 focus:border-green-600 focus:outline-none focus:ring-2 focus:ring-green-500"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
 
-        <button
-          onClick={handleLogin}
-          disabled={loading}
-          className="w-full rounded-lg bg-green-700 py-3 font-semibold text-white transition hover:bg-green-800 disabled:cursor-not-allowed disabled:bg-gray-400"
-        >
-          {loading ? 'Signing In...' : 'Sign In'}
-        </button>
+            <button
+              type="button"
+              onClick={() => setShowPassword((prev) => !prev)}
+              className="absolute inset-y-0 right-0 flex items-center px-4 text-gray-500 transition hover:text-green-700"
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+            >
+              <FontAwesomeIcon icon={showPassword ? faEyeSlash : faEye} />
+            </button>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full rounded-lg bg-green-700 py-3 font-semibold text-white transition hover:bg-green-800 disabled:cursor-not-allowed disabled:bg-gray-400"
+          >
+            {loading ? 'Signing In...' : 'Sign In'}
+          </button>
+        </form>
 
 
 

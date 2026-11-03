@@ -357,9 +357,8 @@ export default function StagingTrackerPage() {
 
 
       // =================================================
-      // GET PURCHASE ORDER ITEMS + THEIR RACKS
+      // GET PURCHASE ORDER ITEMS
       // =================================================
-      let rackIds = []
       let purchaseOrderItems = []
 
       if (purchaseOrderIds.length > 0) {
@@ -384,14 +383,6 @@ export default function StagingTrackerPage() {
         }
 
         purchaseOrderItems = items || []
-
-        rackIds = [
-          ...new Set(
-            purchaseOrderItems
-              .map((item) => item.warehouse_rack_id)
-              .filter(Boolean)
-          )
-        ]
       }
 
 
@@ -402,10 +393,10 @@ export default function StagingTrackerPage() {
         throw new Error('No purchase order items found for packing list.')
       }
 
-      // Get customer order number
+      // Get customer order number and current status
       const { data: packingOrder, error: packingOrderError } = await supabase
         .from('customer_orders')
-        .select('id, order_number')
+        .select('id, order_number, status')
         .eq('id', order.id)
         .single()
 
@@ -536,39 +527,14 @@ export default function StagingTrackerPage() {
       }
 
       // =================================================
-      // REMOVE ITEMS FROM WAREHOUSE RACKS
+      // FREE THE ORDER'S RACKS
       // =================================================
-      if (purchaseOrderIds.length > 0) {
+      const { error: rackError } = await supabase.rpc('release_order_racks', {
+        p_customer_order_id: order.id,
+      })
 
-        const { error: rackItemError } = await supabase
-          .from('purchase_order_items')
-          .update({
-            warehouse_rack_id: null,
-            updated_at: new Date().toISOString()
-          })
-          .in('purchase_order_id', purchaseOrderIds)
-
-        if (rackItemError) {
-          throw rackItemError
-        }
-      }
-
-
-      // =================================================
-      // MARK RACKS AS AVAILABLE
-      // =================================================
-      if (rackIds.length > 0) {
-        const { error: rackError } = await supabase
-          .from('warehouse_racks')
-          .update({
-            is_occupied: false,
-            updated_at: new Date().toISOString()
-          })
-          .in('id', rackIds)
-
-        if (rackError) {
-          throw rackError
-        }
+      if (rackError) {
+        throw rackError
       }
 
 
@@ -600,7 +566,7 @@ export default function StagingTrackerPage() {
         .from('customer_order_status_history')
         .insert({
           customer_order_id: order.id,
-          previous_status: 'warehouse preparation',
+          previous_status: packingOrder.status,
           new_status: 'shipped',
           changed_at: new Date().toISOString()
         })
@@ -788,7 +754,7 @@ export default function StagingTrackerPage() {
 
 
                       {/* ---------------------------------------------
-                          SUMMARY + READY FOR SHIPMENT
+                          SUMMARY + MARK AS SHIPPED
                       --------------------------------------------- */}
                       <div className="flex items-center gap-8">
 
@@ -807,7 +773,7 @@ export default function StagingTrackerPage() {
                         </div>
 
 
-                        {/* READY FOR SHIPMENT BUTTON */}
+                        {/* MARK AS SHIPPED BUTTON */}
                         <button
                           type="button"
                           disabled={items.length < Number(orderGroup.total_items)}
@@ -816,7 +782,7 @@ export default function StagingTrackerPage() {
                         >
                           <FontAwesomeIcon icon={faPaperPlane} className="h-4 w-4"/>
 
-                          Ready for Shipment
+                          Mark as Shipped
                         </button>
 
                       </div>

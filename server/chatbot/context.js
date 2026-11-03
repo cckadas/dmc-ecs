@@ -196,11 +196,20 @@ export async function buildCustomerContext(customerId, message) {
     ? await must(
         supabaseAdmin
           .from('quotations')
-          .select('quotation_request_id, quotation_number, status, expiry_date, total_amount, down_payment_amount, shipping_cost, created_at')
-          .in('quotation_request_id', requests.map((request) => request.id)),
+          .select('quotation_request_id, quotation_number, status, expiry_date, total_amount, down_payment_amount, shipping_cost, container_size, container_cost, created_at')
+          .in('quotation_request_id', requests.map((request) => request.id))
+          .order('created_at', { ascending: false }),
         'quotations'
       )
     : []
+
+  // Past quotations and requests stay on record, so the open ones come first.
+  const isOpenRequest = (request) => !['approved', 'rejected', 'cancelled'].includes(String(request.status).trim().toLowerCase())
+  const openRequests = requests.filter(isOpenRequest)
+  const closedRequests = requests.filter((request) => !isOpenRequest(request))
+  const isOpenQuotation = (quotation) => String(quotation.status).trim().toLowerCase() === 'pending approval'
+  const openQuotations = quotations.filter(isOpenQuotation)
+  const closedQuotations = quotations.filter((quotation) => !isOpenQuotation(quotation))
 
   const stats = predictions ? predictions.buildStageStatistics(history) : null
 
@@ -319,10 +328,10 @@ export async function buildCustomerContext(customerId, message) {
     totals: {
       orders: orders.length,
       ordersShown: orderContext.length,
-      openQuotationRequests: requests.filter((request) => String(request.status).toLowerCase() !== 'rejected').length,
+      openQuotationRequests: openRequests.length,
     },
     orders: orderContext,
-    quotationRequests: requests.slice(0, MAX_ORDERS).map((request) => ({
+    quotationRequests: [...openRequests, ...closedRequests].slice(0, MAX_ORDERS).map((request) => ({
       reference: request.quotation_reference,
       status: label(request.status),
       requestedOn: formatTimestamp(request.created_at),
@@ -332,13 +341,14 @@ export async function buildCustomerContext(customerId, message) {
         quantity: quantityText(item.quantity, item.products?.unit),
       })),
     })),
-    quotations: quotations.map((quotation) => ({
+    quotations: [...openQuotations, ...closedQuotations].slice(0, MAX_ORDERS).map((quotation) => ({
       quotationNumber: quotation.quotation_number,
       forRequest: requests.find((request) => request.id === quotation.quotation_request_id)?.quotation_reference || null,
       status: label(quotation.status),
       total: peso(quotation.total_amount),
       downPayment: peso(quotation.down_payment_amount),
       shipping: peso(quotation.shipping_cost),
+      container: quotation.container_cost == null ? null : `${quotation.container_size}, ${peso(quotation.container_cost)}`,
       expiresOn: formatDateOnly(quotation.expiry_date),
       expired: Boolean(quotation.expiry_date && String(quotation.expiry_date).slice(0, 10) < today),
     })),

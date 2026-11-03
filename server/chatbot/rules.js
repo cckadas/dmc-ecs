@@ -85,7 +85,7 @@ export const PORTAL_FAQ = [
   },
   {
     topic: 'Delivery locations',
-    answer: 'Delivery addresses are managed on the Delivery Locations page. A location used by an existing request cannot be deleted.',
+    answer: 'Delivery addresses are managed on the Delivery Locations page. Removing an address used by a past request or order archives it: it leaves the list and new requests, and past records keep it.',
   },
 ]
 

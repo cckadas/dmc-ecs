@@ -60,6 +60,13 @@ export default function SettingsPage() {
         throw rackError
       }
 
+      // A cleared system starts numbering again from 00001.
+      const { error: counterError } = await supabase.rpc('reset_document_counters')
+
+      if (counterError) {
+        throw counterError
+      }
+
       toast.success('All order data deleted and warehouse racks reset.')
       setShowDeleteConfirmation(false)
     }

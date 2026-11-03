@@ -3,6 +3,9 @@ import { jsPDF } from 'jspdf'
 import logo from '../assets/logo.png?inline'
 import seal from '../assets/seal.png?inline'
 
+// Lossless. Without it, jsPDF stores the images uncompressed and each PDF is about 9 MB.
+const IMAGE_COMPRESSION = 'FAST'
+
 // ============================================================
 // FORMATTER
 // ============================================================
@@ -90,7 +93,9 @@ function drawCertificateHeader(doc, title) {
       20 + (20 - width) / 2,
       7 + (21 - height) / 2,
       width,
-      height
+      height,
+      undefined,
+      IMAGE_COMPRESSION
     )
   } catch (error) {
     console.warn('Unable to load certificate seal:', error)
@@ -119,7 +124,9 @@ function drawCertificateHeader(doc, title) {
       170 + (20 - width) / 2,
       7 + (21 - height) / 2,
       width,
-      height
+      height,
+      undefined,
+      IMAGE_COMPRESSION
     )
   } catch (error) {
     console.warn('Unable to load certificate logo:', error)
@@ -239,7 +246,9 @@ function drawAuthorizationBlock(doc, bodyEndY = 190) {
       centerX - width / 2,
       sealY + (sealSize - height) / 2,
       width,
-      height
+      height,
+      undefined,
+      IMAGE_COMPRESSION
     )
 
     doc.setFont('helvetica', 'bold')

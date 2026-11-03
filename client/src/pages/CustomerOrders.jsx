@@ -42,6 +42,8 @@ export default function CustomerOrdersPage() {
         customer_id,
         quotation_number,
         subtotal,
+        container_size,
+        container_cost,
         shipping_cost,
         estimated_ship_date,
         total_amount,
@@ -782,6 +784,18 @@ function CustomerOrderModal({ order, onClose }) {
                 </div>
 
 
+                {order.container_cost != null && (
+                  <div className="mb-3 flex justify-between text-sm">
+                    <span className="font-semibold text-gray-700">
+                      Container ({order.container_size})
+                    </span>
+
+                    <span className="text-lg font-bold text-gray-800">
+                      ₱ {Number(order.container_cost).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                )}
+
                 <div className="mb-3 flex justify-between text-sm">
                   <span className="font-semibold text-gray-700">
                     Shipping Cost
@@ -1068,6 +1082,18 @@ function PaymentModal({ order, onClose, onReview }) {
                   </span>
                 </div>
 
+
+                {order.container_cost != null && (
+                  <div className="mb-3 flex justify-between text-sm">
+                    <span className="font-semibold text-gray-700">
+                      Container ({order.container_size})
+                    </span>
+
+                    <span className="text-lg font-bold text-gray-800">
+                      ₱ {Number(order.container_cost).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                )}
 
                 <div className="mb-3 flex justify-between text-sm">
                   <span className="font-semibold text-gray-700">

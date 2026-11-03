@@ -42,6 +42,8 @@ export default function PaymentsPage() {
         customer_id,
         quotation_number,
         subtotal,
+        container_size,
+        container_cost,
         shipping_cost,
         total_amount,
         down_payment_amount,
@@ -840,6 +842,19 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
                     ₱ {Number(payment.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </span>
                 </div>
+
+                {/* CONTAINER */}
+                {payment.container_cost != null && (
+                  <div className="mb-3 flex justify-between text-sm">
+                    <span className="font-semibold text-gray-700">
+                      Container ({payment.container_size})
+                    </span>
+
+                    <span className="text-lg font-bold text-gray-800">
+                      ₱ {Number(payment.container_cost).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                )}
 
                 {/* SHIPPING */}
                 <div className="mb-3 flex justify-between text-sm">

@@ -1,3 +1,5 @@
+import { authHeaders } from './apiAuth'
+
 const API = `${import.meta.env.VITE_SERVER_URL}/api`
 
 
@@ -9,6 +11,7 @@ export async function createCustomer(customer) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...(await authHeaders()),
     },
     body: JSON.stringify(customer),
   })
@@ -42,6 +45,7 @@ export async function createStaffAccount(staff) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...(await authHeaders()),
     },
     body: JSON.stringify(staff),
   })
@@ -82,6 +86,7 @@ export async function updateStaffAccountStatus(
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
+        ...(await authHeaders()),
       },
       body: JSON.stringify({
         isActive,

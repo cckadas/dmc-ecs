@@ -5,7 +5,7 @@ import { useToast } from '../context/ToastContext'
 import { faFloppyDisk, faPlus, faTrash } from '@fortawesome/free-solid-svg-icons'
 
 import IconButton from '../components/IconButton'
-import { getMarkups, pricingErrorMessage } from '../services/pricingService'
+import { getMarkups, getContainerSizes, getContainerFillPercent, pricingErrorMessage } from '../services/pricingService'
 import { getCreditLimit, saveCreditLimit, formatPeso, creditErrorMessage } from '../services/creditService'
 import TableScroll from '../components/TableScroll'
 
@@ -16,9 +16,9 @@ const th = 'px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide te
 // =============================================
 // MARKUPS & CREDIT
 //
-// The two rules that protect DMC's money: the fixed markup that sets every
-// quotation price, and the credit limit that stops a customer ordering more
-// once their unpaid balance reaches it. Admin and management only.
+// The rules that protect DMC's money: the fixed markups, shipping and container
+// costs that set every quotation, and the credit limit that stops a customer
+// ordering more once their unpaid balance reaches it. Admin and management only.
 // =============================================
 export default function PricingCreditPage() {
   return (
@@ -31,12 +31,16 @@ export default function PricingCreditPage() {
         </h1>
 
         <p className="mt-1 text-gray-500">
-          The markups that set every quotation price, and how much a customer can owe before they can't order more.
+          The markups, shipping and container costs that set every quotation, and how much a customer can owe before they can't order more.
         </p>
       </div>
 
       <div className="mb-10">
         <MarkupsSection />
+      </div>
+
+      <div className="mb-10">
+        <ContainersSection />
       </div>
 
       <CreditSection />
@@ -47,12 +51,12 @@ export default function PricingCreditPage() {
 
 
 // =============================================
-// MARKUPS AND SHIPPING RATES BY DESTINATION COUNTRY
+// MARKUPS AND SHIPPING COSTS BY DESTINATION COUNTRY
 //
 // A quotation's prices are fixed: each line is the supplier price plus the
-// country's markup, and shipping is the country's rate per unit x units
-// ordered. A country without its own row uses the Default row. Sales can't
-// change them, so these rates are the only lever on what customers pay.
+// country's markup, and shipping is the country's fixed cost per shipment. A
+// country without its own row uses the Default row. Sales can't change them,
+// so these rates are the only lever on what customers pay.
 // =============================================
 function MarkupsSection() {
   const { profile } = useAuth()
@@ -74,7 +78,7 @@ function MarkupsSection() {
         markup.country,
         {
           percent: String(markup.markup_percent),
-          shipping: markup.shipping_per_unit == null ? '' : String(markup.shipping_per_unit),
+          shipping: markup.shipping_cost == null ? '' : String(markup.shipping_cost),
         },
       ])))
       setLoadError('')
@@ -104,9 +108,9 @@ function MarkupsSection() {
       return false
     }
 
-    // Required: a missing rate would mean quotations go out with no shipping.
+    // Required: a missing cost would stop quotations to this country.
     if (shippingText === '' || !(shipping >= 0)) {
-      toast.error('Enter a shipping rate per unit of ₱0 or more.')
+      toast.error('Enter a shipping cost of ₱0 or more.')
       return false
     }
 
@@ -116,7 +120,7 @@ function MarkupsSection() {
         {
           country: name,
           markup_percent: percent,
-          shipping_per_unit: shipping,
+          shipping_cost: shipping,
           updated_by: profile?.id,
           updated_at: new Date().toISOString(),
         },
@@ -145,7 +149,7 @@ function MarkupsSection() {
 
   async function removeMarkup(country) {
     const confirmed = window.confirm(
-      `Remove the rates for ${country}? Quotations to ${country} will use the Default markup and shipping rate instead.`
+      `Remove the rates for ${country}? Quotations to ${country} will use the Default markup and shipping cost instead.`
     )
 
     if (!confirmed) return
@@ -175,11 +179,11 @@ function MarkupsSection() {
   return (
     <div>
       <h2 className="text-lg font-semibold text-[#1F3A2C]">
-        Markups and shipping rates by country
+        Markups and shipping costs by country
       </h2>
 
       <p className="mb-3 text-sm text-gray-500">
-        Every quotation price is the supplier price plus the markup for the delivery country, and shipping is that country's rate per unit times the units ordered. Countries that aren't listed use the Default row. Sales can't change quotation prices or shipping, so these rates are the only way to change what customers pay.
+        Every quotation price is the supplier price plus the markup for the delivery country, and each quotation pays that country's fixed shipping cost, however much it holds. Countries that aren't listed use the Default row. Sales can't change quotation prices or shipping, so these rates are the only way to change what customers pay.
       </p>
 
       {loadError && (
@@ -194,7 +198,7 @@ function MarkupsSection() {
             <tr>
               <th className={th}>Country</th>
               <th className={th}>Markup %</th>
-              <th className={th}>Shipping per Unit (₱)</th>
+              <th className={th}>Shipping Cost (₱)</th>
               <th className={th}>Actions</th>
             </tr>
           </thead>
@@ -288,6 +292,260 @@ function MarkupsSection() {
           </tbody>
         </table>
       </TableScroll>
+    </div>
+  )
+}
+
+
+
+// =============================================
+// CONTAINERS
+//
+// Every quotation also pays the fixed cost of its container: the smallest size
+// that holds the order's cases, or a bigger one if the customer wants to
+// upgrade. The volumes and weight limits are the global standard sizes; the
+// fill percent is how full a container's volume may be packed, since cases
+// rarely fill every corner. The database sets each quotation's container cost
+// from here (db/migrations/016).
+// =============================================
+function ContainersSection() {
+  const { profile } = useAuth()
+  const { toast } = useToast()
+
+  const [sizes, setSizes] = useState([])
+  const [drafts, setDrafts] = useState({})
+  const [fillPercent, setFillPercent] = useState(null)
+  const [fillDraft, setFillDraft] = useState('')
+  const [loadError, setLoadError] = useState('')
+
+
+  async function loadContainers() {
+    try {
+      const [data, fill] = await Promise.all([getContainerSizes(), getContainerFillPercent()])
+      setSizes(data)
+      setDrafts(Object.fromEntries(data.map((size) => [
+        size.code,
+        {
+          volume: String(size.inside_cbm),
+          weight: String(size.max_weight_kg),
+          cost: size.cost == null ? '' : String(size.cost),
+        },
+      ])))
+      setFillPercent(fill)
+      setFillDraft(String(fill))
+      setLoadError('')
+    } catch (error) {
+      setLoadError(pricingErrorMessage(error))
+    }
+  }
+
+
+  function updateDraft(code, field, value) {
+    setDrafts({ ...drafts, [code]: { ...drafts[code], [field]: value } })
+  }
+
+
+  async function saveSize(size) {
+    const draft = drafts[size.code] || {}
+    const volume = Number(draft.volume)
+    const weight = Number(draft.weight)
+    const cost = Number(draft.cost)
+
+    if (!(volume > 0)) {
+      toast.error(`Enter the ${size.name}'s inside volume.`)
+      return
+    }
+
+    if (!(weight > 0)) {
+      toast.error(`Enter the ${size.name}'s weight limit.`)
+      return
+    }
+
+    // Required: a missing cost would stop quotations that need this size.
+    if (draft.cost === '' || !(cost >= 0)) {
+      toast.error(`Enter a cost of ₱0 or more for the ${size.name}.`)
+      return
+    }
+
+    const { error } = await supabase
+      .from('container_sizes')
+      .update({
+        inside_cbm: volume,
+        max_weight_kg: weight,
+        cost,
+        updated_by: profile?.id,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('code', size.code)
+
+    if (error) {
+      toast.error(error.message)
+      return
+    }
+
+    toast.success(`${size.name} saved.`)
+    loadContainers()
+  }
+
+
+  async function saveFillPercent() {
+    const value = Number(fillDraft)
+
+    if (fillDraft === '' || !(value > 0 && value <= 100)) {
+      toast.error('Enter a fill percent from 1 to 100.')
+      return
+    }
+
+    const { error } = await supabase
+      .from('business_settings')
+      .upsert(
+        {
+          key: 'container_fill_percent',
+          value,
+          updated_by: profile?.id,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'key' }
+      )
+
+    if (error) {
+      toast.error(error.message)
+      return
+    }
+
+    toast.success(`Containers will be filled up to ${value}% of their volume.`)
+    loadContainers()
+  }
+
+
+  useEffect(() => {
+    loadContainers()
+  }, [])
+
+
+  const input = 'rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#2D5A42] focus:ring-1 focus:ring-[#2D5A42]'
+
+  return (
+    <div>
+      <h2 className="text-lg font-semibold text-[#1F3A2C]">
+        Container costs
+      </h2>
+
+      <p className="mb-3 text-sm text-gray-500">
+        Each quotation also pays the fixed cost of its container: the smallest size that holds the order's cases by volume and weight, or a bigger one if the customer wants to upgrade. The sizes are the global standard ones, so change them only if DMC's differ.
+      </p>
+
+      {loadError && (
+        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <p className="text-sm text-amber-800">{loadError}</p>
+        </div>
+      )}
+
+      <TableScroll className="mb-4 rounded-xl border border-gray-200 bg-white shadow-sm">
+        <table className="min-w-full">
+          <thead className="bg-[#F4F8F5]">
+            <tr>
+              <th className={th}>Container</th>
+              <th className={th}>Inside Volume (m³)</th>
+              <th className={th}>Weight Limit (kg)</th>
+              <th className={th}>Cost (₱)</th>
+              <th className={th}>Actions</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {sizes.map((size) => (
+              <tr key={size.code} className="border-t border-gray-200 text-sm">
+                <td className="px-5 py-3 font-medium text-gray-800">
+                  {size.name}
+                </td>
+
+                <td className="px-5 py-3">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={drafts[size.code]?.volume ?? ''}
+                    onChange={(e) => updateDraft(size.code, 'volume', e.target.value)}
+                    className={`${input} w-28 text-right`}
+                  />
+                </td>
+
+                <td className="px-5 py-3">
+                  <input
+                    type="number"
+                    min="0"
+                    step="100"
+                    value={drafts[size.code]?.weight ?? ''}
+                    onChange={(e) => updateDraft(size.code, 'weight', e.target.value)}
+                    className={`${input} w-32 text-right`}
+                  />
+                </td>
+
+                <td className="px-5 py-3">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={drafts[size.code]?.cost ?? ''}
+                    onChange={(e) => updateDraft(size.code, 'cost', e.target.value)}
+                    placeholder="Not set"
+                    className={`${input} w-36 text-right`}
+                  />
+                </td>
+
+                <td className="px-5 py-3">
+                  <IconButton icon={faFloppyDisk} title="Save Container" color="green" onClick={() => saveSize(size)} />
+                </td>
+              </tr>
+            ))}
+
+            {sizes.length === 0 && !loadError && (
+              <tr>
+                <td colSpan="5" className="px-5 py-8 text-center text-sm text-gray-500">
+                  No container sizes yet.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </TableScroll>
+
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+        <span className="text-sm font-medium text-gray-700">
+          Fill containers up to
+        </span>
+
+        <div className="relative">
+          <input
+            type="number"
+            min="1"
+            max="100"
+            step="1"
+            value={fillDraft}
+            onChange={(e) => setFillDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') saveFillPercent() }}
+            className={`${input} w-24 pr-7 text-right`}
+          />
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">%</span>
+        </div>
+
+        <span className="text-sm text-gray-500">
+          of their volume. Cases rarely fill every corner.
+        </span>
+
+        <button
+          type="button"
+          onClick={saveFillPercent}
+          className="rounded-lg bg-[#2D5A42] px-4 py-2 text-sm font-medium text-white hover:bg-[#234633]"
+        >
+          Save
+        </button>
+
+        <span className="text-sm text-gray-500">
+          Current: {fillPercent == null ? '-' : `${fillPercent}%`}
+        </span>
+      </div>
     </div>
   )
 }
