@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlus, faTrash, faFileSignature, faDownload, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faPlus, faTrash, faFileSignature, faDownload, faXmark, faChevronDown } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 import { MIN_PREFERRED_SHIP_DAYS, localDateString } from '../utils/dates'
 import { getCreditStatus, formatPeso } from '../services/creditService'
@@ -1026,6 +1026,34 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
   }, [])
 
 
+  // Ticking a size adds it at the minimum the customer may order. Unticking it,
+  // or removing it from the selected list, takes it out.
+  function setPicked(product, picked) {
+    if (picked) {
+      setSelectedProducts([
+        ...selectedProducts,
+        { product_id: product.id, quantity: minimumFor(product.id), notes: '' },
+      ])
+    } else {
+      setSelectedProducts(selectedProducts.filter((p) => p.product_id !== product.id))
+    }
+  }
+
+  function updatePicked(productId, changes) {
+    setSelectedProducts(
+      selectedProducts.map((p) => (p.product_id === productId ? { ...p, ...changes } : p))
+    )
+  }
+
+  // Selected Products can be collapsed. It opens again to show the picks, and
+  // before submitting, so the browser can point at a quantity that needs fixing.
+  function openSelected() {
+    const section = document.getElementById('selected-products')
+    if (section) section.open = true
+    return section
+  }
+
+
   function handleSubmit(e) {
     e.preventDefault()
 
@@ -1149,9 +1177,15 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
                 </label>
 
                 {selectedProducts.length > 0 && (
-                  <span className="text-xs font-medium text-green-700">
-                    {selectedProducts.length} selected
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      openSelected()?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                    }
+                    className="text-xs font-medium text-green-700 hover:underline"
+                  >
+                    {selectedProducts.length} selected · View all
+                  </button>
                 )}
               </div>
 
@@ -1185,123 +1219,151 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
 
                     <div className="mt-2 space-y-2">
                       {group.items.map((product) => {
-                        const selected = selectedProducts.find(
+                        const selected = selectedProducts.some(
                           (p) => p.product_id === product.id
                         )
                         const unavailable = isUnavailable(product)
 
+                        // The whole row ticks the box. Quantity and notes are set
+                        // in Selected Products below the list.
                         return (
-                          <div
+                          <label
                             key={product.id}
-                            className={`rounded-md bg-gray-50 p-2 ${unavailable ? 'opacity-60' : ''}`}
+                            className={`flex items-center gap-3 rounded-md p-2 ${
+                              selected ? 'bg-green-50 ring-1 ring-green-200' : 'bg-gray-50'
+                            } ${unavailable ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
                           >
-                            <div className="flex items-center gap-3">
-                              <input
-                                type="checkbox"
-                                checked={!!selected}
-                                disabled={unavailable}
-                                title={unavailable ? 'This product is currently unavailable' : undefined}
-                                onChange={(e) => {
-                                  if (e.target.checked) {
-                                    setSelectedProducts([
-                                      ...selectedProducts,
-                                      {
-                                        product_id: product.id,
-                                        // Start at the minimum the customer may order.
-                                        quantity: minimumFor(product.id),
-                                        notes: '',
-                                      },
-                                    ])
-                                  } else {
-                                    setSelectedProducts(
-                                      selectedProducts.filter(
-                                        (p) => p.product_id !== product.id
-                                      )
-                                    )
-                                  }
-                                }}
-                              />
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              disabled={unavailable}
+                              title={unavailable ? 'This product is currently unavailable' : undefined}
+                              onChange={(e) => setPicked(product, e.target.checked)}
+                            />
 
-                              <div className="min-w-0 flex-1">
-                                <p className="text-sm font-medium text-gray-800">
-                                  {sizeLabel(product)}
-                                  {product.unit && (
-                                    <span className="ml-2 font-normal text-green-600">
-                                      · per {product.unit}
-                                    </span>
-                                  )}
-                                </p>
-
-                                {unavailable ? (
-                                  <p className="text-xs font-medium text-red-700">
-                                    Unavailable — can't be requested right now
-                                  </p>
-                                ) : minimums[product.id] && (
-                                  <p className="text-xs font-medium text-amber-700">
-                                    Minimum order: {minimums[product.id]} {product.unit || 'units'}
-                                  </p>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-gray-800">
+                                {sizeLabel(product)}
+                                {product.unit && (
+                                  <span className="ml-2 font-normal text-green-600">
+                                    · per {product.unit}
+                                  </span>
                                 )}
-                              </div>
+                              </p>
 
-                              {selected && (
-                                <input
-                                  type="number"
-                                  min={minimumFor(product.id)}
-                                  step={1}
-                                  required
-                                  value={selected.quantity}
-                                  onChange={(e) =>
-                                    setSelectedProducts(
-                                      selectedProducts.map((p) =>
-                                        p.product_id === product.id
-                                          ? {
-                                              ...p,
-                                              // Keep a cleared field empty. Number('') is 0,
-                                              // which made typing "5" show "05".
-                                              quantity: e.target.value === '' ? '' : Number(e.target.value),
-                                            }
-                                          : p
-                                      )
-                                    )
-                                  }
-                                  className="w-20 rounded border px-2 py-1"
-                                />
+                              {unavailable ? (
+                                <p className="text-xs font-medium text-red-700">
+                                  Unavailable — can't be requested right now
+                                </p>
+                              ) : minimums[product.id] && (
+                                <p className="text-xs font-medium text-amber-700">
+                                  Minimum order: {minimums[product.id]} {product.unit || 'units'}
+                                </p>
                               )}
                             </div>
 
                             {selected && (
-                              <div className="mt-2">
-                                <label className="mb-1 block text-sm font-medium text-gray-700">
-                                  Notes
-                                </label>
-
-                                <textarea
-                                  rows={2}
-                                  placeholder="Optional notes for this product..."
-                                  value={selected.notes}
-                                  onChange={(e) =>
-                                    setSelectedProducts(
-                                      selectedProducts.map((p) =>
-                                        p.product_id === product.id
-                                          ? {
-                                              ...p,
-                                              notes: e.target.value,
-                                            }
-                                          : p
-                                      )
-                                    )
-                                  }
-                                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
-                                />
-                              </div>
+                              <span className="text-xs font-medium text-green-700">
+                                Added
+                              </span>
                             )}
-                          </div>
+                          </label>
                         )
                       })}
                     </div>
                   </div>
                 ))}
             </div>
+
+              {/* Every selected product in one place, wherever it sits in the
+                  list, with its quantity and notes. Click the heading to
+                  collapse or expand it. */}
+              <details id="selected-products" open className="group mt-4 scroll-mt-4">
+                <summary className="mb-2 flex cursor-pointer list-none items-center justify-between gap-3 rounded-md py-1 text-sm font-medium [&::-webkit-details-marker]:hidden">
+                  <span>Selected Products ({selectedProducts.length})</span>
+
+                  <span className="flex items-center gap-1.5 text-xs font-medium text-green-700">
+                    <span className="group-open:hidden">Show</span>
+                    <span className="hidden group-open:inline">Hide</span>
+                    <FontAwesomeIcon icon={faChevronDown} className="h-3 w-3 transition-transform group-open:rotate-180"/>
+                  </span>
+                </summary>
+
+                {selectedProducts.length === 0 ? (
+                  <p className="rounded-lg border border-dashed px-3 py-4 text-center text-sm text-gray-500">
+                    Tick products above and they'll appear here.
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {selectedProducts.map((item) => {
+                      const product = products.find((p) => p.id === item.product_id) || { id: item.product_id }
+                      const name = product.family || product.product_name || 'Product'
+
+                      return (
+                        <li key={item.product_id} className="rounded-lg border p-3">
+                          <div className="flex items-start gap-3">
+                            <div className="min-w-0 flex-1">
+                              <p className="break-words text-sm font-medium text-gray-800">
+                                {name}
+                              </p>
+
+                              <p className="text-xs text-gray-500">
+                                {sizeLabel(product)}
+                                {product.brand ? ` · ${product.brand}` : ''}
+                              </p>
+
+                              {minimums[item.product_id] && (
+                                <p className="text-xs font-medium text-amber-700">
+                                  Minimum order: {minimums[item.product_id]} {product.unit || 'units'}
+                                </p>
+                              )}
+                            </div>
+
+                            <input
+                              type="number"
+                              min={minimumFor(item.product_id)}
+                              step={1}
+                              required
+                              value={item.quantity}
+                              aria-label={`Quantity of ${name}, ${sizeLabel(product)}`}
+                              onChange={(e) =>
+                                updatePicked(item.product_id, {
+                                  // Keep a cleared field empty. Number('') is 0,
+                                  // which made typing "5" show "05".
+                                  quantity: e.target.value === '' ? '' : Number(e.target.value),
+                                })
+                              }
+                              className="w-20 rounded border px-2 py-1"
+                            />
+
+                            <span className="pt-1.5 text-sm text-gray-500">
+                              {product.unit || 'units'}
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() => setPicked(product, false)}
+                              title={`Remove ${name}, ${sizeLabel(product)}`}
+                              aria-label={`Remove ${name}, ${sizeLabel(product)}`}
+                              className="rounded-md p-1.5 text-gray-400 transition hover:bg-red-50 hover:text-red-600"
+                            >
+                              <FontAwesomeIcon icon={faXmark}/>
+                            </button>
+                          </div>
+
+                          <textarea
+                            rows={1}
+                            placeholder="Notes for this product (optional)"
+                            value={item.notes}
+                            onChange={(e) => updatePicked(item.product_id, { notes: e.target.value })}
+                            className="mt-2 w-full resize-y rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
+                          />
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </details>
           </div>
           </div>
 
@@ -1317,6 +1379,7 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
 
             <button
               type="submit"
+              onClick={openSelected}
               className="rounded-lg bg-[#1F3A2C] px-4 py-2 text-white transition hover:bg-[#2D5A42]"
             >
               Submit Request
