@@ -10,6 +10,7 @@ import { MIN_PO_DELIVERY_DAYS, localDateString } from '../utils/dates'
 import { getCurrentSupplierPrices, lookupSupplierPrice, pricingErrorMessage } from '../services/pricingService'
 import { formatPeso } from '../services/creditService'
 import { summarizeCapacity, formatCbm } from '../utils/warehouseCapacity'
+import { loadSupplierTimings } from '../services/predictionService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faFolderOpen,
@@ -1963,6 +1964,11 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
 
 
 
+// A YYYY-MM-DD date, e.g. "Nov 20, 2026".
+const formatDayString = (date) =>
+  new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+
+
 // =====================================================
 // ADD PURCHASE ORDER MODAL
 // =====================================================
@@ -1974,6 +1980,40 @@ function AddPurchaseOrderModal({ customerOrders, suppliers, warehouseRacks, load
 
   const supplierName = (supplierId) =>
     suppliers.find((supplier) => supplier.id === supplierId)?.supplier_name || 'Unknown supplier'
+
+
+  // ---------------------------------------------------
+  // SUGGESTED DATE AND LATE SUPPLIERS
+  //
+  // Each supplier's usual days from PO to delivery and whether it's often late
+  // (services/predictionService.js), so the PO can promise a realistic date: the
+  // slowest supplier's usual time, never under DMC's minimum.
+  // ---------------------------------------------------
+  const [timings, setTimings] = useState({})
+  const supplierIds = [...new Set(items.map((item) => item.supplier_id).filter(Boolean))]
+  const supplierKey = supplierIds.join(',')
+
+  useEffect(() => {
+    if (!supplierKey) {
+      setTimings({})
+      return
+    }
+
+    let active = true
+
+    loadSupplierTimings(supplierKey.split(','))
+      .then((result) => { if (active) setTimings(result) })
+      .catch((error) => console.error('Failed to load supplier timings:', error))
+
+    return () => { active = false }
+  }, [supplierKey])
+
+  const slowest = supplierIds
+    .filter((id) => timings[id])
+    .map((id) => ({ id, name: supplierName(id), days: Math.ceil(timings[id].usualLeadDays) }))
+    .sort((a, b) => b.days - a.days)[0]
+  const suggestedDate = slowest ? localDateString(Math.max(slowest.days, MIN_PO_DELIVERY_DAYS)) : null
+  const oftenLate = supplierIds.filter((id) => timings[id]?.often)
 
   // ---------------------------------------------------
   // SELECT CUSTOMER ORDER
@@ -2195,6 +2235,38 @@ function AddPurchaseOrderModal({ customerOrders, suppliers, warehouseRacks, load
             <p className="mt-1 text-xs text-gray-500">
               Select the date when the supplier is expected to deliver the order — at least {MIN_PO_DELIVERY_DAYS} days from today.
             </p>
+
+            {selectedOrder && suggestedDate && (
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-green-200 bg-green-50 p-3 text-sm">
+                <p className="text-gray-800">
+                  <span className="font-medium">Suggested: {formatDayString(suggestedDate)}.</span>{' '}
+                  {slowest.days >= MIN_PO_DELIVERY_DAYS
+                    ? `${slowest.name} usually takes about ${slowest.days} days from PO to delivery.`
+                    : `Every supplier here usually delivers within the ${MIN_PO_DELIVERY_DAYS}-day minimum.`}
+                </p>
+
+                {expectedDeliveryDate !== suggestedDate && (
+                  <button
+                    type="button"
+                    onClick={() => setExpectedDeliveryDate(suggestedDate)}
+                    disabled={creating}
+                    className="rounded-md bg-[#2D5A42] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#234633] disabled:opacity-50"
+                  >
+                    Use this date
+                  </button>
+                )}
+              </div>
+            )}
+
+            {selectedOrder && oftenLate.map((id) => (
+              <p key={id} className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                {supplierName(id)} is often late:{' '}
+                {timings[id].scored
+                  ? `late on ${timings[id].lateCount} of its last ${timings[id].deliveries} deliveries, by ${Math.round(timings[id].averageDaysLate)} ${Math.round(timings[id].averageDaysLate) === 1 ? 'day' : 'days'} on average`
+                  : 'DMC staff say so'}
+                . Follow up early, or allow extra days.
+              </p>
+            ))}
           </div>
 
 

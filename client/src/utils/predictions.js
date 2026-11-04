@@ -213,7 +213,7 @@ export function buildStageStatistics(allHistory) {
 //               starting: { usualLeadDays, lateFrequency, usualLateDays } }]
 // A supplier with a promised date has its PO; one without is still to be ordered,
 // starting when ordering from suppliers is done (laneStarts).
-function supplierArrivals(suppliers, laneStarts, now, starting, busyExtraFor) {
+export function supplierArrivals(suppliers, laneStarts, now, starting, busyExtraFor) {
   const ends = { ...laneStarts }
   const overdue = []
   const confidences = []
@@ -357,6 +357,7 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
   const confidences = []
   let readyLanes = null
   let overdueSuppliers = []
+  let stuckStep = null
 
   const firstStep = ifPaidToday ? 0 : ESTIMATE_STEPS.indexOf(currentStep)
 
@@ -378,7 +379,8 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
       const span = isCurrent ? remainingOfStep(full, statsFor(step.key), startingFor[step.key], currentStageAge) : full
 
       if (isCurrent && currentStageAge > full.slow) {
-        reasons.push(`In ${step.label.toLowerCase()} for ${Math.round(currentStageAge)} days, usually ${Math.round(full.typical)}.`)
+        stuckStep = { key: step.key, label: step.label, days: Math.round(currentStageAge), usualDays: Math.round(full.typical) }
+        reasons.push(`In ${step.label.toLowerCase()} for ${stuckStep.days} days, usually ${stuckStep.usualDays}.`)
       }
 
       lanes.typical += span.typical * DAY
@@ -441,6 +443,9 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
       ? 'A rough estimate: there are few finished orders to learn from yet.'
       : 'Order is progressing within expectations.'),
     riskReasons: reasons,
+    // The same, as data, for the staff alerts (server/alerts.js).
+    stuckStep,
+    overdueSuppliers,
     customerNote,
     stepsAhead,
     currentStageAge,

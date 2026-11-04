@@ -10,7 +10,92 @@ import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
 import TableScroll from '../components/TableScroll'
 import WarehouseCapacityBanner from '../components/WarehouseCapacityBanner'
-import { casesThatFit, suggestRacks, formatCbm } from '../utils/warehouseCapacity'
+import { casesThatFit, suggestRacks, formatCbm, summarizeCapacity } from '../utils/warehouseCapacity'
+import { loadExpectedDeliveries } from '../services/predictionService'
+
+
+// =============================================
+// EXPECTED DELIVERIES
+//
+// Supplier deliveries due in the next 7 days, each at the date it's expected
+// (its promised date moved by how late that supplier usually is), against the
+// free rack space, so racks can be freed before the goods arrive.
+// =============================================
+const WINDOW_DAYS = 7
+
+const formatShortDate = (date) => new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+
+function ExpectedDeliveries({ racks }) {
+  const [soon, setSoon] = useState(null)
+
+  useEffect(() => {
+    loadExpectedDeliveries()
+      .then((deliveries) => {
+        const until = Date.now() + WINDOW_DAYS * 24 * 60 * 60 * 1000
+        setSoon(deliveries.filter((delivery) => delivery.expectedOn.getTime() <= until))
+      })
+      .catch((error) => {
+        console.error('Failed to load expected deliveries:', error)
+        setSoon([])
+      })
+  }, [])
+
+  if (!soon) return null
+
+  const volume = soon.reduce((total, delivery) => total + delivery.volume, 0)
+  const capacity = racks?.length ? summarizeCapacity(racks) : null
+  const tooMuch = capacity && volume > capacity.freeCbm
+
+  return (
+    <div className={`mb-6 rounded-lg border p-4 text-sm ${tooMuch ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-white'}`}>
+      <p className="font-medium text-gray-800">
+        Expected in the next {WINDOW_DAYS} days: {soon.length} {soon.length === 1 ? 'delivery' : 'deliveries'}
+        {soon.length > 0 && `, about ${formatCbm(volume)}`}
+      </p>
+
+      {capacity && soon.length > 0 && (
+        <p className={`mt-0.5 ${tooMuch ? 'font-medium text-red-700' : 'text-gray-500'}`}>
+          {tooMuch
+            ? `That's more than the ${formatCbm(capacity.freeCbm)} free. Free up racks, or plan where the rest will go.`
+            : `${formatCbm(capacity.freeCbm)} is free, so it fits.`}
+        </p>
+      )}
+
+      {soon.length > 0 && (
+        <TableScroll className="mt-3 rounded-lg border border-gray-200">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+              <tr>
+                <th className="px-4 py-2">PO</th>
+                <th className="px-4 py-2">Supplier</th>
+                <th className="px-4 py-2">Expected</th>
+                <th className="px-4 py-2">Cases</th>
+                <th className="px-4 py-2">Volume</th>
+              </tr>
+            </thead>
+
+            <tbody className="divide-y divide-gray-100">
+              {soon.map((delivery) => (
+                <tr key={`${delivery.poNumber}-${delivery.supplierName}`}>
+                  <td className="px-4 py-2 font-medium text-gray-800">{delivery.poNumber || '—'}</td>
+                  <td className="px-4 py-2 text-gray-600">{delivery.supplierName}</td>
+                  <td className="px-4 py-2 text-gray-600">
+                    {formatShortDate(delivery.expectedOn)}
+                    {delivery.overdueDays > 0 && (
+                      <span className="ml-2 text-xs font-medium text-red-700">{delivery.overdueDays} {delivery.overdueDays === 1 ? 'day' : 'days'} overdue</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2 text-gray-600">{delivery.cases.toLocaleString()}</td>
+                  <td className="px-4 py-2 text-gray-600">{formatCbm(delivery.volume)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableScroll>
+      )}
+    </div>
+  )
+}
 
 
 export default function ReceivingPage() {
@@ -253,6 +338,8 @@ export default function ReceivingPage() {
 
 
       <WarehouseCapacityBanner racks={warehouseRacks} className="mb-6"/>
+
+      <ExpectedDeliveries racks={warehouseRacks} />
 
 
       {/* =================================================

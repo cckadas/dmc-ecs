@@ -11,6 +11,7 @@ import { generatePFI } from '../services/pfiService'
 import { localDateExcludingSundays, formatDateString, QUOTATION_VALIDITY_DAYS } from '../utils/dates'
 import { getQuotationPricing, pricingErrorMessage } from '../services/pricingService'
 import { formatVolume, formatWeight } from '../utils/containers'
+import { previewEstimate } from '../services/predictionService'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
@@ -38,6 +39,7 @@ export default function ProFormaInvoicePage() {
         id,
         quotation_reference,
         preferred_ship_date,
+        delivery_location_id,
         status,
         created_at,
         profiles (
@@ -749,6 +751,46 @@ function QuotationViewModal({ quotation, onClose }) {
 // =====================================================
 // ADD PURCHASE ORDER MODAL
 // =====================================================
+// =============================================
+// SHIP DATE CHECK
+//
+// For sales, before the quotation goes out: when the order would likely ship
+// if paid today, and whether that meets the customer's preferred date.
+// =============================================
+function ShipEstimateCheck({ estimate, preferredDate }) {
+  const fullDate = (date) => new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  const shortDate = (date) => new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  const late = estimate.daysPastRequested > 0
+  const preferred = preferredDate ? fullDate(`${preferredDate}T00:00:00`) : null
+
+  return (
+    <div className={`mb-6 rounded-lg border p-4 text-sm ${late ? 'border-amber-200 bg-amber-50' : 'border-green-200 bg-green-50'}`}>
+      <p className="font-medium text-gray-800">
+        If the customer pays the down payment today, it ships around {fullDate(estimate.estimatedShipDate)}
+        {estimate.shipDateRange && (
+          <span className="font-normal text-gray-600">
+            {' '}· likely {shortDate(estimate.shipDateRange.quick)} to {shortDate(estimate.shipDateRange.slow)}
+          </span>
+        )}
+      </p>
+
+      {late ? (
+        <p className="mt-1 font-medium text-amber-800">
+          That's {estimate.daysPastRequested} {estimate.daysPastRequested === 1 ? 'day' : 'days'} after their preferred date ({preferred}).
+          Tell the customer before sending the quotation, or agree on a later date.
+        </p>
+      ) : preferred ? (
+        <p className="mt-1 text-green-800">On track for their preferred date ({preferred}).</p>
+      ) : null}
+
+      <p className="mt-1 text-xs text-gray-500">
+        {estimate.confidence}% confidence{estimate.roughEstimate ? ' · rough estimate: few finished orders to learn from yet' : ''}
+      </p>
+    </div>
+  )
+}
+
+
 function QuotationModal({ request, creating, onClose, onSubmit }) {
   // Fixed, like the prices: the country's shipping cost, and the cost of the
   // container the order needs (the smallest that holds it, or a bigger one if
@@ -779,6 +821,30 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
   )
   const [pricingError, setPricingError] = useState('')
   const [loadingPrices, setLoadingPrices] = useState(true)
+
+
+  // ===================================================
+  // SHIP DATE ESTIMATE
+  //
+  // When the order would likely ship if the customer paid the down payment
+  // today, against the date they asked for: the same estimate the customer
+  // sees on the quotation (utils/predictions.js).
+  // ===================================================
+  const [shipEstimate, setShipEstimate] = useState(null)
+
+  useEffect(() => {
+    let active = true
+
+    previewEstimate({
+      items: request.quotation_request_items.map((item) => ({ product_id: item.products.id, quantity: item.quantity })),
+      deliveryLocationId: request.delivery_location_id,
+      requestedShipDate: request.preferred_ship_date,
+    })
+      .then((estimate) => { if (active) setShipEstimate(estimate) })
+      .catch((error) => console.error('Failed to estimate the ship date:', error))
+
+    return () => { active = false }
+  }, [request.id])
 
 
   // ===================================================
@@ -935,6 +1001,10 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
               <p className="mt-1 font-medium text-gray-800"> {request.delivery_locations.location_name} </p>
             </div>
           </div>
+
+          {shipEstimate?.estimatedShipDate && (
+            <ShipEstimateCheck estimate={shipEstimate} preferredDate={request.preferred_ship_date} />
+          )}
 
 
           {/* =================================================

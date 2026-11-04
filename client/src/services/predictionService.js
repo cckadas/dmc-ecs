@@ -1,6 +1,9 @@
 import { supabase } from '../supabase'
 import { authHeaders } from './apiAuth'
-import { estimateDraft, estimateOrders } from '../utils/estimateLoader'
+import { estimateDraft, estimateOrders, loadAllDeliveries, loadOpenDeliveries, loadStartingValues } from '../utils/estimateLoader'
+import { startingDaysFrom, supplierHistories } from '../utils/estimateInputs'
+import { blendStep } from '../utils/predictions'
+import { scoreSuppliers } from '../utils/supplierScores'
 
 export { ORDER_STATUS_FLOW, normalizeStatus, buildStageStatistics, predictOrder } from '../utils/predictions'
 
@@ -50,6 +53,44 @@ export async function predictOrders(orders) {
 // a quotation request being priced. items: [{ product_id, quantity }]
 export async function previewEstimate({ items, deliveryLocationId, requestedShipDate }) {
   return estimateDraft(supabase, { items, deliveryLocationId, requestedShipDate, history: await loadStatusHistory() })
+}
+
+
+// Staff, for Add PO: each supplier's usual days from PO to delivery (its own
+// deliveries blended with DMC's number, as in the estimates), and whether it's
+// often late: by its delivery score, or by DMC staff's word while it has few.
+export async function loadSupplierTimings(supplierIds) {
+  const [starting, deliveries] = await Promise.all([
+    loadStartingValues(supabase),
+    loadAllDeliveries(supabase).catch(() => []),
+  ])
+
+  const histories = supplierHistories(deliveries)
+  const scores = scoreSuppliers(deliveries, supplierIds)
+  const defaults = startingDaysFrom(starting.settings)
+
+  return Object.fromEntries(supplierIds.map((supplierId) => {
+    const theirs = starting.startingSuppliers[supplierId]
+    const startingLead = Number(theirs?.usual_lead_days) || defaults.supplier_lead
+    const score = scores[supplierId]
+
+    return [supplierId, {
+      usualLeadDays: blendStep(histories[supplierId]?.leadDays || [], startingLead).typical,
+      deliveries: score?.count || 0,
+      lateCount: score?.lateCount || 0,
+      averageDaysLate: score?.averageDaysLate || 0,
+      scored: Boolean(score?.enough),
+      often: score?.enough ? score.band?.tone !== 'good' : theirs?.late_frequency === 'often',
+    }]
+  }))
+}
+
+
+// Staff, for Receiving: each supplier delivery not in yet, with when it should
+// arrive, the cases still to come and their volume. Soonest first. The server's
+// overdue alerts use the same (utils/estimateLoader.js).
+export async function loadExpectedDeliveries() {
+  return loadOpenDeliveries(supabase)
 }
 
 

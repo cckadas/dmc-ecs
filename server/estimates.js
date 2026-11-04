@@ -8,12 +8,13 @@ import { supabaseAdmin } from './supabaseAdmin.js'
 // deliveries, so their estimates are worked out here, with the same loader and
 // maths as the staff pages (client/src/utils/estimateLoader.js), and only the
 // dates and plain words go back (forCustomer). Used by routes/estimates.js and
-// the chatbot.
+// the chatbot. The prediction alerts (alerts.js) use the same.
 // =============================================================================
 
 let shared = null
 
-async function loadShared() {
+// Loaded when first needed, so the server starts even without the client folder.
+export async function loadShared() {
   shared ||= await import(new URL('../client/src/utils/estimateLoader.js', import.meta.url).href)
   return shared
 }
@@ -21,8 +22,8 @@ async function loadShared() {
 
 // Every status change, oldest first, for the step times. Read straight from the
 // table: status_history_for_estimates answers signed-in users only.
-export async function allStatusHistory() {
-  const { data, error } = await supabaseAdmin
+export async function allStatusHistory(client = supabaseAdmin) {
+  const { data, error } = await client
     .from('customer_order_status_history')
     .select('customer_order_id, new_status, changed_at')
     .order('changed_at', { ascending: true })

@@ -9,8 +9,8 @@
 // Imports carry their .js extension so the server (Node) can load this too.
 // =============================================================================
 
-import { buildStageStatistics, predictOrder } from './predictions.js'
-import { estimateContext, supplierHistories } from './estimateInputs.js'
+import { buildStageStatistics, predictOrder, supplierArrivals } from './predictions.js'
+import { estimateContext, startingDaysFrom, supplierHistories } from './estimateInputs.js'
 import { buildDeliveries } from './supplierScores.js'
 
 // Rows, or none when the table can't be read (no access, or 017 not run yet).
@@ -45,7 +45,7 @@ export async function loadAllDeliveries(client, supplierId) {
 
 
 // DMC's starting values, entered on Prediction settings (db/migrations/017).
-async function loadStartingValues(client) {
+export async function loadStartingValues(client) {
   const [settings, suppliers, countries, busyMonths] = await Promise.all([
     client.from('prediction_settings').select('key, days, is_placeholder'),
     client.from('prediction_suppliers').select('supplier_id, usual_lead_days, late_frequency, usual_late_days'),
@@ -59,6 +59,67 @@ async function loadStartingValues(client) {
     countries: rowsOf(countries),
     busyMonths: rowsOf(busyMonths),
   }
+}
+
+
+// Every supplier delivery not in yet (one supplier's part of one PO), with when
+// it should arrive: its promised date moved by how late that supplier usually
+// is, as in the estimates. Also the cases still to come and their volume.
+// Soonest first. For the Receiving page's forecast and the overdue alerts.
+export async function loadOpenDeliveries(client, { now = Date.now() } = {}) {
+  const [starting, lines, suppliers] = await Promise.all([
+    loadStartingValues(client),
+    client
+      .from('purchase_order_items')
+      .select('purchase_order_id, supplier_id, ordered_quantity, received_quantity, fully_received_at, products ( cbm ), purchase_orders ( id, po_number, customer_order_id, created_at, expected_delivery_date )'),
+    client.from('suppliers').select('id, supplier_name'),
+  ])
+
+  if (lines.error) throw lines.error
+
+  // The same lines give each supplier's finished deliveries, for its lateness.
+  const histories = supplierHistories(buildDeliveries(lines.data || []))
+  const startingDays = startingDaysFrom(starting.settings)
+  const names = Object.fromEntries(rowsOf(suppliers).map((supplier) => [supplier.id, supplier.supplier_name]))
+  const fromNow = { typical: now, quick: now, slow: now }
+
+  // One delivery per supplier per PO, counting only what's still to come.
+  const open = new Map()
+  for (const line of lines.data || []) {
+    const order = line.purchase_orders
+    const remaining = Number(line.ordered_quantity || 0) - Number(line.received_quantity || 0)
+    if (!order?.expected_delivery_date || line.fully_received_at || remaining <= 0) continue
+
+    const key = `${order.id}:${line.supplier_id}`
+    if (!open.has(key)) open.set(key, { order, supplierId: line.supplier_id, cases: 0, volume: 0 })
+    const delivery = open.get(key)
+    delivery.cases += remaining
+    delivery.volume += remaining * (Number(line.products?.cbm) || 0)
+  }
+
+  return [...open.values()].map(({ order, supplierId, cases, volume }) => {
+    const theirs = starting.startingSuppliers[supplierId]
+    const supplier = {
+      name: names[supplierId] || 'A supplier',
+      promised: order.expected_delivery_date,
+      history: histories[supplierId] || { leadDays: [], lateness: [] },
+      starting: theirs ? { usualLeadDays: theirs.usual_lead_days, lateFrequency: theirs.late_frequency, usualLateDays: theirs.usual_late_days } : null,
+    }
+    const { ends, overdue } = supplierArrivals([supplier], fromNow, now, startingDays, () => 0)
+
+    return {
+      purchaseOrderId: order.id,
+      customerOrderId: order.customer_order_id,
+      poNumber: order.po_number,
+      supplierId,
+      supplierName: supplier.name,
+      promised: order.expected_delivery_date,
+      expectedOn: new Date(ends.typical),
+      overdueDays: overdue[0]?.days ?? 0,
+      cases,
+      volume,
+    }
+  }).sort((a, b) => a.expectedOn - b.expectedOn)
 }
 
 
