@@ -20,7 +20,8 @@ import {
   faCircleUser,
   faPesoSign,
   faScaleBalanced,
-  faSliders
+  faSliders,
+  faChartColumn
 } from '@fortawesome/free-solid-svg-icons'
 
 
@@ -50,6 +51,12 @@ export const NAV_SECTIONS = [
         path: 'dashboard',
         icon: faHouse,
         roles: ['warehouse', 'procurement', 'sales', 'customer'],
+      },
+      {
+        label: 'Predictive Analytics',
+        path: 'predictive-analytics',
+        icon: faChartColumn,
+        roles: ['admin', 'management', 'procurement', 'warehouse'],
       },
     ],
   },

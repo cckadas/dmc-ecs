@@ -13,6 +13,7 @@ import { predictOrders } from '../services/predictionService'
 import { loadSupplierScores } from '../services/supplierScoreService'
 import { MIN_DELIVERIES } from '../utils/supplierScores'
 import { OrderStepsBar } from '../components/OrderProgress'
+import PredictionNumbersPanel from '../components/PredictionNumbers'
 
 
 export default function ExecutiveDashboard() {
@@ -401,6 +402,14 @@ export default function ExecutiveDashboard() {
         <p className="mt-1 text-gray-500">
           Overview of order activity and operational performance.
         </p>
+      </div>
+
+
+      {/* =============================================
+          PREDICTION NUMBERS (Predictive Analytics)
+      ============================================= */}
+      <div className="mb-6">
+        <PredictionNumbersPanel />
       </div>
 
 

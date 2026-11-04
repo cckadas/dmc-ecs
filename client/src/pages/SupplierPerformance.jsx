@@ -7,6 +7,8 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faStar, faXmark, faFloppyDisk, faClipboardCheck, faClock, faTriangleExclamation, faChartLine, faSquarePollVertical, faTruck } from '@fortawesome/free-solid-svg-icons'
 import { loadSupplierScore } from '../services/supplierScoreService'
 import { MIN_DELIVERIES, LATE_POINTS_PER_DAY } from '../utils/supplierScores'
+import { deliveryHistory } from '../utils/analytics'
+import { ChartCard, DeliveryHistoryChart, DeliveryHistoryTable } from '../components/AnalyticsCharts'
 
 
 export default function SupplierPerformancePage() {
@@ -234,6 +236,8 @@ export default function SupplierPerformancePage() {
   // =============================================
   const score = performance?.score
   const staffRating = performance?.staffRating
+  // Its deliveries in date order, for the delivery history chart.
+  const pastDeliveries = score ? deliveryHistory(score.deliveries) : []
 
 
   // =============================================
@@ -393,6 +397,23 @@ export default function SupplierPerformancePage() {
                   </div>
                 </div>
               </div>
+
+
+              {/* =============================================
+                  DELIVERY HISTORY
+              ============================================= */}
+              {pastDeliveries.length > 0 && (
+                <div className="mt-6">
+                  <ChartCard
+                    title="Delivery History"
+                    question="Is this supplier getting better or worse?"
+                    table={<DeliveryHistoryTable deliveries={pastDeliveries} />}
+                    footnote="One bar per delivery, in date order: above the line when it came late, below when early, by the number of days. A run of bars above the line means the supplier is slipping."
+                  >
+                    <DeliveryHistoryChart deliveries={pastDeliveries} />
+                  </ChartCard>
+                </div>
+              )}
 
 
               {/* =============================================

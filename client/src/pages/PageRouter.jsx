@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react"
 import { useParams } from "react-router-dom"
 
 import AccountsPage from "./Accounts"
@@ -24,9 +25,19 @@ import SettingsPage from "./Settings"
 import StagingTrackerPage from "./StagingTracker"
 import SupplierPriceListsPage from "./SupplierPriceLists"
 import SuppliersPage from "./Suppliers"
-import SupplierPerformancePage from "./SupplierPerformance"
 import WarehouseHoldingsPage from "./WarehouseHoldings"
 import WarehouseLocationPage from "./WarehouseLocations"
+
+// The pages with charts load the chart library (Recharts) only when opened,
+// so no one else downloads it.
+const PredictiveAnalyticsPage = lazy(() => import("./PredictiveAnalytics"))
+const SupplierPerformancePage = lazy(() => import("./SupplierPerformance"))
+
+const withCharts = (page) => (
+  <Suspense fallback={<p className="text-sm text-gray-500">Loading…</p>}>
+    {page}
+  </Suspense>
+)
 
 
 export default function PageRouter(){
@@ -89,6 +100,9 @@ export default function PageRouter(){
     case "prediction-settings":
       return <PredictionSettingsPage />
 
+    case "predictive-analytics":
+      return withCharts(<PredictiveAnalyticsPage />)
+
     case "price-lists":
       return <SupplierPriceListsPage />
 
@@ -108,7 +122,7 @@ export default function PageRouter(){
       return <SuppliersPage />
 
     case "supplier-performance":
-      return <SupplierPerformancePage />
+      return withCharts(<SupplierPerformancePage />)
 
     case "warehouse-holdings":
       return <WarehouseHoldingsPage />
