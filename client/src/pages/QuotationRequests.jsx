@@ -10,6 +10,7 @@ import { MIN_PREFERRED_SHIP_DAYS, localDateString } from '../utils/dates'
 import { getCreditStatus, formatPeso } from '../services/creditService'
 import { getMinimumOrderQuantities } from '../services/pricingService'
 import { groupByFamily, sizeLabel } from '../utils/productGroups'
+import { previewMyEstimate } from '../services/predictionService'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
@@ -251,7 +252,8 @@ export default function QuotationRequestsPage() {
         pfi_file_path,
 
         quotation_request:quotation_requests (
-          delivery_location_id
+          delivery_location_id,
+          preferred_ship_date
         ),
 
         customer_orders (
@@ -587,6 +589,75 @@ export default function QuotationRequestsPage() {
 // =============================================
 // QUOTATION MODAL
 // =============================================
+// =============================================
+// SHIP DATE ESTIMATE NOTE
+//
+// When an order would likely ship, its likely range and arrival, and a warning
+// when the preferred date is earlier. From DMC's server, as if paid today.
+// =============================================
+function ShipEstimateNote({ estimate, lead, preferredDate }) {
+  const fullDate = (date) => new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  const shortDate = (date) => new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  const tooEarly = Boolean(preferredDate) && estimate.daysPastRequested > 0
+
+  return (
+    <div className={`mb-6 rounded-lg border p-4 text-sm ${tooEarly ? 'border-amber-200 bg-amber-50' : 'border-green-200 bg-green-50'}`}>
+      <p className="font-medium text-gray-800">
+        {lead} {fullDate(estimate.estimatedShipDate)}.
+      </p>
+
+      {estimate.shipDateRange && (
+        <p className="mt-0.5 text-gray-600">
+          Likely {shortDate(estimate.shipDateRange.quick)} to {shortDate(estimate.shipDateRange.slow)}
+          {estimate.estimatedArrivalDate ? `, arriving at your port around ${fullDate(estimate.estimatedArrivalDate)}` : ''}.
+        </p>
+      )}
+
+      {tooEarly && (
+        <p className="mt-1 font-medium text-amber-800">
+          Your preferred date ({fullDate(`${preferredDate}T00:00:00`)}) is earlier than that, so it may be hard to meet.
+        </p>
+      )}
+
+      <p className="mt-1 text-xs text-gray-500">
+        An estimate from past orders and DMC's usual times, not a guaranteed date.
+      </p>
+    </div>
+  )
+}
+
+
+// The quotation's estimate, as if the customer approved and paid today.
+function QuotationShipEstimate({ quotation }) {
+  const [estimate, setEstimate] = useState(null)
+  const preferredDate = quotation.quotation_request?.preferred_ship_date || null
+
+  useEffect(() => {
+    let active = true
+
+    previewMyEstimate({
+      items: (quotation.quotation_items || []).map((item) => ({ product_id: item.product_id, quantity: Number(item.quantity) || 0 })),
+      deliveryLocationId: quotation.quotation_request?.delivery_location_id || null,
+      requestedShipDate: preferredDate,
+    })
+      .then((result) => { if (active) setEstimate(result) })
+      .catch((error) => console.error('Failed to estimate the ship date:', error))
+
+    return () => { active = false }
+  }, [quotation.id])
+
+  if (!estimate?.estimatedShipDate) return null
+
+  return (
+    <ShipEstimateNote
+      estimate={estimate}
+      lead="If you approve and pay the down payment today, it ships around"
+      preferredDate={preferredDate}
+    />
+  )
+}
+
+
 function QuotationModal({ quotation, loading, creating,onClose, onApprove, onReject }) {
   if (loading) {
     return (
@@ -712,6 +783,10 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
               <p className={`mt-1 font-semibold ${ isExpiringSoon ? 'text-red-800' : 'text-amber-800' }`}> {new Date(quotation.expiry_date).toLocaleDateString()} </p>
             </div>
           </div>
+
+          {(quotation.status || '').trim().toLowerCase() === 'pending approval' && !isExpired && (
+            <QuotationShipEstimate quotation={quotation} />
+          )}
 
 
           {/* =================================================
@@ -1024,6 +1099,38 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
       .then(setMinimums)
       .catch((error) => console.error('Failed to load minimum order quantities:', error))
   }, [])
+
+
+  // When an order like this would likely ship, if the down payment were made
+  // today, from DMC's server. Waits until typing stops, and keeps only the
+  // latest answer.
+  const [shipEstimate, setShipEstimate] = useState(null)
+
+  useEffect(() => {
+    if (!selectedProducts.length) {
+      setShipEstimate(null)
+      return
+    }
+
+    let active = true
+    const timer = setTimeout(() => {
+      previewMyEstimate({
+        items: selectedProducts.map((item) => ({ product_id: item.product_id, quantity: Number(item.quantity) || 0 })),
+        deliveryLocationId: form.delivery_location_id || null,
+        requestedShipDate: form.preferred_ship_date || null,
+      })
+        .then((estimate) => { if (active) setShipEstimate(estimate) })
+        .catch((error) => {
+          console.error('Failed to estimate the ship date:', error)
+          if (active) setShipEstimate(null)
+        })
+    }, 600)
+
+    return () => {
+      active = false
+      clearTimeout(timer)
+    }
+  }, [selectedProducts, form.delivery_location_id, form.preferred_ship_date])
 
 
   // Ticking a size adds it at the minimum the customer may order. Unticking it,
@@ -1366,6 +1473,14 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
               </details>
           </div>
           </div>
+
+          {shipEstimate?.estimatedShipDate && (
+            <ShipEstimateNote
+              estimate={shipEstimate}
+              lead="If the down payment were made today, orders like this would ship around"
+              preferredDate={form.preferred_ship_date}
+            />
+          )}
 
           {/* Buttons */}
           <div className="flex justify-end gap-3 pt-5">

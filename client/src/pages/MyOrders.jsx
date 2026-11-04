@@ -10,8 +10,9 @@ import StatusBadge from '../components/StatusBadge'
 import OrderProgress from '../components/OrderProgress'
 
 import IconButton from '../components/IconButton'
-import RoleActivityBadge from '../components/RoleActivityBadge'
 import TableScroll from '../components/TableScroll'
+import ShipDateSummary from '../components/ShipDateSummary'
+import { loadMyEstimates } from '../services/predictionService'
 
 
 export default function MyOrdersPage() {
@@ -22,6 +23,8 @@ export default function MyOrdersPage() {
   const [selectedOrder, setSelectedOrder] = useState(null)
   const [showModal, setShowModal] = useState(false)
   const [loading, setLoading] = useState(true)
+  // Each order's estimated ship date, from DMC's server, by order id.
+  const [estimates, setEstimates] = useState({})
 
 
   // =============================================
@@ -104,6 +107,11 @@ export default function MyOrdersPage() {
   useEffect(() => {
     if (profile?.id) {
       loadMyOrders()
+
+      // Not needed to show the orders, so a failure just leaves the dates out.
+      loadMyEstimates()
+        .then(setEstimates)
+        .catch((error) => console.error('Failed to load ship date estimates:', error))
     }
   }, [profile?.id])
 
@@ -150,7 +158,7 @@ export default function MyOrdersPage() {
               </th>
 
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
-                Date
+                Ship Date
               </th>
 
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
@@ -205,11 +213,7 @@ export default function MyOrdersPage() {
 
                   {/* DATE */}
                   <td className="px-5 py-3">
-                    {order.estimated_ship_date && !isNaN(new Date(order.estimated_ship_date).getTime()) ? (
-                      new Date(order.estimated_ship_date).toLocaleDateString()
-                    ) : (
-                      <RoleActivityBadge status="unavailable" />
-                    )}
+                    <ShipDateSummary estimate={estimates[order.id]} />
                   </td>
 
 
@@ -236,6 +240,7 @@ export default function MyOrdersPage() {
       {showModal && selectedOrder && (
         <MyOrderModal
           order={selectedOrder}
+          estimate={estimates[selectedOrder.id]}
           onClose={() => {
             setShowModal(false)
             setSelectedOrder(null)
@@ -252,7 +257,7 @@ export default function MyOrdersPage() {
 // =====================================================
 // VIEW CUSTOMER ORDER MODAL
 // =====================================================
-function MyOrderModal({ order, onClose }) {
+function MyOrderModal({ order, estimate, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-xl">
@@ -311,13 +316,9 @@ function MyOrderModal({ order, onClose }) {
 
             <div>
               <p className="text-xs uppercase text-gray-500"> Estimated Ship Date </p>
-              <p className="mt-1 font-medium text-gray-800">
-                {order.estimated_ship_date && !isNaN(new Date(order.estimated_ship_date).getTime()) ? (
-                  new Date(order.estimated_ship_date).toLocaleDateString()
-                ) : (
-                  <RoleActivityBadge status="unavailable" />
-                )}
-              </p>
+              <div className="mt-1">
+                <ShipDateSummary estimate={estimate} />
+              </div>
             </div>
           </div>
 

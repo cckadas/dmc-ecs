@@ -8,6 +8,7 @@ import staffsRouter from './routes/staffs.js'
 import purchaseOrderEmailRouter from './routes/emails.js'
 import paymentProofRouter from './routes/payment.js'
 import chatRouter from './routes/chat.js'
+import estimatesRouter from './routes/estimates.js'
 import { requireRole } from './auth.js'
 
 const app = express()
@@ -40,6 +41,7 @@ app.use('/api/staffs', requireRole('admin'), staffsRouter)
 app.use('/api/send-email', requireRole('admin', 'procurement'), purchaseOrderEmailRouter)
 app.use('/api/send-payment-proof', requireRole('admin', 'procurement'), paymentProofRouter)
 app.use('/api/customer/chat', requireRole('customer'), chatRouter)
+app.use('/api/customer/estimates', requireRole('customer'), estimatesRouter)
 
 
 // =============================================

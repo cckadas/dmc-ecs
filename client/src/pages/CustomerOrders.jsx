@@ -10,9 +10,9 @@ import { createNotification } from '../services/notificationService'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
-import RoleActivityBadge from '../components/RoleActivityBadge'
 import OrderProgress from '../components/OrderProgress'
-import { recordStatusChange } from '../services/predictionService'
+import { recordStatusChange, predictOrders } from '../services/predictionService'
+import ShipDateSummary from '../components/ShipDateSummary'
 import TableScroll from '../components/TableScroll'
 
 
@@ -21,6 +21,8 @@ export default function CustomerOrdersPage() {
   const { toast } = useToast()
 
   const [orders, setOrders] = useState([])
+  // Each order's estimate (or when it shipped), by order id.
+  const [estimates, setEstimates] = useState({})
   const [selectedOrder, setSelectedOrder] = useState(null)
   const [showModal, setShowModal] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -149,6 +151,11 @@ export default function CustomerOrdersPage() {
 
     setOrders(formattedOrders)
     setLoading(false)
+
+    // Not needed to show the orders, so a failure just leaves the dates out.
+    predictOrders(formattedOrders)
+      .then((list) => setEstimates(Object.fromEntries(list.map((prediction) => [prediction.id, prediction]))))
+      .catch((error) => console.error('Failed to estimate ship dates:', error))
   }
 
 
@@ -516,11 +523,7 @@ export default function CustomerOrdersPage() {
 
                   {/* DATE */}
                   <td className="px-5 py-3">
-                    {order.estimated_ship_date && !isNaN(new Date(order.estimated_ship_date).getTime()) ? (
-                      new Date(order.estimated_ship_date).toLocaleDateString()
-                    ) : (
-                      <RoleActivityBadge status="unavailable" />
-                    )}
+                    <ShipDateSummary estimate={estimates[order.id]} forStaff />
                   </td>
 
                   {/* ACTION */}
@@ -557,6 +560,7 @@ export default function CustomerOrdersPage() {
       {showModal && selectedOrder && (
         <CustomerOrderModal
           order={selectedOrder}
+          estimate={estimates[selectedOrder.id]}
           onClose={() => {
             setShowModal(false)
             setSelectedOrder(null)
@@ -568,6 +572,7 @@ export default function CustomerOrdersPage() {
       {showPaymentModal && selectedPayment && (
         <PaymentModal
           order={selectedPayment}
+          estimate={estimates[selectedPayment.id]}
           onClose={() => {
             setShowPaymentModal(false)
             setSelectedPayment(null)
@@ -589,7 +594,7 @@ export default function CustomerOrdersPage() {
 // =====================================================
 // VIEW CUSTOMER ORDER MODAL
 // =====================================================
-function CustomerOrderModal({ order, onClose }) {
+function CustomerOrderModal({ order, estimate, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-xl">
@@ -683,13 +688,9 @@ function CustomerOrderModal({ order, onClose }) {
 
             <div>
               <p className="text-xs uppercase text-gray-500"> Estimated Ship Date </p>
-              <p className="mt-1 font-medium text-gray-800">
-                {order.estimated_ship_date && !isNaN(new Date(order.estimated_ship_date).getTime()) ? (
-                  new Date(order.estimated_ship_date).toLocaleDateString()
-                ) : (
-                  <RoleActivityBadge status="unavailable" />
-                )}
-              </p>
+              <div className="mt-1">
+                <ShipDateSummary estimate={estimate} forStaff />
+              </div>
             </div>
           </div>
 
@@ -873,7 +874,7 @@ function CustomerOrderModal({ order, onClose }) {
 // =====================================================
 // PAYMENT MODAL
 // =====================================================
-function PaymentModal({ order, onClose, onReview }) {
+function PaymentModal({ order, estimate, onClose, onReview }) {
   const settledAmount = Number(order.settled_amount || 0)
   const pendingAmount = Number(order.pending_payment_amount || 0)
 
@@ -963,13 +964,9 @@ function PaymentModal({ order, onClose, onReview }) {
 
             <div>
               <p className="text-xs uppercase text-gray-500"> Estimated Ship Date </p>
-              <p className="mt-1 font-medium text-gray-800">
-                {order.estimated_ship_date && !isNaN(new Date(order.estimated_ship_date).getTime()) ? (
-                  new Date(order.estimated_ship_date).toLocaleDateString()
-                ) : (
-                  <RoleActivityBadge status="unavailable" />
-                )}
-              </p>
+              <div className="mt-1">
+                <ShipDateSummary estimate={estimate} forStaff />
+              </div>
             </div>
           </div>
 

@@ -34,7 +34,7 @@ export default function OrderProgress({ order, forStaff = false }) {
   useEffect(() => {
     let active = true
 
-    loadOrderProgress(order)
+    loadOrderProgress(order, { forStaff })
       .then((result) => {
         if (!active) return
         setHistory(result.history)
@@ -44,7 +44,7 @@ export default function OrderProgress({ order, forStaff = false }) {
       .finally(() => { if (active) setLoading(false) })
 
     return () => { active = false }
-  }, [order.id, order.status])
+  }, [order.id, order.status, forStaff])
 
   const status = (order.status || '').trim().toLowerCase()
   const done = stepsDone(status)
@@ -135,7 +135,8 @@ function EstimateLines({ prediction, forStaff }) {
   else if (prediction.customerNote && prediction.customerNote !== 'On track for your requested date.') note = prediction.customerNote
   else if (requested) note = `On track for your requested date (${requested}).`
 
-  const late = prediction.risk === 'at risk'
+  // From the server a customer's estimate says only whether it's late, not why.
+  const late = prediction.late ?? prediction.risk === 'at risk'
 
   return (
     <>

@@ -8,6 +8,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBoxOpen, faPaperPlane } from '@fortawesome/free-solid-svg-icons'
 import { generatePackingList } from '../services/packingListService'
 import { generateCertificateOfShipment, generateCertificateOfClearance } from '../services/certificateService'
+import { localDateString } from '../utils/dates'
 
 import StatusBadge from '../components/StatusBadge'
 import TableScroll from '../components/TableScroll'
@@ -541,13 +542,9 @@ export default function StagingTrackerPage() {
       // =================================================
       // UPDATE CUSTOMER ORDER
       // =================================================
-      const estimatedShipDate = new Date()
-      estimatedShipDate.setDate(estimatedShipDate.getDate() + 14 )
-
-      // Format as YYYY-MM-DD for PostgreSQL `date`
-      const formattedShipDate = estimatedShipDate
-        .toISOString()
-        .split('T')[0]
+      // The day it actually shipped. Until now the order showed its estimate
+      // (utils/predictions.js); this used to be a guess of today + 14 days.
+      const formattedShipDate = localDateString(0)
 
       const { error: customerOrderError } =
         await supabase

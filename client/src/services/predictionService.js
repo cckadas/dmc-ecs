@@ -1,7 +1,6 @@
 import { supabase } from '../supabase'
-import { buildStageStatistics, predictOrder } from '../utils/predictions'
-import { estimateContext, supplierHistories } from '../utils/estimateInputs'
-import { loadDeliveries } from './supplierScoreService'
+import { authHeaders } from './apiAuth'
+import { estimateDraft, estimateOrders } from '../utils/estimateLoader'
 
 export { ORDER_STATUS_FLOW, normalizeStatus, buildStageStatistics, predictOrder } from '../utils/predictions'
 
@@ -9,20 +8,19 @@ export { ORDER_STATUS_FLOW, normalizeStatus, buildStageStatistics, predictOrder 
 // =============================================================================
 // Shipment predictions — loading the data
 //
-// The maths lives in utils/predictions.js and the shaping of the rows in
-// utils/estimateInputs.js, both shared with DMC's server. Used by the Executive
-// Dashboard and the order progress tracker, so both show the same estimate.
+// The maths lives in utils/predictions.js and the loading in
+// utils/estimateLoader.js, both shared with DMC's server, so an order gets the
+// same estimate everywhere.
 //
-// Staff read the whole picture: DMC's starting values (db/migrations/017), the
-// order's purchase orders and each supplier's past deliveries. A customer can
-// read none of those, so in their browser the estimate uses the built-in
-// placeholders and the records of each step as a whole.
+// Staff estimates are worked out here in the browser: staff can read DMC's
+// starting values, the order's purchase orders and the suppliers' deliveries. A
+// customer can read none of those, so their estimates come from the server
+// (server/routes/estimates.js), which returns only the dates and plain words.
 // =============================================================================
 
-const byTime = (a, b) => new Date(a.changed_at).getTime() - new Date(b.changed_at).getTime()
+const API = `${import.meta.env.VITE_SERVER_URL}/api`
 
-// Rows, or none when the table can't be read (no access, or 017 not run yet).
-const rowsOf = (result) => (result.error ? [] : result.data || [])
+const byTime = (a, b) => new Date(a.changed_at).getTime() - new Date(b.changed_at).getTime()
 
 
 // Every recorded status change, oldest first. Estimates learn from all orders'
@@ -37,85 +35,9 @@ export async function loadStatusHistory() {
 }
 
 
-// DMC's starting values, entered on Prediction settings.
-async function loadStartingValues() {
-  const [settings, suppliers, countries, busyMonths] = await Promise.all([
-    supabase.from('prediction_settings').select('key, days, is_placeholder'),
-    supabase.from('prediction_suppliers').select('supplier_id, usual_lead_days, late_frequency, usual_late_days'),
-    supabase.from('prediction_countries').select('country, sailing_days, extra_labeling_days, is_placeholder'),
-    supabase.from('prediction_busy_months').select('month, extra_days'),
-  ])
-
-  return {
-    settings: rowsOf(settings),
-    startingSuppliers: Object.fromEntries(rowsOf(suppliers).map((row) => [row.supplier_id, row])),
-    countries: rowsOf(countries),
-    busyMonths: rowsOf(busyMonths),
-  }
-}
-
-
-// The orders' items, delivery countries and purchase orders, the supplier
-// names, and every supplier's past deliveries.
-async function loadOrderDetails(orders) {
-  const orderIds = orders.map((order) => order.id)
-  const locationIds = [...new Set(orders.map((order) => order.delivery_location_id).filter(Boolean))]
-
-  if (!orderIds.length) return { items: [], locations: [], purchaseOrders: [], poLines: [], names: {}, histories: {} }
-
-  const [items, locations, purchaseOrders, suppliers, deliveries] = await Promise.all([
-    supabase.from('customer_order_items').select('customer_order_id, quantity, products ( supplier_id )').in('customer_order_id', orderIds),
-    locationIds.length
-      ? supabase.from('delivery_locations').select('id, country').in('id', locationIds)
-      : Promise.resolve({ data: [] }),
-    supabase.from('purchase_orders').select('id, customer_order_id, expected_delivery_date').in('customer_order_id', orderIds),
-    supabase.from('suppliers').select('id, supplier_name'),
-    loadDeliveries().catch(() => []),
-  ])
-
-  const poIds = rowsOf(purchaseOrders).map((order) => order.id)
-  const poLines = poIds.length
-    ? rowsOf(await supabase.from('purchase_order_items').select('purchase_order_id, supplier_id, fully_received_at').in('purchase_order_id', poIds))
-    : []
-
-  return {
-    items: rowsOf(items),
-    locations: rowsOf(locations),
-    purchaseOrders: rowsOf(purchaseOrders),
-    poLines,
-    names: Object.fromEntries(rowsOf(suppliers).map((supplier) => [supplier.id, supplier.supplier_name])),
-    histories: supplierHistories(deliveries),
-  }
-}
-
-
-// Predictions for several orders at once, with every order's history. Orders
-// need id, status and created_at; requested_ship_date and delivery_location_id
-// make the estimate check the customer's date and country.
+// Staff: predictions for several orders at once, with every order's history.
 export async function loadEstimates(orders) {
-  const [history, starting, details] = await Promise.all([
-    loadStatusHistory(),
-    loadStartingValues(),
-    loadOrderDetails(orders),
-  ])
-
-  const { stageStatistics, historyByOrder } = buildStageStatistics(history)
-
-  const predictions = orders.map((order) => predictOrder(order, stageStatistics, historyByOrder, estimateContext({
-    order,
-    items: details.items.filter((item) => item.customer_order_id === order.id),
-    purchaseOrders: details.purchaseOrders.filter((purchaseOrder) => purchaseOrder.customer_order_id === order.id),
-    poLines: details.poLines,
-    histories: details.histories,
-    startingSuppliers: starting.startingSuppliers,
-    supplierNames: details.names,
-    settings: starting.settings,
-    countries: starting.countries,
-    busyMonths: starting.busyMonths,
-    country: details.locations.find((location) => location.id === order.delivery_location_id)?.country,
-  })))
-
-  return { predictions, historyByOrder }
+  return estimateOrders(supabase, orders, await loadStatusHistory())
 }
 
 
@@ -124,15 +46,65 @@ export async function predictOrders(orders) {
 }
 
 
-// Everything the progress tracker needs for one order: its own status
-// changes (for the step dates) and its prediction.
-export async function loadOrderProgress(order) {
-  const { predictions, historyByOrder } = await loadEstimates([order])
+// Staff: an order not placed yet, as if its down payment were made today, e.g.
+// a quotation request being priced. items: [{ product_id, quantity }]
+export async function previewEstimate({ items, deliveryLocationId, requestedShipDate }) {
+  return estimateDraft(supabase, { items, deliveryLocationId, requestedShipDate, history: await loadStatusHistory() })
+}
 
-  return {
-    history: [...(historyByOrder[order.id] || [])].sort(byTime),
-    prediction: predictions[0],
+
+// Calls DMC's server for a customer's estimates.
+async function callServer(path, body) {
+  const headers = await authHeaders()
+
+  if (!headers.Authorization) throw new Error('Your session has ended. Please sign in again.')
+
+  const response = await fetch(`${API}/customer/estimates${path}`, {
+    method: body ? 'POST' : 'GET',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: body ? JSON.stringify(body) : undefined,
+  })
+
+  const result = await response.json().catch(() => ({}))
+
+  if (!response.ok) throw new Error(result.error || 'Estimates are unavailable right now.')
+
+  return result
+}
+
+
+// Customer: their own orders' estimates, by order id.
+export async function loadMyEstimates() {
+  const { estimates } = await callServer('')
+  return Object.fromEntries((estimates || []).map((estimate) => [estimate.orderId, estimate]))
+}
+
+
+// Customer: a quotation request or quotation's estimate, as if paid today.
+export async function previewMyEstimate({ items, deliveryLocationId, requestedShipDate }) {
+  const { estimate } = await callServer('/draft', { items, deliveryLocationId, requestedShipDate })
+  return estimate
+}
+
+
+// Everything the progress tracker needs for one order: its own status changes
+// (for the step dates) and its prediction. A customer's prediction comes from
+// the server; if the server can't be reached, from the browser's partial view.
+export async function loadOrderProgress(order, { forStaff = true } = {}) {
+  const history = await loadStatusHistory()
+  const own = history.filter((entry) => entry.customer_order_id === order.id).sort(byTime)
+
+  if (!forStaff) {
+    try {
+      const estimates = await loadMyEstimates()
+      if (estimates[order.id]) return { history: own, prediction: estimates[order.id] }
+    } catch (error) {
+      console.error('Server estimate unavailable, estimating in the browser:', error)
+    }
   }
+
+  const { predictions } = await estimateOrders(supabase, [order], history)
+  return { history: own, prediction: predictions[0] }
 }
 
 

@@ -78,11 +78,18 @@ function statusLine(order) {
 
 function readinessLine(order) {
   if (order.shippedOn) return `${order.orderNumber}: already shipped on ${order.shippedOn}.`
-  if (order.progress.status === 'Ready for shipment') return `${order.orderNumber}: already ready for shipment.`
-  if (order.estimatedReady) {
-    return `${order.orderNumber}: estimated ready for shipment by ${order.estimatedReady.readyForShipmentBy}.`
+
+  const e = order.estimatedShipment
+  if (e) {
+    const when = e.onlyIfDownPaymentIsPaidToday ? 'if the down payment is made today, it ships around' : 'estimated to ship around'
+    const range = e.likelyBetween ? ` (likely between ${e.likelyBetween})` : ''
+    const arrival = e.arrivalAtYourPort ? `, arriving at your port around ${e.arrivalAtYourPort}` : ''
+    const compared = e.comparedWithRequestedDate ? ` ${e.comparedWithRequestedDate}` : ''
+    return `${order.orderNumber}: ${when} ${e.shipsAround}${range}${arrival}.${compared}`
   }
-  return `${order.orderNumber}: an estimated ready date isn't available yet.`
+
+  if (order.progress.status === 'Ready for shipment') return `${order.orderNumber}: already ready for shipment.`
+  return `${order.orderNumber}: an estimated ship date isn't available yet.`
 }
 
 const paymentLine = (order) => `${order.orderNumber}: ${describePayment(order.payment)}.`
@@ -160,13 +167,13 @@ export function getFallbackReply(message, context) {
 
   if (intent === 'greeting') {
     const count = context.totals.orders
-    return `Hello${firstName ? ` ${firstName}` : ''}! You have ${count} ${count === 1 ? 'order' : 'orders'} with DMC. Ask me where an order is, when it should be ready, what you still owe, or about your quotations.`
+    return `Hello${firstName ? ` ${firstName}` : ''}! You have ${count} ${count === 1 ? 'order' : 'orders'} with DMC. Ask me where an order is, when it should ship, what you still owe, or about your quotations.`
   }
 
   if (intent === 'help') {
     return `You can ask me things like:\n${list([
       'Where are my orders now?',
-      'When will my order be ready for shipment?',
+      'When will my order ship?',
       'What do I still owe?',
       'When does my quotation expire?',
       'What is the minimum order for a product?',
@@ -216,7 +223,7 @@ export function getFallbackReply(message, context) {
   if (intent === 'readiness') {
     const active = named ? orders : orders.filter((order) => !order.shippedOn)
     if (!active.length) return 'All your orders have already shipped.'
-    return `${orderLines(active, readinessLine)}\n\nThese are estimates based on past orders, not guaranteed dates.`
+    return `${orderLines(active, readinessLine)}\n\nThese are estimates based on past orders and DMC's usual times, not guaranteed dates.`
   }
 
   if (intent === 'labels') {

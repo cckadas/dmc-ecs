@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../supabaseAdmin.js'
+import { customerViewOf } from '../estimates.js'
 import { describePayment } from './describe.js'
 
 
@@ -167,7 +168,7 @@ export async function buildCustomerContext(customerId, message) {
       supabaseAdmin
         .from('customer_orders')
         .select(`
-          id, order_number, quotation_number, status, created_at, estimated_ship_date, expiry_date,
+          id, order_number, quotation_number, status, created_at, requested_ship_date, delivery_location_id, expiry_date,
           total_amount, down_payment_amount, settled_amount, pending_payment_amount, rejection_reason,
           pfi_file_path, pack_list_path, cert_shipment_path, cert_clearance_path,
           customer_order_items ( id, quantity, unit_price, subtotal, products ( product_name, family, pack_size, unit ) )
@@ -226,6 +227,19 @@ export async function buildCustomerContext(customerId, message) {
       )
     : []
 
+  // Each order's ship date estimate, the same as My Orders shows. Worked out
+  // from all of DMC's records (server/estimates.js), but only the customer-safe
+  // part comes back: dates and plain words, never suppliers or reasons.
+  let shipEstimates = {}
+  if (predictions) {
+    try {
+      const views = await customerViewOf(shownOrders, history)
+      shipEstimates = Object.fromEntries(views.map((view) => [view.orderId, view]))
+    } catch (error) {
+      console.warn('Order assistant: ship date estimates unavailable.', error.message)
+    }
+  }
+
   const orderContext = shownOrders.map((order) => {
     const status = String(order.status || '').trim().toLowerCase()
     const total = Number(order.total_amount || 0)
@@ -261,15 +275,20 @@ export async function buildCustomerContext(customerId, message) {
       }
     }
 
+    const view = shipEstimates[order.id]
     let estimate = null
-    if (stats && status !== 'shipped') {
-      const prediction = predictions.predictOrder(order, stats.stageStatistics, stats.historyByOrder)
-      if (prediction.estimatedReadyDate) {
-        estimate = {
-          readyForShipmentBy: formatTimestamp(prediction.estimatedReadyDate),
-          confidencePercent: prediction.confidence,
-          note: 'An estimate based on past orders, not a confirmed or guaranteed date.',
-        }
+    if (view && !view.shipped && view.estimatedShipDate) {
+      estimate = {
+        shipsAround: formatTimestamp(view.estimatedShipDate),
+        likelyBetween: view.shipDateRange
+          ? `${formatTimestamp(view.shipDateRange.quick)} and ${formatTimestamp(view.shipDateRange.slow)}`
+          : null,
+        arrivalAtYourPort: formatTimestamp(view.estimatedArrivalDate),
+        onlyIfDownPaymentIsPaidToday: view.ifPaidToday,
+        requestedShipDate: formatDateOnly(view.requestedShipDate),
+        comparedWithRequestedDate: view.customerNote,
+        roughEstimate: view.roughEstimate,
+        note: 'An estimate based on past orders and DMC\'s usual times, not a confirmed or guaranteed date.',
       }
     }
 
@@ -292,7 +311,7 @@ export async function buildCustomerContext(customerId, message) {
       quotationNumber: order.quotation_number,
       placedOn: formatTimestamp(order.created_at),
       progress: progressInfo,
-      estimatedReady: estimate,
+      estimatedShipment: estimate,
       shippedOn: status === 'shipped'
         ? formatTimestamp(orderHistory.filter((entry) => String(entry.new_status).toLowerCase() === 'shipped').at(-1)?.changed_at)
         : null,
