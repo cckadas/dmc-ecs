@@ -46,6 +46,8 @@ export default function MyOrdersPage() {
         container_cost,
         shipping_cost,
         estimated_ship_date,
+        requested_ship_date,
+        delivery_location_id,
         total_amount,
         down_payment_amount,
         status,

@@ -10,6 +10,8 @@ import CustomerOrderCard from '../components/CustomerOrderCard'
 import PurchaseOrderCard from '../components/PurchaseOrderCard'
 import ComplianceLabelCard from '../components/ComplianceLabelCard'
 import { predictOrders } from '../services/predictionService'
+import { loadSupplierScores } from '../services/supplierScoreService'
+import { MIN_DELIVERIES } from '../utils/supplierScores'
 import { OrderStepsBar } from '../components/OrderProgress'
 
 
@@ -278,39 +280,23 @@ export default function ExecutiveDashboard() {
 
 
       // =================================================
-      // LOAD SUPPLIER PERFORMANCE
+      // DELIVERY SCORES, WORKED OUT FROM ACTUAL DELIVERIES
+      // (utils/supplierScores.js, the same as Supplier Performance)
       // =================================================
-      const { data: performance, error: performanceError } = await supabase
-        .from('supplier_performance')
-        .select(`
-          id,
-          supplier_id,
-          total_orders,
-          on_time_deliveries,
-          late_deliveries,
-          average_lead_time_days,
-          reliability_rating,
-          notes,
-          created_at,
-          updated_at
-        `)
+      const scores = await loadSupplierScores(allSuppliers.map((supplier) => supplier.id))
 
-      if (performanceError) {
-        throw performanceError
-      }
-
-      const performanceRecords = performance || []
-
-
-      // =================================================
-      // MATCH EACH SUPPLIER WITH ITS LATEST PERFORMANCE
-      // =================================================
-      const supplierPerformanceData = allSuppliers.map((supplier) => {
-        const supplierRecords = performanceRecords.filter((record) => record.supplier_id === supplier.id)
-        const latestPerformance = supplierRecords.length > 0 ? supplierRecords[0] : null
-
-        return { supplier, performance: latestPerformance }
-      })
+      // Lowest score first, so the suppliers to watch are at the top; suppliers
+      // without enough deliveries for a score come last.
+      const supplierPerformanceData = allSuppliers
+        .map((supplier) => ({ supplier, score: scores[supplier.id] }))
+        .sort((a, b) => {
+          const scoreA = a.score?.score ?? null
+          const scoreB = b.score?.score ?? null
+          if (scoreA === null && scoreB === null) return 0
+          if (scoreA === null) return 1
+          if (scoreB === null) return -1
+          return scoreA - scoreB
+        })
 
       setSupplierPerformance(supplierPerformanceData)
     }
@@ -344,8 +330,9 @@ export default function ExecutiveDashboard() {
           order_number,
           quotation_number,
           status,
-          estimated_ship_date,
-          created_at
+          created_at,
+          requested_ship_date,
+          delivery_location_id
         `)
         .not('status', 'in', '(shipped,cancelled)')
 
@@ -353,8 +340,9 @@ export default function ExecutiveDashboard() {
         throw activeOrdersError
       }
 
-      // Statistical predictions from past orders' stage durations, shared
-      // with the order progress tracker (services/predictionService.js).
+      // Each order's estimate: the time left in each step, waiting on its
+      // slowest supplier (services/predictionService.js, the same as the
+      // order progress tracker).
       const predictions = await predictOrders(activeOrders || [])
 
       // Sort at-risk orders first
@@ -367,7 +355,7 @@ export default function ExecutiveDashboard() {
           return 1
         }
 
-        return (new Date(a.estimatedReadyDate || 0) - new Date(b.estimatedReadyDate || 0))
+        return (new Date(a.estimatedShipDate || 0) - new Date(b.estimatedShipDate || 0))
       })
 
       setShipmentPredictions(predictions)
@@ -531,6 +519,11 @@ function PredictiveShipmentCard({ predictions, loading }) {
     return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(date))
   }
 
+  const formatShortDate = (date) => {
+    if (!date) return '—'
+    return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(date))
+  }
+
   const formatStatus = (status) => {
     if (!status) return '—'
 
@@ -669,14 +662,30 @@ function PredictiveShipmentCard({ predictions, loading }) {
                     </div>
 
                     {/* PREDICTION DETAILS */}
-                    <div className="mt-3 grid grid-cols-2 gap-3">
+                    <div className="mt-3 grid grid-cols-3 gap-3">
                       <div>
                         <p className="text-[11px] text-gray-400">
-                          Estimated Ready
+                          {prediction.ifPaidToday ? 'Ships If Paid Today' : 'Estimated Ship Date'}
                         </p>
 
                         <p className="mt-0.5 text-sm font-medium text-gray-700">
-                          {formatDate( prediction.estimatedReadyDate )}
+                          {formatDate( prediction.estimatedShipDate )}
+                        </p>
+
+                        {prediction.shipDateRange && (
+                          <p className="text-[11px] text-gray-400">
+                            Likely {formatShortDate(prediction.shipDateRange.quick)} to {formatShortDate(prediction.shipDateRange.slow)}
+                          </p>
+                        )}
+                      </div>
+
+                      <div>
+                        <p className="text-[11px] text-gray-400">
+                          Requested
+                        </p>
+
+                        <p className="mt-0.5 text-sm font-medium text-gray-700">
+                          {formatDate( prediction.requestedShipDate )}
                         </p>
                       </div>
 
@@ -697,10 +706,18 @@ function PredictiveShipmentCard({ predictions, loading }) {
                       </div>
                     </div>
 
-                    {/* RISK REASON */}
-                    {prediction.risk === 'at risk' && (
-                      <p className="mt-3 text-xs leading-5 text-red-500">
-                        {prediction.riskReason}
+                    {/* RISK REASONS */}
+                    {prediction.riskReasons?.length > 0 && (
+                      <ul className="mt-3 space-y-0.5 text-xs leading-5 text-red-500">
+                        {prediction.riskReasons.map((reason) => (
+                          <li key={reason}>{reason}</li>
+                        ))}
+                      </ul>
+                    )}
+
+                    {prediction.roughEstimate && (
+                      <p className="mt-2 text-[11px] text-gray-400">
+                        Rough estimate: few finished orders to learn from yet.
                       </p>
                     )}
                   </div>
@@ -733,25 +750,14 @@ function SupplierPerformanceCard({ performance, loading }) {
   // =====================================================
   // HELPERS
   // =====================================================
-  const formatRating = (rating) => {
-    if (rating === null || rating === undefined) { return '—' }
-    return Number(rating).toFixed(1)
-  }
+  const BAR_COLORS = { good: 'bg-[#2D5A42]', warning: 'bg-amber-500', bad: 'bg-red-500' }
+  const LABEL_COLORS = { good: 'text-[#2D5A42]', warning: 'text-amber-700', bad: 'text-red-600' }
 
-  const getRatingPercentage = (rating) => {
-    if (rating === null || rating === undefined) { return 0 }
-    return Math.min(Math.max((Number(rating) / 5) * 100, 0), 100)
-  }
+  const formatPercent = (value) => (value === null || value === undefined ? '—' : `${Math.round(value * 100)}%`)
 
-  const getRatingLabel = (rating) => {
-    if (rating === null || rating === undefined) { return 'No rating' }
-
-    const value = Number(rating)
-
-    if (value >= 4.5) { return 'Excellent' }
-    if (value >= 3.5) { return 'Good' }
-    if (value >= 2.5) { return 'Fair' }
-    return 'Poor'
+  const formatDays = (value) => {
+    if (value === null || value === undefined) { return '—' }
+    return `${Number.isInteger(value) ? value : value.toFixed(1)} days`
   }
 
 
@@ -759,8 +765,8 @@ function SupplierPerformanceCard({ performance, loading }) {
   // SUMMARY
   // =====================================================
   const totalSuppliers = performance.length
-  const suppliersWithData = performance.filter((item) => item.performance !== null).length
-  const suppliersWithoutData = totalSuppliers - suppliersWithData
+  const scoredSuppliers = performance.filter((item) => item.score?.score !== null && item.score?.score !== undefined).length
+  const unscoredSuppliers = totalSuppliers - scoredSuppliers
 
 
   // =====================================================
@@ -780,7 +786,7 @@ function SupplierPerformanceCard({ performance, loading }) {
             </h2>
 
             <p className="text-xs text-gray-400">
-              Supplier performance
+              Scores from actual deliveries
             </p>
           </div>
         </div>
@@ -812,7 +818,7 @@ function SupplierPerformanceCard({ performance, loading }) {
             </h2>
 
             <p className="text-xs text-gray-400">
-              Supplier performance
+              Scores from actual deliveries
             </p>
           </div>
         </div>
@@ -849,7 +855,7 @@ function SupplierPerformanceCard({ performance, loading }) {
             </h2>
 
             <p className="text-xs text-gray-400">
-              Latest supplier performance
+              Scores from actual deliveries, lowest first
             </p>
           </div>
         </div>
@@ -872,21 +878,21 @@ function SupplierPerformanceCard({ performance, loading }) {
 
         <div className="border-l border-gray-100 px-5 py-4">
           <p className="text-xs text-gray-400">
-            Rated
+            Scored
           </p>
 
           <p className="mt-1 text-2xl font-bold text-[#2D5A42]">
-            {suppliersWithData}
+            {scoredSuppliers}
           </p>
         </div>
 
         <div className="border-l border-gray-100 px-5 py-4">
           <p className="text-xs text-gray-400">
-            Unrated
+            Not Enough Deliveries
           </p>
 
           <p className="mt-1 text-2xl font-bold text-gray-500">
-            {suppliersWithoutData}
+            {unscoredSuppliers}
           </p>
         </div>
       </div>
@@ -897,13 +903,8 @@ function SupplierPerformanceCard({ performance, loading }) {
       ============================================= */}
       <div className="divide-y divide-gray-100">
 
-        {performance.map((item) => {
-
-          const supplier = item.supplier
-          const supplierRecord = item.performance
-
-          const rating = supplierRecord?.reliability_rating
-          const hasPerformance = supplierRecord !== null && rating !== null && rating !== undefined
+        {performance.map(({ supplier, score }) => {
+          const scored = score?.score !== null && score?.score !== undefined
 
           return (
             <div key={supplier.id} className="px-5 py-4">
@@ -917,10 +918,10 @@ function SupplierPerformanceCard({ performance, loading }) {
                     {supplier.supplier_name || 'Unnamed Supplier'}
                   </p>
 
-                  {hasPerformance ? (
+                  {scored ? (
 
-                    <p className="mt-0.5 text-xs text-gray-400">
-                      {getRatingLabel(rating)}
+                    <p className={`mt-0.5 text-xs font-medium ${LABEL_COLORS[score.band.tone]}`}>
+                      {score.band.label}
                     </p>
 
                   ) : (
@@ -929,7 +930,7 @@ function SupplierPerformanceCard({ performance, loading }) {
                       <FontAwesomeIcon icon={faCircleExclamation} className="h-3 w-3 text-gray-400"/>
 
                       <p className="text-xs text-gray-400">
-                        No performance data
+                        Not enough deliveries yet ({score?.count ?? 0} of {MIN_DELIVERIES})
                       </p>
                     </div>
 
@@ -939,23 +940,19 @@ function SupplierPerformanceCard({ performance, loading }) {
                 {/* =================================
                     SCORE
                 ================================= */}
-                {hasPerformance ? (
+                {scored ? (
 
-                  <div className="flex shrink-0 items-center gap-2">
-                    <div className="text-right">
-                      <p className="text-sm font-bold text-gray-800">
-                        {formatRating(rating)}
-                        <span className="ml-0.5 text-xs font-normal text-gray-400">
-                          / 5
-                        </span>
-                      </p>
-                    </div>
-                  </div>
+                  <p className="shrink-0 text-sm font-bold text-gray-800">
+                    {score.score}
+                    <span className="ml-0.5 text-xs font-normal text-gray-400">
+                      / 100
+                    </span>
+                  </p>
 
                 ) : (
 
                   <span className="shrink-0 rounded-full bg-gray-50 px-2.5 py-1 text-[11px] font-medium text-gray-400">
-                    Unrated
+                    No score
                   </span>
 
                 )}
@@ -965,31 +962,25 @@ function SupplierPerformanceCard({ performance, loading }) {
               {/* =================================
                   SCORE BAR
               ================================= */}
-              {hasPerformance && (
-                <div className="mt-3 flex items-center gap-3">
-                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-100">
-                    <div className="h-full rounded-full bg-[#2D5A42]" style={{ width: `${getRatingPercentage(rating)}%` }}/>
-                  </div>
-
-                  <span className="text-[11px] text-gray-400">
-                    {getRatingLabel(rating)}
-                  </span>
+              {scored && (
+                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-gray-100">
+                  <div className={`h-full rounded-full ${BAR_COLORS[score.band.tone]}`} style={{ width: `${score.score}%` }}/>
                 </div>
               )}
 
 
               {/* =================================
-                  PERFORMANCE DETAILS
+                  DELIVERY DETAILS
               ================================= */}
-              {hasPerformance && (
+              {score?.count > 0 && (
                 <div className="mt-3 grid grid-cols-3 gap-3">
                   <div>
                     <p className="text-[10px] text-gray-400">
-                      Total Orders
+                      Deliveries
                     </p>
 
                     <p className="mt-0.5 text-xs font-medium text-gray-700">
-                      {supplierRecord.total_orders ?? 0}
+                      {score.count}
                     </p>
                   </div>
 
@@ -999,17 +990,17 @@ function SupplierPerformanceCard({ performance, loading }) {
                     </p>
 
                     <p className="mt-0.5 text-xs font-medium text-gray-700">
-                      {supplierRecord.on_time_deliveries ?? 0}
+                      {formatPercent(score.onTimeRate)}
                     </p>
                   </div>
 
                   <div>
                     <p className="text-[10px] text-gray-400">
-                      Avg. Lead Time
+                      Usual Lead Time
                     </p>
 
                     <p className="mt-0.5 text-xs font-medium text-gray-700">
-                      {supplierRecord.average_lead_time_days !== null && supplierRecord.average_lead_time_days !== undefined ? `${supplierRecord.average_lead_time_days} days` : '—'}
+                      {formatDays(score.usualLeadDays)}
                     </p>
                   </div>
                 </div>

@@ -9,6 +9,9 @@ import { loadOrderProgress } from '../services/predictionService'
 const formatDate = (date) =>
   date ? date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : ''
 
+const formatShortDate = (date) =>
+  date ? new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''
+
 const formatPeso = (value) =>
   `₱${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
@@ -17,12 +20,13 @@ const formatPeso = (value) =>
 // ORDER PROGRESS
 //
 // Where an order is in its journey, with the date each step was reached,
-// the predicted ready date (the same estimate as the Executive Dashboard),
-// and what is still owed. Needs the order's id, status, created_at,
-// estimated_ship_date, total_amount, settled_amount, pending_payment_amount,
-// down_payment_amount and expiry_date.
+// the estimated ship date and its likely range (the same estimate as the
+// Executive Dashboard), and what is still owed. Needs the order's id, status,
+// created_at, requested_ship_date, delivery_location_id, total_amount,
+// settled_amount, pending_payment_amount, down_payment_amount and expiry_date.
+// forStaff adds the confidence and the reasons, which can name suppliers.
 // =============================================
-export default function OrderProgress({ order }) {
+export default function OrderProgress({ order, forStaff = false }) {
   const [history, setHistory] = useState([])
   const [prediction, setPrediction] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -97,28 +101,82 @@ export default function OrderProgress({ order }) {
         })}
       </ol>
 
-      {/* Estimated ready date and payment */}
+      {/* Estimated ship date and payment */}
       <div className="mt-4 space-y-1 rounded-md bg-gray-50 p-3 text-sm">
-        <p className="text-gray-700">
-          {shipped ? (
-            <>Shipped{dates[5] ? ` on ${formatDate(dates[5])}` : ''}.</>
-          ) : loading ? (
-            'Estimating ready date...'
-          ) : prediction?.estimatedReadyDate ? (
-            <>
-              <span className="font-medium">Estimated ready for shipment: {formatDate(new Date(prediction.estimatedReadyDate))}</span>
-              <span className="text-gray-500"> · an estimate from past orders ({prediction.confidence}% confidence)</span>
-            </>
-          ) : (
-            <span className="text-gray-500">Estimated ready date not available yet.</span>
-          )}
-        </p>
+        {shipped ? (
+          <p className="text-gray-700">Shipped{dates[5] ? ` on ${formatDate(dates[5])}` : ''}.</p>
+        ) : loading ? (
+          <p className="text-gray-700">Estimating the ship date...</p>
+        ) : prediction?.estimatedShipDate ? (
+          <EstimateLines prediction={prediction} forStaff={forStaff} />
+        ) : (
+          <p className="text-gray-500">Estimated ship date not available yet.</p>
+        )}
 
         <p className="text-gray-700">
           <PaymentLine order={order} />
         </p>
       </div>
     </div>
+  )
+}
+
+
+// The estimate: ship date, likely range, arrival, and how it compares with the
+// date the customer asked for. Customers get a range and plain words; staff
+// also get the confidence and the reasons, which can name suppliers.
+function EstimateLines({ prediction, forStaff }) {
+  const requested = prediction.requestedShipDate
+    ? formatDate(new Date(`${prediction.requestedShipDate}T00:00:00`))
+    : null
+
+  let note = null
+  if (prediction.daysPastRequested > 0) note = `May be later than your requested date (${requested}). DMC will contact you.`
+  else if (prediction.customerNote && prediction.customerNote !== 'On track for your requested date.') note = prediction.customerNote
+  else if (requested) note = `On track for your requested date (${requested}).`
+
+  const late = prediction.risk === 'at risk'
+
+  return (
+    <>
+      <p className="text-gray-700">
+        <span className="font-medium">
+          {prediction.ifPaidToday ? 'If the down payment is made today, it ships around ' : 'Estimated ship date: '}
+          {formatDate(new Date(prediction.estimatedShipDate))}
+        </span>
+        {prediction.shipDateRange && (
+          <span className="text-gray-500">
+            {' '}· likely {formatShortDate(prediction.shipDateRange.quick)} to {formatShortDate(prediction.shipDateRange.slow)}
+          </span>
+        )}
+      </p>
+
+      {prediction.estimatedArrivalDate && (
+        <p className="text-gray-700">
+          Estimated arrival at your port: {formatDate(new Date(prediction.estimatedArrivalDate))}
+        </p>
+      )}
+
+      {/* Staff see the reasons; customers see them in plain words, never a supplier's name. */}
+      {forStaff ? (
+        <>
+          {prediction.riskReasons?.map((reason) => (
+            <p key={reason} className="font-medium text-red-700">{reason}</p>
+          ))}
+          {!late && requested && <p className="text-green-700">On track for the requested date ({requested}).</p>}
+          <p className="text-xs text-gray-500">
+            {prediction.confidence}% confidence{prediction.roughEstimate ? ' · rough estimate: few finished orders to learn from yet' : ''}
+          </p>
+        </>
+      ) : (
+        <>
+          {note && <p className={`font-medium ${late ? 'text-amber-700' : 'text-green-700'}`}>{note}</p>}
+          <p className="text-xs text-gray-500">
+            An estimate from past orders and DMC's usual times, not a guaranteed date{prediction.roughEstimate ? ' (a rough one for now)' : ''}.
+          </p>
+        </>
+      )}
+    </>
   )
 }
 

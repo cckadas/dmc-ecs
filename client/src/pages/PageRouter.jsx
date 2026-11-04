@@ -16,6 +16,7 @@ import PaymentsPage from "./Payments"
 import ProductCatalogPage from "./ProductCatalog"
 import ProFormaInvoicePage from "./ProFormaInvoice"
 import PricingCreditPage from "./PricingCredit"
+import PredictionSettingsPage from "./PredictionSettings"
 import PurchaseOrdersPage from "./PurchaseOrders"
 import QuotationRequestsPage from "./QuotationRequests"
 import ReceivingPage from "./Receiving"
@@ -84,6 +85,9 @@ export default function PageRouter(){
 
     case "pricing-credit":
       return <PricingCreditPage />
+
+    case "prediction-settings":
+      return <PredictionSettingsPage />
 
     case "price-lists":
       return <SupplierPriceListsPage />

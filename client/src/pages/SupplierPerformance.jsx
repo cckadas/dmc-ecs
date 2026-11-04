@@ -4,7 +4,9 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useToast } from '../context/ToastContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faStar, faXmark, faFloppyDisk, faClipboardCheck, faClock, faTriangleExclamation, faChartLine, faSquarePollVertical } from '@fortawesome/free-solid-svg-icons'
+import { faStar, faXmark, faFloppyDisk, faClipboardCheck, faClock, faTriangleExclamation, faChartLine, faSquarePollVertical, faTruck } from '@fortawesome/free-solid-svg-icons'
+import { loadSupplierScore } from '../services/supplierScoreService'
+import { MIN_DELIVERIES, LATE_POINTS_PER_DAY } from '../utils/supplierScores'
 
 
 export default function SupplierPerformancePage() {
@@ -61,152 +63,24 @@ export default function SupplierPerformancePage() {
     setLoadingPerformance(true)
 
     try {
+      // The delivery score is worked out from actual deliveries. The staff
+      // rating and notes are what staff last saved for this supplier.
+      const [score, { data: staffRating, error: ratingError }] = await Promise.all([
+        loadSupplierScore(supplierId),
+        supabase
+          .from('supplier_performance')
+          .select('id, reliability_rating, notes, updated_at')
+          .eq('supplier_id', supplierId)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ])
 
-      // =============================================
-      // LOAD SAVED PERFORMANCE RATING
-      // =============================================
-      const {
-        data: performanceData,
-        error: performanceError,
-      } = await supabase
-        .from('supplier_performance')
-        .select(`
-          id,
-          supplier_id,
-          total_orders,
-          on_time_deliveries,
-          late_deliveries,
-          average_lead_time_days,
-          reliability_rating,
-          notes,
-          created_at,
-          updated_at
-        `)
-        .eq('supplier_id', supplierId)
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-
-
-      if (performanceError) {
-        throw performanceError
+      if (ratingError) {
+        throw ratingError
       }
 
-
-      // =============================================
-      // LOAD PURCHASE ORDERS FOR SUPPLIER
-      // =============================================
-      const { data: orderItems, error: orderItemsError } = await supabase
-        .from('purchase_order_items')
-        .select(`
-          purchase_order_id,
-          supplier_id,
-          purchase_orders (
-            id,
-            expected_delivery_date,
-            updated_at,
-            created_at,
-            status
-          )
-        `)
-        .eq('supplier_id', supplierId)
-
-      if (orderItemsError) {
-        throw orderItemsError
-      }
-
-
-      // =============================================
-      // REMOVE DUPLICATE PURCHASE ORDERS
-      // ONLY INCLUDE FULLY DELIVERED ORDERS
-      // =============================================
-      const uniqueOrders = []
-      const seenOrderIds = new Set()
-
-      ;(orderItems || []).forEach((item) => {
-        const purchaseOrder = item.purchase_orders
-
-        if (!purchaseOrder?.id) {
-          return
-        }
-
-        if (purchaseOrder.status !== 'fully delivered') {
-          return
-        }
-
-        if (seenOrderIds.has(purchaseOrder.id)) {
-          return
-        }
-
-        seenOrderIds.add(purchaseOrder.id)
-        uniqueOrders.push(purchaseOrder)
-      })
-
-      // =============================================
-      // DETERMINE DELIVERY PERFORMANCE
-      // =============================================
-      let totalOrders = uniqueOrders.length
-      let onTimeDeliveries = 0
-      let lateDeliveries = 0
-      let totalLeadTime = 0
-      let leadTimeCount = 0
-
-      uniqueOrders.forEach((order) => {
-        if (!order.expected_delivery_date) {
-          return
-        }
-
-        if (!order.updated_at) {
-          return
-        }
-
-        const expectedDate = new Date(`${order.expected_delivery_date}T23:59:59`)
-        const updatedDate = new Date(order.updated_at)
-
-        // =========================================
-        // ON TIME OR LATE
-        // =========================================
-        if (updatedDate <= expectedDate) {
-          onTimeDeliveries++
-        }
-
-        else {
-          lateDeliveries++
-        }
-
-        // =========================================
-        // LEAD TIME
-        // =========================================
-        if (order.created_at) {
-          const createdDate = new Date(order.created_at)
-          const difference = updatedDate.getTime() - createdDate.getTime()
-          const days = difference / (1000 * 60 * 60 * 24)
-
-          if (days >= 0) {
-            totalLeadTime += days
-            leadTimeCount++
-          }
-        }
-      })
-
-      const averageLeadTime = leadTimeCount > 0 ? Number((totalLeadTime / leadTimeCount).toFixed(2)) : null
-
-
-      // =============================================
-      // USE ACTUAL CALCULATED VALUES
-      // =============================================
-      setPerformance({
-        id: performanceData?.id || null,
-        supplier_id: supplierId,
-        total_orders: totalOrders,
-        on_time_deliveries: onTimeDeliveries,
-        late_deliveries: lateDeliveries,
-        average_lead_time_days: averageLeadTime,
-        reliability_rating: performanceData?.reliability_rating ?? null,
-        notes: performanceData?.notes || '',
-        created_at:  performanceData?.created_at || null,
-        updated_at: performanceData?.updated_at || null,
-      })
+      setPerformance({ score, staffRating })
     }
 
     catch (error) {
@@ -336,7 +210,7 @@ export default function SupplierPerformancePage() {
       // =============================================
       // SUCCESS
       // =============================================
-      toast.success('Supplier performance rated successfully.')
+      toast.success('Staff rating saved.')
       setShowRatingModal(false)
 
       if ( selectedSupplierId === ratingData.supplier_id) {
@@ -356,9 +230,10 @@ export default function SupplierPerformancePage() {
 
 
   // =============================================
-  // CALCULATE ON-TIME RATE
+  // DISPLAYED VALUES
   // =============================================
-  const onTimeRate = performance?.total_orders > 0 ? ((performance.on_time_deliveries / performance.total_orders) * 100).toFixed(1) : null
+  const score = performance?.score
+  const staffRating = performance?.staffRating
 
 
   // =============================================
@@ -377,7 +252,7 @@ export default function SupplierPerformancePage() {
           </h1>
 
           <p className="mt-1 text-gray-500">
-            Monitor and evaluate supplier performance.
+            Delivery scores worked out from actual deliveries, plus your staff rating.
           </p>
         </div>
 
@@ -387,7 +262,7 @@ export default function SupplierPerformancePage() {
           className="flex items-center gap-2 rounded-lg bg-[#1F3A2C] px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-[#2D5A42]"
         >
           <FontAwesomeIcon icon={faSquarePollVertical} />
-          Rate Supplier Performance
+          Add Staff Rating
         </button>
       </div>
 
@@ -436,7 +311,7 @@ export default function SupplierPerformancePage() {
               CARD HEADER
           ============================================= */}
           <div className="border-b bg-[#F4F8F5] px-6 py-5">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold text-[#1F3A2C]">
                   {selectedSupplier.supplier_name}
@@ -447,19 +322,16 @@ export default function SupplierPerformancePage() {
                 </p>
               </div>
 
-              {performance?.reliability_rating !== null && performance?.reliability_rating !== undefined ? (
-                <div className="flex items-center gap-2 rounded-xl bg-white px-4 py-2 shadow-sm">
-                  <FontAwesomeIcon icon={faStar} className="text-lg text-amber-400" />
+              <div className="flex flex-col items-end gap-1.5">
+                {!loadingPerformance && <ScoreBadge score={score}/>}
 
-                  <span className="text-lg font-bold text-gray-700">
-                    {Number(performance.reliability_rating).toFixed(1)} / 5
+                {staffRating?.reliability_rating !== null && staffRating?.reliability_rating !== undefined && (
+                  <span className="flex items-center gap-1.5 text-xs text-gray-500">
+                    <FontAwesomeIcon icon={faStar} className="text-amber-400" />
+                    Staff rating {Number(staffRating.reliability_rating).toFixed(1)} / 5
                   </span>
-                </div>
-              ) : (
-                <span className="rounded-xl bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-500">
-                  Not rated
-                </span>
-              )}
+                )}
+              </div>
             </div>
           </div>
 
@@ -480,10 +352,11 @@ export default function SupplierPerformancePage() {
               {/* =============================================
                   METRICS
               ============================================= */}
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-                <PerformanceMetricCard icon={faClipboardCheck} label="Total Orders" value={performance?.total_orders ?? 0}/>
-                <PerformanceMetricCard icon={faClock} label="On-Time Deliveries" value={performance?.on_time_deliveries ?? 0}/>
-                <PerformanceMetricCard icon={faTriangleExclamation} label="Late Deliveries" value={performance?.late_deliveries ?? 0}/>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+                <PerformanceMetricCard icon={faTruck} label="Deliveries" value={score?.count ?? 0} note="Last 12 months"/>
+                <PerformanceMetricCard icon={faClipboardCheck} label="On-Time Rate" value={formatPercent(score?.onTimeRate)} note={score?.count ? `${score.onTimeCount} on time, ${score.lateCount} late` : null}/>
+                <PerformanceMetricCard icon={faClock} label="Usual Lead Time" value={formatDays(score?.usualLeadDays)} note={leadRangeNote(score)}/>
+                <PerformanceMetricCard icon={faTriangleExclamation} label="Average Days Late" value={score?.lateCount ? formatDays(score.averageDaysLate) : '—'} note={!score?.count ? null : score.lateCount ? 'Of the late deliveries' : 'None late'}/>
               </div>
 
               {/* =============================================
@@ -497,7 +370,9 @@ export default function SupplierPerformancePage() {
                     </h3>
 
                     <p className="mt-0 text-sm text-gray-500">
-                      Based on purchase order expected delivery dates and latest update dates.
+                      Each delivery's received date compared with the date its PO promised, over the last 12 months.
+                      The score is the on-time rate minus {LATE_POINTS_PER_DAY} points for each average day late,
+                      once a supplier has {MIN_DELIVERIES} deliveries.
                     </p>
                   </div>
                 </div>
@@ -509,29 +384,87 @@ export default function SupplierPerformancePage() {
                     </span>
 
                     <span className="font-semibold text-gray-700">
-                      {onTimeRate !== null ? `${onTimeRate}%` : '—'}
+                      {formatPercent(score?.onTimeRate)}
                     </span>
                   </div>
 
                   <div className="h-2 overflow-hidden rounded-full bg-gray-200">
-                    <div className="h-full rounded-full bg-[#2D5A42] transition-all" style={{ width: `${Math.min(Number(onTimeRate || 0), 100)}%`, }}/>
+                    <div className="h-full rounded-full bg-[#2D5A42] transition-all" style={{ width: `${Math.min((score?.onTimeRate || 0) * 100, 100)}%`, }}/>
                   </div>
                 </div>
               </div>
+
+
+              {/* =============================================
+                  RECENT DELIVERIES
+              ============================================= */}
+              {score?.count > 0 ? (
+                <div className="mt-6">
+                  <h3 className="mb-3 font-semibold text-gray-800">
+                    Recent Deliveries
+                  </h3>
+
+                  <div className="overflow-x-auto rounded-lg border border-gray-200">
+                    <table className="w-full min-w-[560px] text-sm">
+                      <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        <tr>
+                          <th className="px-4 py-2.5">PO</th>
+                          <th className="px-4 py-2.5">Ordered</th>
+                          <th className="px-4 py-2.5">Promised</th>
+                          <th className="px-4 py-2.5">Received</th>
+                          <th className="px-4 py-2.5">Lead Time</th>
+                          <th className="px-4 py-2.5">Result</th>
+                        </tr>
+                      </thead>
+
+                      <tbody className="divide-y divide-gray-100">
+                        {score.deliveries.slice(0, 10).map((delivery) => (
+                          <tr key={delivery.purchaseOrderId}>
+                            <td className="px-4 py-2.5 font-medium text-gray-800">{delivery.poNumber || '—'}</td>
+                            <td className="px-4 py-2.5 text-gray-600">{formatDay(delivery.orderedOn)}</td>
+                            <td className="px-4 py-2.5 text-gray-600">{delivery.promised ? formatDay(delivery.promised) : '—'}</td>
+                            <td className="px-4 py-2.5 text-gray-600">{formatDay(delivery.receivedOn)}</td>
+                            <td className="px-4 py-2.5 text-gray-600">{formatDays(delivery.leadDays)}</td>
+                            <td className="px-4 py-2.5">
+                              {delivery.onTime === null ? (
+                                <span className="text-gray-400">No promised date</span>
+                              ) : delivery.onTime ? (
+                                <span className="font-medium text-green-700">On time</span>
+                              ) : (
+                                <span className="font-medium text-red-700">{formatDays(delivery.daysLate)} late</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {score.count > 10 && (
+                    <p className="mt-2 text-xs text-gray-400">
+                      Showing the latest 10 of {score.count} deliveries.
+                    </p>
+                  )}
+                </div>
+              ) : score && (
+                <p className="mt-6 rounded-lg border border-dashed border-gray-300 px-4 py-6 text-center text-sm text-gray-500">
+                  No finished deliveries from this supplier in the last 12 months.
+                </p>
+              )}
 
 
 
               {/* =============================================
                   NOTES
               ============================================= */}
-              {performance?.notes && (
+              {staffRating?.notes && (
                 <div className="mt-6 rounded-lg border border-gray-200 bg-white p-5">
                   <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">
-                    Evaluation Notes
+                    Staff Notes
                   </p>
 
                   <p className="mt-2 text-sm leading-6 text-gray-700">
-                    {performance.notes}
+                    {staffRating.notes}
                   </p>
                 </div>
               )}
@@ -540,10 +473,10 @@ export default function SupplierPerformancePage() {
               {/* =============================================
                   LAST UPDATED
               ============================================= */}
-              {performance?.updated_at && (
+              {staffRating?.updated_at && (
                 <p className="mt-5 text-sm text-gray-400">
-                  Last evaluated{' '}
-                  {new Date(performance.updated_at).toLocaleString()}
+                  Staff rating last saved{' '}
+                  {new Date(staffRating.updated_at).toLocaleString()}
                 </p>
               )}
             </div>
@@ -591,9 +524,61 @@ export default function SupplierPerformancePage() {
 
 
 // =============================================
+// FORMATTING
+// =============================================
+const formatPercent = (value) => (value === null || value === undefined ? '—' : `${Math.round(value * 100)}%`)
+
+const formatDays = (value) => {
+  if (value === null || value === undefined) return '—'
+  const shown = Number.isInteger(value) ? value : Number(value.toFixed(1))
+  return `${shown} ${shown === 1 ? 'day' : 'days'}`
+}
+
+// The middle half of a supplier's lead times, in whole days.
+const leadRangeNote = (score) => {
+  if (score?.leadLow === null || score?.leadLow === undefined) return null
+  const low = Math.round(score.leadLow)
+  const high = Math.round(score.leadHigh)
+  return low === high ? `Middle half: ${formatDays(low)}` : `Middle half: ${low} to ${high} days`
+}
+
+// A YYYY-MM-DD date, e.g. "Nov 4, 2026".
+const formatDay = (date) =>
+  new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+
+
+// =============================================
+// DELIVERY SCORE BADGE
+// =============================================
+const BAND_STYLES = {
+  good: 'bg-green-50 text-green-700',
+  warning: 'bg-amber-50 text-amber-700',
+  bad: 'bg-red-50 text-red-700',
+}
+
+function ScoreBadge({ score }) {
+  if (!score) return null
+
+  if (!score.enough) {
+    return (
+      <span className="rounded-xl bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-500">
+        Not enough deliveries yet ({score.count} of {MIN_DELIVERIES})
+      </span>
+    )
+  }
+
+  return (
+    <span className={`rounded-xl px-4 py-2 text-sm font-semibold shadow-sm ${BAND_STYLES[score.band.tone]}`}>
+      Score {score.score} / 100 · {score.band.label}
+    </span>
+  )
+}
+
+
+// =============================================
 // PERFORMANCE METRIC CARD
 // =============================================
-function PerformanceMetricCard({ icon, label, value }) {
+function PerformanceMetricCard({ icon, label, value, note }) {
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between">
@@ -605,6 +590,12 @@ function PerformanceMetricCard({ icon, label, value }) {
           <p className="mt-2 text-2xl font-bold text-[#1F3A2C]">
             {value}
           </p>
+
+          {note && (
+            <p className="mt-1 text-xs text-gray-400">
+              {note}
+            </p>
+          )}
         </div>
 
         <div className="rounded-lg bg-[#2D5A42] p-3 text-white">
@@ -656,87 +647,15 @@ function SupplierRatingModal({ suppliers, loadingSuppliers, initialSupplierId, o
     setLoadingMetrics(true)
 
     try {
-      const { data, error } = await supabase
-        .from('purchase_order_items')
-        .select(`
-          purchase_order_id,
-          purchase_orders (
-            id,
-            expected_delivery_date,
-            updated_at,
-            created_at
-          )
-        `)
-        .eq('supplier_id', selectedId)
+      const score = await loadSupplierScore(selectedId)
 
-      if (error) {
-        throw error
-      }
-
-
-      // =============================================
-      // UNIQUE PURCHASE ORDERS
-      // =============================================
-      const uniqueOrders = []
-      const seenOrderIds = new Set()
-
-      ;(data || []).forEach((item) => {
-        const order = item.purchase_orders
-
-        if (!order?.id) {
-          return
-        }
-
-        if (seenOrderIds.has(order.id)) {
-          return
-        }
-
-        seenOrderIds.add(order.id)
-        uniqueOrders.push(order)
-      })
-
-      let onTime = 0
-      let late = 0
-      let totalLeadTime = 0
-      let leadTimeCount = 0
-
-      uniqueOrders.forEach((order) => {
-        if ( order.expected_delivery_date && order.updated_at) {
-
-          const expectedDate = new Date(`${order.expected_delivery_date}T23:59:59`)
-          const updatedDate = new Date(order.updated_at)
-
-          if (updatedDate <= expectedDate) {
-            onTime++
-          }
-          
-          else {
-            late++
-          }
-
-
-          // =========================================
-          // LEAD TIME
-          // =========================================
-          if (order.created_at) {
-
-            const createdDate = new Date(order.created_at)
-            const difference = updatedDate.getTime() - createdDate.getTime()
-            const days = difference / (1000 * 60 * 60 * 24)
-
-            if (days >= 0) {
-              totalLeadTime += days
-              leadTimeCount++
-            }
-          }
-        }
-      })
-
+      // Saved with the staff rating as a snapshot of the delivery numbers then.
       setMetrics({
-        total_orders: uniqueOrders.length,
-        on_time_deliveries: onTime,
-        late_deliveries: late,
-        average_lead_time_days: leadTimeCount > 0 ? Number((totalLeadTime / leadTimeCount).toFixed(2)) : null,
+        total_orders: score.count,
+        on_time_deliveries: score.onTimeCount,
+        late_deliveries: score.lateCount,
+        average_lead_time_days: score.usualLeadDays,
+        on_time_rate: score.onTimeRate,
       })
 
       // =============================================
@@ -827,7 +746,7 @@ function SupplierRatingModal({ suppliers, loadingSuppliers, initialSupplierId, o
   // SELECTED SUPPLIER
   // =============================================
   const selectedSupplier = suppliers.find((supplier) => supplier.id === supplierId)
-  const modalOnTimeRate = metrics.total_orders > 0 ? ((metrics.on_time_deliveries / metrics.total_orders) * 100).toFixed(1) : '0.0'
+  const modalOnTimeRate = formatPercent(metrics.on_time_rate)
 
 
   return (
@@ -841,11 +760,11 @@ function SupplierRatingModal({ suppliers, loadingSuppliers, initialSupplierId, o
         <div className="flex items-start justify-between border-b bg-[#F4F8F5] px-6 py-5">
           <div>
             <h2 className="text-xl font-semibold text-[#1F3A2C]">
-              Rate Supplier
+              Staff Rating
             </h2>
 
             <p className="mt-0.5 text-sm text-gray-500">
-              Evaluate the supplier's reliability and delivery performance.
+              For what delivery dates can't show, like product quality or communication. It doesn't change the delivery score.
             </p>
 
           </div>
@@ -907,7 +826,7 @@ function SupplierRatingModal({ suppliers, loadingSuppliers, initialSupplierId, o
                     </h3>
 
                     <p className="mt- text-sm text-gray-500">
-                      These values are automatically calculated from purchase orders.
+                      Worked out from this supplier's deliveries in the last 12 months.
                     </p>
                   </div>
 
@@ -927,7 +846,7 @@ function SupplierRatingModal({ suppliers, loadingSuppliers, initialSupplierId, o
                       {/* TOTAL */}
                       <div className="rounded-xl border border-gray-200 p-4">
                         <p className="text-sm font-medium text-gray-500">
-                          Total Orders
+                          Deliveries
                         </p>
 
                         <p className="mt-2 text-2xl font-bold text-[#1F3A2C]">
@@ -947,7 +866,7 @@ function SupplierRatingModal({ suppliers, loadingSuppliers, initialSupplierId, o
                         </p>
 
                         <p className="mt-1 text-sm text-gray-400">
-                          {modalOnTimeRate}%
+                          {modalOnTimeRate}
                         </p>
                       </div>
 
@@ -967,7 +886,7 @@ function SupplierRatingModal({ suppliers, loadingSuppliers, initialSupplierId, o
                       {/* LEAD TIME */}
                       <div className="rounded-xl border border-gray-200 p-4">
                         <p className="text-sm font-medium text-gray-500">
-                          Avg. Lead Time
+                          Usual Lead Time
                         </p>
 
                         <p className="mt-2 text-2xl font-bold text-[#1F3A2C]">
@@ -994,11 +913,11 @@ function SupplierRatingModal({ suppliers, loadingSuppliers, initialSupplierId, o
                     <div className="flex items-center justify-between">
                       <div>
                         <h3 className="text-sm font-semibold text-gray-800">
-                          Reliability Rating
+                          Staff Rating
                         </h3>
 
                         <p className="mt-0 text-sm text-gray-500">
-                          How reliable would you consider this supplier?
+                          How would you rate this supplier overall?
                         </p>
                       </div>
 
@@ -1062,7 +981,7 @@ function SupplierRatingModal({ suppliers, loadingSuppliers, initialSupplierId, o
                 ============================================= */}
                 <div>
                   <label className="mb-2 block text-sm font-semibold text-gray-700">
-                    Evaluation Notes
+                    Staff Notes
                     <span className="ml-1 font-normal text-gray-400">
                       (Optional)
                     </span>
@@ -1102,7 +1021,7 @@ function SupplierRatingModal({ suppliers, loadingSuppliers, initialSupplierId, o
               className="flex items-center gap-2 rounded-lg bg-[#1F3A2C] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#2D5A42] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <FontAwesomeIcon icon={saving ? faClipboardCheck : faFloppyDisk}/>
-              {saving ? 'Saving...' : 'Save Rating'}
+              {saving ? 'Saving...' : 'Save Staff Rating'}
             </button>
           </div>
 
