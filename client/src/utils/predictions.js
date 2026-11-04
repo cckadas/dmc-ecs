@@ -242,8 +242,12 @@ export function supplierArrivals(suppliers, laneStarts, now, starting, busyExtra
 
       const promisedAt = dateToTime(supplier.promised)
       const overdueDays = (now - promisedAt) / DAY
+      // Days overdue by the calendar in the Philippines: promised Nov 2, on
+      // Nov 5 it's 3 days overdue, whatever the hour.
+      const today = new Date(now + 8 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      const daysPastPromise = Math.round((Date.parse(today) - Date.parse(supplier.promised)) / DAY)
 
-      if (overdueDays >= 1) {
+      if (daysPastPromise >= 1) {
         // Already late: what that supplier's late deliveries usually took, at least 1 more day.
         const lateOnes = lateness.filter((days) => days > 0)
         const usualWhenLate = lateOnes.length
@@ -251,7 +255,7 @@ export function supplierArrivals(suppliers, laneStarts, now, starting, busyExtra
           : usualLate || 3
         const more = Math.max(usualWhenLate - overdueDays, 1)
         arrival = { typical: now + more * DAY, quick: now + DAY, slow: now + (more + 3) * DAY }
-        overdue.push({ name: supplier.name, days: Math.floor(overdueDays) })
+        overdue.push({ name: supplier.name, days: daysPastPromise })
       } else {
         arrival = {
           typical: promisedAt + late.typical * DAY,

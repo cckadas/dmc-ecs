@@ -2262,7 +2262,7 @@ function AddPurchaseOrderModal({ customerOrders, suppliers, warehouseRacks, load
               <p key={id} className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
                 {supplierName(id)} is often late:{' '}
                 {timings[id].scored
-                  ? `late on ${timings[id].lateCount} of its last ${timings[id].deliveries} deliveries, by ${Math.round(timings[id].averageDaysLate)} ${Math.round(timings[id].averageDaysLate) === 1 ? 'day' : 'days'} on average`
+                  ? `late on ${timings[id].lateCount} of its last ${timings[id].deliveries} deliveries, by ${Math.round(timings[id].averageDaysLate)} ${Math.round(timings[id].averageDaysLate) === 1 ? 'day' : 'days'} on average${timings[id].simulated ? ' (counting simulated demo deliveries)' : ''}`
                   : 'DMC staff say so'}
                 . Follow up early, or allow extra days.
               </p>

@@ -14,6 +14,8 @@ import { loadSupplierScores } from '../services/supplierScoreService'
 import { MIN_DELIVERIES } from '../utils/supplierScores'
 import { OrderStepsBar } from '../components/OrderProgress'
 import PredictionNumbersPanel from '../components/PredictionNumbers'
+import SimulatedBadge from '../components/SimulatedBadge'
+import { isSimulated } from '../utils/simulated'
 
 
 export default function ExecutiveDashboard() {
@@ -776,6 +778,7 @@ function SupplierPerformanceCard({ performance, loading }) {
   const totalSuppliers = performance.length
   const scoredSuppliers = performance.filter((item) => item.score?.score !== null && item.score?.score !== undefined).length
   const unscoredSuppliers = totalSuppliers - scoredSuppliers
+  const simulated = performance.some((item) => item.score?.deliveries?.some((delivery) => isSimulated(delivery.poNumber)))
 
 
   // =====================================================
@@ -868,6 +871,8 @@ function SupplierPerformanceCard({ performance, loading }) {
             </p>
           </div>
         </div>
+
+        {simulated && <SimulatedBadge label="Simulated deliveries" title="These scores come partly from made-up demo deliveries (POs numbered SIM-PO-…), not the suppliers' real performance." />}
       </div>
 
 

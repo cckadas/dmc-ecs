@@ -4,6 +4,7 @@ import { estimateDraft, estimateOrders, loadAllDeliveries, loadOpenDeliveries, l
 import { startingDaysFrom, supplierHistories } from '../utils/estimateInputs'
 import { blendStep } from '../utils/predictions'
 import { scoreSuppliers } from '../utils/supplierScores'
+import { isSimulated } from '../utils/simulated'
 
 export { ORDER_STATUS_FLOW, normalizeStatus, buildStageStatistics, predictOrder } from '../utils/predictions'
 
@@ -81,6 +82,8 @@ export async function loadSupplierTimings(supplierIds) {
       averageDaysLate: score?.averageDaysLate || 0,
       scored: Boolean(score?.enough),
       often: score?.enough ? score.band?.tone !== 'good' : theirs?.late_frequency === 'often',
+      // Its record includes made-up demo deliveries.
+      simulated: Boolean(score?.deliveries?.some((delivery) => isSimulated(delivery.poNumber))),
     }]
   }))
 }

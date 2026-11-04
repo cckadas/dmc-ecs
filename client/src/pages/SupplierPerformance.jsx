@@ -9,6 +9,8 @@ import { loadSupplierScore } from '../services/supplierScoreService'
 import { MIN_DELIVERIES, LATE_POINTS_PER_DAY } from '../utils/supplierScores'
 import { deliveryHistory } from '../utils/analytics'
 import { ChartCard, DeliveryHistoryChart, DeliveryHistoryTable } from '../components/AnalyticsCharts'
+import SimulatedBadge from '../components/SimulatedBadge'
+import { isSimulated } from '../utils/simulated'
 
 
 export default function SupplierPerformancePage() {
@@ -238,6 +240,8 @@ export default function SupplierPerformancePage() {
   const staffRating = performance?.staffRating
   // Its deliveries in date order, for the delivery history chart.
   const pastDeliveries = score ? deliveryHistory(score.deliveries) : []
+  // Some of them are from the made-up demo history.
+  const simulated = Boolean(score?.deliveries?.some((delivery) => isSimulated(delivery.poNumber)))
 
 
   // =============================================
@@ -329,6 +333,10 @@ export default function SupplierPerformancePage() {
               <div className="flex flex-col items-end gap-1.5">
                 {!loadingPerformance && <ScoreBadge score={score}/>}
 
+                {!loadingPerformance && simulated && (
+                  <SimulatedBadge label="Simulated deliveries" title="This score comes partly from made-up demo deliveries (POs numbered SIM-PO-…), not this supplier's real performance." />
+                )}
+
                 {staffRating?.reliability_rating !== null && staffRating?.reliability_rating !== undefined && (
                   <span className="flex items-center gap-1.5 text-xs text-gray-500">
                     <FontAwesomeIcon icon={faStar} className="text-amber-400" />
@@ -405,6 +413,7 @@ export default function SupplierPerformancePage() {
               {pastDeliveries.length > 0 && (
                 <div className="mt-6">
                   <ChartCard
+                    simulated={simulated}
                     title="Delivery History"
                     question="Is this supplier getting better or worse?"
                     table={<DeliveryHistoryTable deliveries={pastDeliveries} />}

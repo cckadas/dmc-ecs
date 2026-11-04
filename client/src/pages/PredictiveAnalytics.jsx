@@ -5,6 +5,7 @@ import { faTriangleExclamation } from '@fortawesome/free-solid-svg-icons'
 import { useAuth } from '../context/AuthContext'
 import { ALL_PARTS, loadAnalytics } from '../services/analyticsService'
 import { PredictionNumbers } from '../components/PredictionNumbers'
+import SimulatedBadge from '../components/SimulatedBadge'
 import {
   AccuracyChart,
   AccuracyTable,
@@ -99,6 +100,16 @@ export default function PredictiveAnalytics() {
 
       {data && (
         <>
+          {data.simulated && (
+            <div className="mb-6 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
+              <SimulatedBadge />
+              <p>
+                These figures include the made-up history added for the demo (orders numbered SIM-ORD-…, POs SIM-PO-…),
+                so they show how the predictions work, not DMC's real performance.
+              </p>
+            </div>
+          )}
+
           {has('numbers') && <MethodNote data={data} />}
 
           {has('numbers') && (
@@ -108,12 +119,12 @@ export default function PredictiveAnalytics() {
           )}
 
           <div className={`grid grid-cols-1 gap-6 ${cards > 1 ? 'lg:grid-cols-2' : ''}`}>
-            {has('steps') && <StepsCard steps={data.steps} />}
-            {has('suppliers') && <OnTimeCard onTime={data.onTime} />}
-            {has('suppliers') && <LeadTimeCard leadTimes={data.leadTimes} />}
-            {has('months') && <MonthsCard months={data.months} />}
-            {has('weeks') && <WeeksCard weeks={data.weeks} />}
-            {has('accuracy') && <AccuracyCard accuracy={data.accuracy} />}
+            {has('steps') && <StepsCard steps={data.steps} simulated={data.simulated} />}
+            {has('suppliers') && <OnTimeCard onTime={data.onTime} simulated={data.simulated} />}
+            {has('suppliers') && <LeadTimeCard leadTimes={data.leadTimes} simulated={data.simulated} />}
+            {has('months') && <MonthsCard months={data.months} simulated={data.simulated} />}
+            {has('weeks') && <WeeksCard weeks={data.weeks} simulated={data.simulated} />}
+            {has('accuracy') && <AccuracyCard accuracy={data.accuracy} simulated={data.simulated} />}
           </div>
         </>
       )}
@@ -143,9 +154,10 @@ function MethodNote({ data }) {
 }
 
 
-function StepsCard({ steps }) {
+function StepsCard({ steps, simulated }) {
   return (
     <ChartCard
+      simulated={simulated}
       title="Where the time goes"
       question="Which step holds orders up the longest?"
       table={<StepTimesTable steps={steps} />}
@@ -157,11 +169,12 @@ function StepsCard({ steps }) {
 }
 
 
-function OnTimeCard({ onTime }) {
+function OnTimeCard({ onTime, simulated }) {
   const { rated, tooFew } = onTime
 
   return (
     <ChartCard
+      simulated={simulated}
       title="On-time rate by supplier"
       question="Which suppliers break their promised dates?"
       table={rated.length ? <OnTimeTable rated={rated} /> : null}
@@ -181,11 +194,12 @@ function OnTimeCard({ onTime }) {
 }
 
 
-function LeadTimeCard({ leadTimes }) {
+function LeadTimeCard({ leadTimes, simulated }) {
   const { rows, onDefault, defaultDays } = leadTimes
 
   return (
     <ChartCard
+      simulated={simulated}
       title="Lead time by supplier"
       question="Which suppliers are slow, and how predictable are they?"
       table={rows.length ? <LeadTimeTable rows={rows} /> : null}
@@ -206,9 +220,10 @@ function LeadTimeCard({ leadTimes }) {
 }
 
 
-function MonthsCard({ months }) {
+function MonthsCard({ months, simulated }) {
   return (
     <ChartCard
+      simulated={simulated}
       title="Shipping on time, by month"
       question="Are more orders shipping by the requested date than before?"
       table={months.length ? <MonthlyOnTimeTable months={months} /> : null}
@@ -222,11 +237,12 @@ function MonthsCard({ months }) {
 }
 
 
-function WeeksCard({ weeks }) {
+function WeeksCard({ weeks, simulated }) {
   const total = weeks.weeks.reduce((sum, week) => sum + week.count, 0)
 
   return (
     <ChartCard
+      simulated={simulated}
       title="Coming up, by week"
       question="How many orders will be ready to ship each week?"
       table={total ? <ComingUpTable weeks={weeks.weeks} /> : null}
@@ -246,9 +262,10 @@ function WeeksCard({ weeks }) {
 }
 
 
-function AccuracyCard({ accuracy }) {
+function AccuracyCard({ accuracy, simulated }) {
   return (
     <ChartCard
+      simulated={simulated}
       title="Prediction accuracy"
       question="How far off are the estimates, and which method is best?"
       table={accuracy.enough ? <AccuracyTable accuracy={accuracy} /> : null}

@@ -14,6 +14,7 @@ import {
   supplierLeadTimes,
   supplierOnTime,
 } from '../utils/analytics'
+import { isSimulated } from '../utils/simulated'
 
 
 // =============================================================================
@@ -105,6 +106,8 @@ export async function loadAnalytics(parts = ALL_PARTS) {
     weeks: want('weeks') ? comingUpByWeek(predictions) : null,
     accuracy: want('accuracy') ? accuracy : null,
     learnedFrom: finishedOrders,
+    // The made-up demo history is in (db/demo/), so the figures aren't DMC's own.
+    simulated: allOrders.some((order) => isSimulated(order.order_number)) || deliveries.some((delivery) => isSimulated(delivery.poNumber)),
     // The starting values are still the stand-ins until DMC's numbers are saved
     // on Prediction Settings.
     placeholders: !starting.settings.length || starting.settings.some((row) => row.is_placeholder),

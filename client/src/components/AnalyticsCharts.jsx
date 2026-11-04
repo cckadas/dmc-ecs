@@ -16,6 +16,7 @@ import {
 import { MIN_PO_DELIVERY_DAYS } from '../utils/dates'
 import { ON_TIME_TARGET, WITHIN_DAYS } from '../utils/analytics'
 import { CHART, count, formatDay, formatDays, formatMonth, formatPercent, shortMonth, shorten } from '../utils/chartFormat'
+import SimulatedBadge from './SimulatedBadge'
 
 
 // =============================================================================
@@ -70,15 +71,16 @@ function NameAbove({ background, x, y, name }) {
 
 // The card around every chart ---------------------------------------------------------
 
-export function ChartCard({ number, title, question, footnote, table, children }) {
+export function ChartCard({ number, title, question, footnote, table, simulated = false, children }) {
   const [showTable, setShowTable] = useState(false)
 
   return (
     <section className="flex min-w-0 flex-col rounded-xl border border-gray-200 bg-white shadow-sm">
       <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-5 py-4">
         <div className="min-w-0">
-          <h2 className="font-semibold text-gray-800">
-            {number ? `${number}. ` : ''}{title}
+          <h2 className="flex flex-wrap items-center gap-2 font-semibold text-gray-800">
+            <span>{number ? `${number}. ` : ''}{title}</span>
+            {simulated && <SimulatedBadge />}
           </h2>
           {question && <p className="mt-0.5 text-xs text-gray-500">{question}</p>}
         </div>
