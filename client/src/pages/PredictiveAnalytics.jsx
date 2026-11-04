@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faTriangleExclamation } from '@fortawesome/free-solid-svg-icons'
 
 import { useAuth } from '../context/AuthContext'
 import { ALL_PARTS, loadAnalytics } from '../services/analyticsService'
+import { modelIsStale, retrainModels } from '../services/modelService'
+import { MODEL_KEYS } from '../utils/predictionModel'
 import { PredictionNumbers } from '../components/PredictionNumbers'
 import SimulatedBadge from '../components/SimulatedBadge'
 import {
@@ -25,7 +27,7 @@ import {
 import { ON_TIME_TARGET } from '../utils/analytics'
 import { MIN_DELIVERIES } from '../utils/supplierScores'
 import { MIN_PO_DELIVERY_DAYS } from '../utils/dates'
-import { count } from '../utils/chartFormat'
+import { count, formatDays } from '../utils/chartFormat'
 
 
 // =============================================================================
@@ -44,6 +46,12 @@ const PARTS_BY_ROLE = {
   warehouse: ['weeks'],
 }
 
+// The page trains the model by itself only once there's enough to learn from:
+// 30 records before the newest 20% held back for testing.
+const AUTO_TRAIN_FROM = 40
+
+const whenFormat = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+
 
 export default function PredictiveAnalytics() {
   const { profile } = useAuth()
@@ -53,6 +61,10 @@ export default function PredictiveAnalytics() {
 
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
+  const [reload, setReload] = useState(0)
+  const [training, setTraining] = useState(null)
+  const autoTrained = useRef(false)
+  const canTrain = role === 'admin' || role === 'management'
 
   useEffect(() => {
     if (!PARTS_BY_ROLE[role]) return
@@ -72,7 +84,30 @@ export default function PredictiveAnalytics() {
     return () => {
       active = false
     }
-  }, [role])
+  }, [role, reload])
+
+  // Trains the model (about 20 seconds), saves it, then reloads the page's figures.
+  async function retrain(reason) {
+    setTraining({ state: 'running', reason })
+    try {
+      const results = await retrainModels(profile?.id, (share) => {
+        setTraining((current) => (current?.state === 'running' ? { ...current, progress: share } : current))
+      })
+      setTraining({ state: 'done', results })
+      setReload((times) => times + 1)
+    } catch (trainError) {
+      console.error('Failed to train the model:', trainError)
+      setTraining({ state: 'failed', message: trainError.message || 'The model could not be trained.' })
+    }
+  }
+
+  // By itself, once a visit: never trained, or trained over 7 days ago.
+  useEffect(() => {
+    if (!canTrain || !data?.models?.available || autoTrained.current) return
+    if (data.learnedFrom < AUTO_TRAIN_FROM || !modelIsStale(data.models.rows)) return
+    autoTrained.current = true
+    retrain(data.models.rows.length ? 'stale' : 'first')
+  }, [data, canTrain])
 
   const cards = ['steps', 'suppliers', 'suppliers', 'months', 'weeks', 'accuracy'].filter(has).length
 
@@ -110,7 +145,7 @@ export default function PredictiveAnalytics() {
             </div>
           )}
 
-          {has('numbers') && <MethodNote data={data} />}
+          {has('numbers') && <MethodNote data={data} canTrain={canTrain} training={training} onRetrain={() => retrain('manual')} />}
 
           {has('numbers') && (
             <div className="mb-6">
@@ -133,15 +168,55 @@ export default function PredictiveAnalytics() {
 }
 
 
-// Which method makes the estimates, and whether DMC's numbers are in yet.
-function MethodNote({ data }) {
+// How each step is estimated (statistics, or the model where it did better),
+// whether DMC's numbers are in yet, and Retrain.
+function MethodNote({ data, canTrain, training, onRetrain }) {
+  const rows = data.models?.rows || []
+  const available = Boolean(data.models?.available)
+  const trainedAt = rows.map((row) => row.trainedAt).filter(Boolean).sort().at(-1)
+  const lastRun = training?.state === 'done' ? training.results : []
+  const running = training?.state === 'running'
+
   return (
     <div className="mb-6 rounded-xl border border-gray-200 bg-white px-5 py-4 text-sm text-gray-600 shadow-sm">
-      <p>
-        <span className="font-semibold text-gray-800">Method in use: statistics.</span>{' '}
-        Each estimate blends the system's own records ({count(data.learnedFrom, 'finished order')} so far) with
-        DMC staff's starting values. The more finished orders there are, the more the records count.
+      <p className="font-semibold text-gray-800">How the estimates are made</p>
+      <p className="mt-1">
+        Each estimate adds up the time each step usually takes: the system's own records
+        ({count(data.learnedFrom, 'finished order')} so far) blended with DMC staff's starting values. Where the
+        TensorFlow.js model predicted past orders better, it's used for that step instead.
       </p>
+
+      <ul className="mt-3 space-y-2">
+        <ModelLine label="Supplier delivery timing" row={rows.find((row) => row.key === MODEL_KEYS.supplier)} result={lastRun.find((result) => result.key === MODEL_KEYS.supplier)} available={available} />
+        <ModelLine label="Labeling time" row={rows.find((row) => row.key === MODEL_KEYS.labeling)} result={lastRun.find((result) => result.key === MODEL_KEYS.labeling)} available={available} />
+      </ul>
+
+      {available && (
+        <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-gray-100 pt-3 text-xs text-gray-500">
+          <span>
+            {running
+              ? `Training the model${training.reason === 'stale' ? ' (the saved one was over 7 days old)' : training.reason === 'first' ? ' for the first time' : ''}… ${Math.round((training.progress || 0) * 100)}%`
+              : trainedAt ? `Model trained ${whenFormat.format(new Date(trainedAt))}. It retrains by itself after 7 days.` : "The model hasn't been trained yet."}
+          </span>
+
+          {canTrain && (
+            <button
+              type="button"
+              onClick={onRetrain}
+              disabled={running}
+              className="rounded-lg border border-gray-200 px-2.5 py-1 font-medium text-gray-600 transition hover:border-[#B8D5C3] hover:text-[#2D5A42] disabled:cursor-wait disabled:opacity-60"
+            >
+              {running ? 'Training…' : 'Retrain'}
+            </button>
+          )}
+
+          {training?.state === 'failed' && <span className="text-red-600">{training.message}</span>}
+        </div>
+      )}
+
+      {!available && canTrain && (
+        <p className="mt-2 text-xs text-gray-500">To train the model, run db/migrations/019 in Supabase first.</p>
+      )}
 
       {data.placeholders && (
         <p className="mt-2 flex items-start gap-2 text-amber-700">
@@ -150,6 +225,37 @@ function MethodNote({ data }) {
         </p>
       )}
     </div>
+  )
+}
+
+
+// One step: which method estimates it, and why.
+function ModelLine({ label, row, result, available }) {
+  let inUse = false
+  let text = "the model hasn't been trained yet."
+
+  if (!available) {
+    text = 'the model needs db/migrations/019.'
+  } else if (row?.metrics?.model) {
+    const { model, statistics, records, testRecords } = row.metrics
+    inUse = row.inUse
+    text = row.inUse
+      ? `the model, ${formatDays(model.averageDaysOff)} off on average on ${testRecords} records it hadn't seen, against ${formatDays(statistics.averageDaysOff)} for the statistics. It learned from ${records}.`
+      : `the statistics. The model was ${formatDays(model.averageDaysOff)} off on ${testRecords} records it hadn't seen, against ${formatDays(statistics.averageDaysOff)}, so it isn't used yet.`
+  } else if (result && !result.trained) {
+    text = `the statistics. The model needs ${result.needed} finished records to learn from; there are ${result.records} so far.`
+  }
+
+  return (
+    <li className="flex items-start gap-2">
+      <span className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${inUse ? 'bg-[#E8F3EC] text-[#2D5A42]' : 'bg-gray-100 text-gray-600'}`}>
+        {inUse ? 'Model' : 'Statistics'}
+      </span>
+      <span>
+        <span className="font-medium text-gray-800">{label}:</span> {text}
+        {row?.metrics?.simulated && <> <SimulatedBadge label="Learned from simulated data" /></>}
+      </span>
+    </li>
   )
 }
 
@@ -270,7 +376,7 @@ function AccuracyCard({ accuracy, simulated }) {
       question="How far off are the estimates, and which method is best?"
       table={accuracy.enough ? <AccuracyTable accuracy={accuracy} /> : null}
       footnote={accuracy.enough
-        ? `Tested on the newest ${accuracy.tested} of ${accuracy.finished} finished orders, each predicted as of the day its payment was verified, learning only from the ${accuracy.learnedFrom} before them. "Starting values only" is the baseline: what DMC would guess with no records.`
+        ? `Tested on the newest ${accuracy.tested} of ${accuracy.finished} finished orders, each predicted as of the day its payment was verified, learning only from the ${accuracy.learnedFrom} before them. "Starting values only" is the baseline: what DMC would guess with no records.${accuracy.methods.some((method) => method.key === 'model') ? ' "Statistics + model" adds the TensorFlow.js model, which learned only from records before these orders.' : ''}`
         : '"Starting values only" will be the baseline to beat: what DMC would guess with no records.'}
     >
       {accuracy.enough

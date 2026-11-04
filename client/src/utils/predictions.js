@@ -54,6 +54,7 @@ export const DEFAULT_STARTING_DAYS = {
 export const LATE_SHARES = { rarely: 0.1, sometimes: 0.3, often: 0.5 }
 
 export const RECORD_WEIGHT = 5          // records count for n ÷ (n + 5)
+const MIN_PO_DAYS = 14                  // DMC's minimum for a PO's promised date (utils/dates.js)
 const QUICK_SHARE = 0.8                 // a starting value's likely range:
 const SLOW_SHARE = 1.3                  //   20% quicker to 30% slower
 const MIN_FINISHED_DAYS = 1             // quicker "finished" orders are test runs
@@ -209,14 +210,19 @@ export function buildStageStatistics(allHistory) {
 // When each supplier the order still waits on should deliver, in the typical,
 // quick and slow cases, and which deliveries are already overdue.
 //
-// suppliers: [{ name, promised, receivedOn, history: { leadDays, lateness },
+// suppliers: [{ supplierId, name, promised, receivedOn, orderedOn, cases, products,
+//               history: { leadDays, lateness },
 //               starting: { usualLeadDays, lateFrequency, usualLateDays } }]
 // A supplier with a promised date has its PO; one without is still to be ordered,
 // starting when ordering from suppliers is done (laneStarts).
-export function supplierArrivals(suppliers, laneStarts, now, starting, busyExtraFor) {
+// model (optional): the saved supplier model, used only when it beat the
+// statistics (utils/predictionModel.js): days early or late, from the supplier,
+// the cases and products ordered from it, the month and the days it's given.
+export function supplierArrivals(suppliers, laneStarts, now, starting, busyExtraFor, model = null) {
   const ends = { ...laneStarts }
   const overdue = []
   const confidences = []
+  let usedModel = false
 
   for (const supplier of suppliers) {
     if (supplier.receivedOn) continue
@@ -224,6 +230,15 @@ export function supplierArrivals(suppliers, laneStarts, now, starting, busyExtra
     const history = supplier.history || { leadDays: [], lateness: [] }
     const theirs = supplier.starting || {}
     let arrival
+
+    // The model's days early or late, for a PO sent at a time with so many days given.
+    const byModel = (daysGiven, sentAt) => model.predict({
+      supplierId: supplier.supplierId,
+      cases: supplier.cases,
+      products: supplier.products,
+      daysGiven,
+      month: new Date(sentAt + 8 * 60 * 60 * 1000).getUTCMonth() + 1,
+    })
 
     if (supplier.promised) {
       // Ordered: the promised date, moved by how early or late this supplier
@@ -257,14 +272,32 @@ export function supplierArrivals(suppliers, laneStarts, now, starting, busyExtra
         arrival = { typical: now + more * DAY, quick: now + DAY, slow: now + (more + 3) * DAY }
         overdue.push({ name: supplier.name, days: daysPastPromise })
       } else {
+        const modelled = model && supplier.orderedOn
+          ? byModel(Math.round((Date.parse(supplier.promised) - Date.parse(supplier.orderedOn)) / DAY), dateToTime(supplier.orderedOn))
+          : null
+        const days = modelled || late
         arrival = {
-          typical: promisedAt + late.typical * DAY,
-          quick: promisedAt + late.quick * DAY,
-          slow: promisedAt + late.slow * DAY,
+          typical: promisedAt + days.typical * DAY,
+          quick: promisedAt + days.quick * DAY,
+          slow: promisedAt + days.slow * DAY,
         }
+        if (modelled) usedModel = true
       }
 
-      confidences.push(confidenceFor(lateness))
+      confidences.push(model && supplier.orderedOn ? model.confidence : confidenceFor(lateness))
+    } else if (model) {
+      // Not ordered yet, with the model: given what Add PO will suggest (its
+      // usual time, at least DMC's 14 days), how early or late it should come.
+      const startingLead = (Number(theirs.usualLeadDays) || starting.supplier_lead) + busyExtraFor(laneStarts.typical)
+      const daysGiven = Math.max(MIN_PO_DAYS, Math.ceil(blendStep(history.leadDays || [], startingLead).typical))
+      const days = byModel(daysGiven, laneStarts.typical)
+      arrival = {
+        typical: laneStarts.typical + (daysGiven + days.typical) * DAY,
+        quick: laneStarts.quick + (daysGiven + days.quick) * DAY,
+        slow: laneStarts.slow + (daysGiven + days.slow) * DAY,
+      }
+      usedModel = true
+      confidences.push(model.confidence)
     } else {
       // Not ordered yet: its usual time from PO to delivery, plus DMC's extra
       // days if that falls in a busy month.
@@ -289,7 +322,7 @@ export function supplierArrivals(suppliers, laneStarts, now, starting, busyExtra
     ends.slow = Math.max(ends.slow, arrival.slow, now)
   }
 
-  return { ends, overdue, confidence: confidences.length ? Math.round(average(confidences)) : null }
+  return { ends, overdue, confidence: confidences.length ? Math.round(average(confidences)) : null, usedModel }
 }
 
 
@@ -306,6 +339,8 @@ export function supplierArrivals(suppliers, laneStarts, now, starting, busyExtra
 //   cases         cases ordered, for labeling_per_1000_cases
 //   country       { sailingDays, extraLabelingDays } for the customer's country
 //   busyMonths    { 1-12: extra days } for suppliers ordered from in that month
+//   products      order lines, and countryName, for the labeling model
+//   models        { supplier, labeling }: the saved models in use, if any
 //   now           the moment to estimate from (default: now)
 export function predictOrder(order, stageStatistics, historyByOrder, context = {}) {
   const now = context.now ? new Date(context.now).getTime() : Date.now()
@@ -362,6 +397,9 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
   let readyLanes = null
   let overdueSuppliers = []
   let stuckStep = null
+  // Which way each step was worked out, for staff.
+  const methods = { suppliers: 'statistics', labeling: 'statistics' }
+  const labelingModel = context.models?.labeling || null
 
   const firstStep = ifPaidToday ? 0 : ESTIMATE_STEPS.indexOf(currentStep)
 
@@ -370,7 +408,8 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
     const full = blendStep(statsFor(step.key), startingFor[step.key])
 
     if (step.key === 'suppliers' && context.suppliers?.length) {
-      const { ends, overdue, confidence } = supplierArrivals(context.suppliers, lanes, now, starting, busyExtraFor)
+      const { ends, overdue, confidence, usedModel } = supplierArrivals(context.suppliers, lanes, now, starting, busyExtraFor, context.models?.supplier || null)
+      if (usedModel) methods.suppliers = 'model'
       lanes.typical = ends.typical
       lanes.quick = ends.quick
       lanes.slow = ends.slow
@@ -380,17 +419,34 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
       })
       if (confidence !== null) confidences.push(confidence)
     } else {
-      const span = isCurrent ? remainingOfStep(full, statsFor(step.key), startingFor[step.key], currentStageAge) : full
+      // Labeling, with the model: its days for this order's size, country and
+      // month, instead of everyone's usual days.
+      let whole = full
+      if (step.key === 'labeling' && labelingModel) {
+        const predicted = labelingModel.predict({
+          cases: Number(context.cases) || 0,
+          products: Number(context.products) || 1,
+          country: context.countryName,
+          month: new Date(lanes.typical + 8 * 60 * 60 * 1000).getUTCMonth() + 1,
+        })
+        const typical = Math.max(0.5, predicted.typical)
+        whole = { typical, quick: Math.max(0.3, Math.min(predicted.quick, typical)), slow: Math.max(predicted.slow, typical), confidence: labelingModel.confidence }
+        methods.labeling = 'model'
+      }
 
-      if (isCurrent && currentStageAge > full.slow) {
-        stuckStep = { key: step.key, label: step.label, days: Math.round(currentStageAge), usualDays: Math.round(full.typical) }
+      const span = !isCurrent ? whole
+        : whole === full ? remainingOfStep(full, statsFor(step.key), startingFor[step.key], currentStageAge)
+          : { typical: Math.max(whole.typical - currentStageAge, 1), quick: Math.max(whole.quick - currentStageAge, 0.5), slow: Math.max(whole.slow - currentStageAge, 2) }
+
+      if (isCurrent && currentStageAge > whole.slow) {
+        stuckStep = { key: step.key, label: step.label, days: Math.round(currentStageAge), usualDays: Math.round(whole.typical) }
         reasons.push(`In ${step.label.toLowerCase()} for ${stuckStep.days} days, usually ${stuckStep.usualDays}.`)
       }
 
       lanes.typical += span.typical * DAY
       lanes.quick += span.quick * DAY
       lanes.slow += span.slow * DAY
-      confidences.push(full.confidence)
+      confidences.push(whole.confidence)
     }
 
     stepsAhead.push({ key: step.key, label: step.label, expectedEnd: new Date(lanes.typical) })
@@ -450,6 +506,7 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
     // The same, as data, for the staff alerts (server/alerts.js).
     stuckStep,
     overdueSuppliers,
+    methods,
     customerNote,
     stepsAhead,
     currentStageAge,

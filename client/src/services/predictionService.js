@@ -1,6 +1,6 @@
 import { supabase } from '../supabase'
 import { authHeaders } from './apiAuth'
-import { estimateDraft, estimateOrders, loadAllDeliveries, loadOpenDeliveries, loadStartingValues } from '../utils/estimateLoader'
+import { allRows, estimateDraft, estimateOrders, loadAllDeliveries, loadOpenDeliveries, loadStartingValues } from '../utils/estimateLoader'
 import { startingDaysFrom, supplierHistories } from '../utils/estimateInputs'
 import { blendStep } from '../utils/predictions'
 import { scoreSuppliers } from '../utils/supplierScores'
@@ -31,11 +31,7 @@ const byTime = (a, b) => new Date(a.changed_at).getTime() - new Date(b.changed_a
 // timings, which a customer can't read directly, so this comes from the database
 // with other customers' order IDs hidden (db/migrations/013).
 export async function loadStatusHistory() {
-  const { data, error } = await supabase.rpc('status_history_for_estimates')
-
-  if (error) throw error
-
-  return data || []
+  return allRows(() => supabase.rpc('status_history_for_estimates'))
 }
 
 

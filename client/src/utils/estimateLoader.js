@@ -12,35 +12,52 @@
 import { buildStageStatistics, predictOrder, supplierArrivals } from './predictions.js'
 import { estimateContext, startingDaysFrom, supplierHistories } from './estimateInputs.js'
 import { buildDeliveries } from './supplierScores.js'
+import { MODEL_KEYS, modelPredictor } from './predictionModel.js'
 
 // Rows, or none when the table can't be read (no access, or 017 not run yet).
 const rowsOf = (result) => (result?.error ? [] : result?.data || [])
+
+
+// Every row of a query. The API returns at most 1,000 rows per request, so the
+// rows come a page at a time until a page comes back empty. makeQuery builds a
+// fresh query each time, in a fixed order, so no row is missed or repeated.
+export async function allRows(makeQuery, pageSize = 1000) {
+  const rows = []
+
+  for (let from = 0; ; ) {
+    const { data, error } = await makeQuery().range(from, from + pageSize - 1)
+    if (error) throw error
+    if (!data?.length) return rows
+    rows.push(...data)
+    from += data.length
+  }
+}
 
 
 // Every finished delivery (utils/supplierScores.js), for one supplier or all.
 // All lines are loaded, since a delivery counts only once every line from that
 // supplier on the PO is in.
 export async function loadAllDeliveries(client, supplierId) {
-  let query = client
-    .from('purchase_order_items')
-    .select(`
-      supplier_id,
-      fully_received_at,
-      purchase_orders (
-        id,
-        po_number,
-        created_at,
-        expected_delivery_date
-      )
-    `)
+  const lines = await allRows(() => {
+    let query = client
+      .from('purchase_order_items')
+      .select(`
+        supplier_id,
+        fully_received_at,
+        purchase_orders (
+          id,
+          po_number,
+          created_at,
+          expected_delivery_date
+        )
+      `)
+      .order('id')
 
-  if (supplierId) query = query.eq('supplier_id', supplierId)
+    if (supplierId) query = query.eq('supplier_id', supplierId)
+    return query
+  })
 
-  const { data, error } = await query
-
-  if (error) throw error
-
-  return buildDeliveries(data || [])
+  return buildDeliveries(lines)
 }
 
 
@@ -69,23 +86,22 @@ export async function loadStartingValues(client) {
 export async function loadOpenDeliveries(client, { now = Date.now() } = {}) {
   const [starting, lines, suppliers] = await Promise.all([
     loadStartingValues(client),
-    client
+    allRows(() => client
       .from('purchase_order_items')
-      .select('purchase_order_id, supplier_id, ordered_quantity, received_quantity, fully_received_at, products ( cbm ), purchase_orders ( id, po_number, customer_order_id, created_at, expected_delivery_date )'),
+      .select('purchase_order_id, supplier_id, ordered_quantity, received_quantity, fully_received_at, products ( cbm ), purchase_orders ( id, po_number, customer_order_id, created_at, expected_delivery_date )')
+      .order('id')),
     client.from('suppliers').select('id, supplier_name'),
   ])
 
-  if (lines.error) throw lines.error
-
   // The same lines give each supplier's finished deliveries, for its lateness.
-  const histories = supplierHistories(buildDeliveries(lines.data || []))
+  const histories = supplierHistories(buildDeliveries(lines))
   const startingDays = startingDaysFrom(starting.settings)
   const names = Object.fromEntries(rowsOf(suppliers).map((supplier) => [supplier.id, supplier.supplier_name]))
   const fromNow = { typical: now, quick: now, slow: now }
 
   // One delivery per supplier per PO, counting only what's still to come.
   const open = new Map()
-  for (const line of lines.data || []) {
+  for (const line of lines) {
     const order = line.purchase_orders
     const remaining = Number(line.ordered_quantity || 0) - Number(line.received_quantity || 0)
     if (!order?.expected_delivery_date || line.fully_received_at || remaining <= 0) continue
@@ -123,6 +139,26 @@ export async function loadOpenDeliveries(client, { now = Date.now() } = {}) {
 }
 
 
+// The saved models (db/migrations/019). inUseOnly: only those that beat the
+// statistics, as the estimates use them; else all, for the accuracy check.
+// None when 019 isn't run, or the reader can't see them (customers).
+export async function loadModels(client, { inUseOnly = true } = {}) {
+  const result = await client.from('prediction_models').select('key, weights, spec, metrics, in_use, trained_at')
+  const rows = rowsOf(result)
+  const pick = (key) => {
+    const row = rows.find((entry) => entry.key === key)
+    return row && (!inUseOnly || row.in_use) ? modelPredictor(row) : null
+  }
+
+  return {
+    available: !result?.error,
+    supplier: pick(MODEL_KEYS.supplier),
+    labeling: pick(MODEL_KEYS.labeling),
+    rows: rows.map(({ key, metrics, in_use: inUse, trained_at: trainedAt }) => ({ key, metrics, inUse, trainedAt })),
+  }
+}
+
+
 // The supplier names and every supplier's past deliveries.
 async function loadSupplierRecords(client) {
   const [suppliers, deliveries] = await Promise.all([
@@ -149,12 +185,12 @@ async function loadOrderDetails(client, orders) {
     locationIds.length
       ? client.from('delivery_locations').select('id, country').in('id', locationIds)
       : Promise.resolve({ data: [] }),
-    client.from('purchase_orders').select('id, customer_order_id, expected_delivery_date').in('customer_order_id', orderIds),
+    client.from('purchase_orders').select('id, customer_order_id, created_at, expected_delivery_date').in('customer_order_id', orderIds),
   ])
 
   const poIds = rowsOf(purchaseOrders).map((order) => order.id)
   const poLines = poIds.length
-    ? rowsOf(await client.from('purchase_order_items').select('purchase_order_id, supplier_id, fully_received_at').in('purchase_order_id', poIds))
+    ? rowsOf(await client.from('purchase_order_items').select('purchase_order_id, supplier_id, ordered_quantity, fully_received_at').in('purchase_order_id', poIds))
     : []
 
   return { items: rowsOf(items), locations: rowsOf(locations), purchaseOrders: rowsOf(purchaseOrders), poLines }
@@ -166,10 +202,11 @@ async function loadOrderDetails(client, orders) {
 // customer's date and country. history = every status change: the browser reads
 // it through status_history_for_estimates, the server straight from the table.
 export async function estimateOrders(client, orders, history) {
-  const [starting, records, details] = await Promise.all([
+  const [starting, records, details, models] = await Promise.all([
     loadStartingValues(client),
     loadSupplierRecords(client),
     loadOrderDetails(client, orders),
+    loadModels(client),
   ])
 
   const { stageStatistics, historyByOrder } = buildStageStatistics(history)
@@ -186,6 +223,7 @@ export async function estimateOrders(client, orders, history) {
     countries: starting.countries,
     busyMonths: starting.busyMonths,
     country: details.locations.find((location) => location.id === order.delivery_location_id)?.country,
+    models,
   })))
 
   return { predictions, historyByOrder }
@@ -198,7 +236,7 @@ export async function estimateOrders(client, orders, history) {
 export async function estimateDraft(client, { items = [], deliveryLocationId, requestedShipDate, history = [] }) {
   const productIds = [...new Set(items.map((item) => item.product_id).filter(Boolean))]
 
-  const [starting, records, products, location] = await Promise.all([
+  const [starting, records, products, location, models] = await Promise.all([
     loadStartingValues(client),
     loadSupplierRecords(client),
     productIds.length
@@ -207,6 +245,7 @@ export async function estimateDraft(client, { items = [], deliveryLocationId, re
     deliveryLocationId
       ? client.from('delivery_locations').select('country').eq('id', deliveryLocationId).maybeSingle()
       : Promise.resolve({ data: null }),
+    loadModels(client),
   ])
 
   const supplierOf = Object.fromEntries(rowsOf(products).map((product) => [product.id, product.supplier_id]))
@@ -227,6 +266,7 @@ export async function estimateDraft(client, { items = [], deliveryLocationId, re
     countries: starting.countries,
     busyMonths: starting.busyMonths,
     country: location?.data?.country,
+    models,
   }))
 }
 

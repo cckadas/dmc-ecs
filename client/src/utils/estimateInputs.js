@@ -90,9 +90,20 @@ export function orderSuppliers({ items = [], purchaseOrders = [], poLines = [], 
     const promised = theirOrders.map((order) => order.expected_delivery_date).filter(Boolean).sort().at(-1) || null
     const row = starting[supplierId]
 
+    // What's ordered from it (its PO lines, else the order's products from it),
+    // and when its PO went out, for the model.
+    const theirItems = items.filter((item) => item.products?.supplier_id === supplierId)
+    const quantities = theirLines.length
+      ? theirLines.map((line) => Number(line.ordered_quantity) || 0)
+      : theirItems.map((item) => Number(item.quantity) || 0)
+    const sentAt = theirOrders.map((order) => order.created_at).filter(Boolean).sort()[0]
+
     return {
       supplierId,
       name: names[supplierId] || 'A supplier',
+      cases: quantities.reduce((total, quantity) => total + quantity, 0),
+      products: quantities.length || 1,
+      orderedOn: sentAt ? manilaDate(sentAt) : null,
       // No PO for this supplier yet: it's still to be ordered from.
       promised: theirLines.length ? promised : null,
       ordered: theirLines.length > 0,
@@ -114,7 +125,7 @@ export const casesIn = (items = []) => items.reduce((sum, item) => sum + (Number
 
 // Everything predictOrder's context needs for one order. Missing pieces just
 // leave that part to the defaults.
-export function estimateContext({ order, items, purchaseOrders, poLines, histories, startingSuppliers, supplierNames, settings, countries, busyMonths, country, now }) {
+export function estimateContext({ order, items, purchaseOrders, poLines, histories, startingSuppliers, supplierNames, settings, countries, busyMonths, country, now, models = null }) {
   const shipped = normalizeStatus(order?.status) === 'shipped'
 
   return {
@@ -123,6 +134,9 @@ export function estimateContext({ order, items, purchaseOrders, poLines, histori
     busyMonths: busyMonthsFrom(busyMonths),
     country: countryFrom(countries, country),
     cases: casesIn(items),
+    products: (items || []).length,
+    countryName: country || '',
+    models,
     suppliers: shipped ? [] : orderSuppliers({
       items,
       purchaseOrders,

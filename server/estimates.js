@@ -23,14 +23,13 @@ export async function loadShared() {
 // Every status change, oldest first, for the step times. Read straight from the
 // table: status_history_for_estimates answers signed-in users only.
 export async function allStatusHistory(client = supabaseAdmin) {
-  const { data, error } = await client
+  const { allRows } = await loadShared()
+
+  return allRows(() => client
     .from('customer_order_status_history')
     .select('customer_order_id, new_status, changed_at')
     .order('changed_at', { ascending: true })
-
-  if (error) throw error
-
-  return data || []
+    .order('id', { ascending: true }))
 }
 
 

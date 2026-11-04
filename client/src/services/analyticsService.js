@@ -1,6 +1,6 @@
 import { supabase } from '../supabase'
 import { loadStatusHistory } from './predictionService'
-import { estimateOrders, loadAllDeliveries, loadStartingValues } from '../utils/estimateLoader'
+import { allRows, estimateOrders, loadAllDeliveries, loadModels, loadStartingValues } from '../utils/estimateLoader'
 import { buildStageStatistics, normalizeStatus } from '../utils/predictions'
 import { startingDaysFrom } from '../utils/estimateInputs'
 import {
@@ -54,20 +54,21 @@ export async function loadAnalytics(parts = ALL_PARTS) {
   const want = (part) => parts.includes(part)
   const needOrders = ['numbers', 'steps', 'months', 'weeks', 'accuracy'].some(want)
 
-  const [history, starting, deliveries, suppliers, orders] = await Promise.all([
+  const [history, starting, deliveries, suppliers, orders, models] = await Promise.all([
     needOrders ? loadStatusHistory() : [],
     loadStartingValues(supabase),
     loadAllDeliveries(supabase).catch(() => []),
     supabase.from('suppliers').select('id, supplier_name').order('supplier_name'),
     needOrders
-      ? supabase.from('customer_orders').select('id, order_number, status, created_at, requested_ship_date, delivery_location_id')
-      : Promise.resolve({ data: [] }),
+      ? allRows(() => supabase.from('customer_orders').select('id, order_number, status, created_at, requested_ship_date, delivery_location_id').order('id'))
+      : Promise.resolve([]),
+    // Every saved model, in use or not, for the accuracy check and the method note.
+    loadModels(supabase, { inUseOnly: false }),
   ])
 
   if (suppliers.error) throw suppliers.error
-  if (orders.error) throw orders.error
 
-  const allOrders = orders.data || []
+  const allOrders = orders
   const supplierList = suppliers.data || []
   const names = Object.fromEntries(supplierList.map((supplier) => [supplier.id, supplier.supplier_name]))
   const startingDays = startingDaysFrom(starting.settings)
@@ -91,7 +92,7 @@ export async function loadAnalytics(parts = ALL_PARTS) {
         rowsByIds('customer_order_items', 'customer_order_id, quantity, products ( supplier_id )', 'customer_order_id', finished.map(({ order }) => order.id)),
         rowsByIds('delivery_locations', 'id, country', 'id', [...new Set(finished.map(({ order }) => order.delivery_location_id).filter(Boolean))]),
       ])
-      accuracy = accuracyCheck({ orders: allOrders, history, items, locations, deliveries, starting, names })
+      accuracy = accuracyCheck({ orders: allOrders, history, items, locations, deliveries, starting, names, models })
     } else {
       accuracy = { enough: false, finished: finished.length, needed: MIN_ACCURACY_ORDERS }
     }
@@ -106,6 +107,8 @@ export async function loadAnalytics(parts = ALL_PARTS) {
     weeks: want('weeks') ? comingUpByWeek(predictions) : null,
     accuracy: want('accuracy') ? accuracy : null,
     learnedFrom: finishedOrders,
+    // The saved models: how each did, whether it's in use, when it was trained.
+    models: { available: models.available, rows: models.rows },
     // The made-up demo history is in (db/demo/), so the figures aren't DMC's own.
     simulated: allOrders.some((order) => isSimulated(order.order_number)) || deliveries.some((delivery) => isSimulated(delivery.poNumber)),
     // The starting values are still the stand-ins until DMC's numbers are saved

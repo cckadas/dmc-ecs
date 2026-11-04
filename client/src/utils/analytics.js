@@ -220,12 +220,14 @@ export function finishedForAccuracy(orders, historyByOrder) {
 // one's payment was verified, and compared with the day it really shipped:
 //   - split by time: learn from the older 80% of finished orders, test the newest 20%
 //   - methods: starting values only (DMC's numbers with no records, the baseline
-//     to beat) and statistics (the estimates as they work today)
+//     to beat), statistics, and, once it's trained, the statistics with the
+//     model (the saved one, which learned only from orders before these)
 //   - reported: the average days off, and the share within 3 days
 // items: [{ customer_order_id, quantity, products: { supplier_id } }] of the
 // finished orders; locations: [{ id, country }]; deliveries: buildDeliveries';
-// starting: loadStartingValues'; names: { supplier_id: name }
-export function accuracyCheck({ orders = [], history = [], items = [], locations = [], deliveries = [], starting = {}, names = {} }) {
+// starting: loadStartingValues'; names: { supplier_id: name }; models: the
+// saved models (estimateLoader's loadModels with inUseOnly false)
+export function accuracyCheck({ orders = [], history = [], items = [], locations = [], deliveries = [], starting = {}, names = {}, models = null }) {
   const { historyByOrder } = buildStageStatistics(history)
   const finished = finishedForAccuracy(orders, historyByOrder)
 
@@ -241,7 +243,9 @@ export function accuracyCheck({ orders = [], history = [], items = [], locations
   const learned = buildStageStatistics(history.filter((entry) => learnIds.has(entry.customer_order_id))).stageStatistics
   const nothing = buildStageStatistics([]).stageStatistics
 
-  const daysOff = { starting: [], statistics: [] }
+  const daysOff = { starting: [], statistics: [], model: [] }
+  const withModel = models && (models.supplier || models.labeling) ? { supplier: models.supplier, labeling: models.labeling } : null
+  const modelInUse = Boolean(models?.supplier?.inUse || models?.labeling?.inUse)
 
   for (const { order, verifiedAt, shippedAt } of testOn) {
     const asOf = { ...order, status: 'payment verified' }
@@ -250,8 +254,8 @@ export function accuracyCheck({ orders = [], history = [], items = [], locations
     const knownThen = deliveries.filter((delivery) => delivery.receivedOn < manilaDate(verifiedAt))
     const shippedOn = manilaDate(shippedAt)
 
-    for (const method of ['starting', 'statistics']) {
-      const withRecords = method === 'statistics'
+    for (const method of ['starting', 'statistics', ...(withModel ? ['model'] : [])]) {
+      const withRecords = method !== 'starting'
 
       const prediction = predictOrder(asOf, withRecords ? learned : nothing, ownHistory, estimateContext({
         order: asOf,
@@ -266,6 +270,7 @@ export function accuracyCheck({ orders = [], history = [], items = [], locations
         busyMonths: starting.busyMonths,
         country: locations.find((location) => location.id === order.delivery_location_id)?.country,
         now: verifiedAt,
+        models: method === 'model' ? withModel : null,
       }))
 
       daysOff[method].push(Math.abs(daysBetween(manilaDate(prediction.estimatedShipDate), shippedOn)))
@@ -284,7 +289,8 @@ export function accuracyCheck({ orders = [], history = [], items = [], locations
     tested: testOn.length,
     methods: [
       { key: 'starting', label: 'Starting values only', ...summary(daysOff.starting) },
-      { key: 'statistics', label: 'Statistics', inUse: true, ...summary(daysOff.statistics) },
+      { key: 'statistics', label: 'Statistics', inUse: !modelInUse, ...summary(daysOff.statistics) },
+      ...(withModel ? [{ key: 'model', label: 'Statistics + model', inUse: modelInUse, ...summary(daysOff.model) }] : []),
     ],
   }
 }
@@ -296,7 +302,8 @@ export function accuracyCheck({ orders = [], history = [], items = [], locations
 //   payment to shipping  average days from the payment check to shipped, for
 //                        orders shipped in the last 12 months
 //   supplier on time     deliveries by the promised date, last 12 months
-//   accuracy             the statistics' share within 3 days, once there are enough orders
+//   accuracy             the share within 3 days of the method in use, once there
+//                        are enough orders
 export function headlineNumbers({ predictions = [], orders = [], historyByOrder = {}, deliveries = [], accuracy = null, today = new Date() }) {
   const underWay = predictions.filter((prediction) => !prediction.shipped && !prediction.ifPaidToday && prediction.estimatedShipDate)
   const since = timeOf(today) - SCORE_WINDOW_DAYS * DAY
@@ -317,7 +324,7 @@ export function headlineNumbers({ predictions = [], orders = [], historyByOrder 
 
   const sinceDay = manilaDate(since)
   const judged = deliveries.filter((delivery) => delivery.receivedOn >= sinceDay && delivery.onTime !== null)
-  const statistics = accuracy?.enough ? accuracy.methods.find((method) => method.key === 'statistics') : null
+  const statistics = accuracy?.enough ? accuracy.methods.find((method) => method.inUse) : null
 
   return {
     onTrack: { count: underWay.filter((prediction) => prediction.risk !== 'at risk').length, total: underWay.length },

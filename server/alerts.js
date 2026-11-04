@@ -202,13 +202,12 @@ async function release(client, keys) {
 // One check: works out what's new and sends it. Returns the notifications sent.
 // dryRun: returns what would be sent, and changes nothing.
 export async function checkPredictionAlerts({ client = supabaseAdmin, dryRun = false } = {}) {
-  const { estimateOrders, loadOpenDeliveries } = await loadShared()
+  const { allRows, estimateOrders, loadOpenDeliveries } = await loadShared()
 
-  const { data: orders, error } = await client
+  const orders = await allRows(() => client
     .from('customer_orders')
     .select('id, order_number, customer_id, status, created_at, requested_ship_date, delivery_location_id')
-
-  if (error) throw error
+    .order('id'))
 
   const open = (orders || []).filter((order) => OPEN_STATUSES.has(normalize(order.status)))
   if (!open.length) return []
