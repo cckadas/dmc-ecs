@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faCheck } from '@fortawesome/free-solid-svg-icons'
 
@@ -11,6 +11,18 @@ const formatDate = (date) =>
 
 const formatShortDate = (date) =>
   date ? new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''
+
+const DAY = 24 * 60 * 60 * 1000
+
+// Each step's estimate step, whose end is when that step is reached
+// (utils/predictions.js ESTIMATE_STEPS). The first step starts the order.
+const ESTIMATE_STEP_FOR = [null, 'payment_check', 'ordering', 'suppliers', 'labeling', 'shipping']
+
+// When each step not reached yet should be, from the estimate.
+const expectedDates = (prediction) => ESTIMATE_STEP_FOR.map((key) => {
+  const step = key && (prediction?.stepsAhead || []).find((entry) => entry.key === key)
+  return step?.expectedEnd ? new Date(step.expectedEnd) : null
+})
 
 const formatPeso = (value) =>
   `₱${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -30,6 +42,7 @@ export default function OrderProgress({ order, forStaff = false }) {
   const [history, setHistory] = useState([])
   const [prediction, setPrediction] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [loadedAt, setLoadedAt] = useState(null)
 
   useEffect(() => {
     let active = true
@@ -39,6 +52,7 @@ export default function OrderProgress({ order, forStaff = false }) {
         if (!active) return
         setHistory(result.history)
         setPrediction(result.prediction)
+        setLoadedAt(Date.now())
       })
       .catch((error) => console.error('Failed to load order progress:', error))
       .finally(() => { if (active) setLoading(false) })
@@ -50,6 +64,7 @@ export default function OrderProgress({ order, forStaff = false }) {
   const done = stepsDone(status)
   const dates = stepDates(order, history)
   const shipped = status === 'shipped'
+  const expected = shipped ? [] : expectedDates(prediction)
 
   return (
     <div className="mb-6 rounded-lg border border-gray-200 p-4">
@@ -90,6 +105,10 @@ export default function OrderProgress({ order, forStaff = false }) {
                   <p className="text-xs text-gray-500">{formatDate(dates[index])}</p>
                 )}
 
+                {!isDone && expected[index] && (
+                  <p className="text-xs text-gray-400">Expected {formatShortDate(expected[index])}</p>
+                )}
+
                 {note && (
                   <p className={`text-xs font-medium ${status === 'payment rejected' ? 'text-red-700' : 'text-yellow-700'}`}>
                     {note}
@@ -100,6 +119,10 @@ export default function OrderProgress({ order, forStaff = false }) {
           )
         })}
       </ol>
+
+      {!loading && loadedAt && (
+        <OrderTimeline dates={dates} expected={expected} done={done} prediction={prediction} shipped={shipped} now={loadedAt} />
+      )}
 
       {/* Estimated ship date and payment */}
       <div className="mt-4 space-y-1 rounded-md bg-gray-50 p-3 text-sm">
@@ -117,6 +140,118 @@ export default function OrderProgress({ order, forStaff = false }) {
           <PaymentLine order={order} />
         </p>
       </div>
+    </div>
+  )
+}
+
+
+// =============================================
+// TIMELINE
+//
+// The order's steps on a line: done ones at their real dates (filled), the rest
+// at their expected dates (outlined), numbered as in the list above. A shaded
+// band shows the likely ship dates, a dashed line the date the customer asked
+// for. Drawn in pixels at the card's width, so the text stays readable.
+// =============================================
+const TIMELINE = { height: 104, line: 52, gutter: 18 }
+const INK = { primary: '#1f2937', secondary: '#6b7280', track: '#e1e0d9', step: '#2D5A42', band: '#2a78d6' }
+
+function OrderTimeline({ dates, expected, done, prediction, shipped, now }) {
+  const box = useRef(null)
+  const [width, setWidth] = useState(0)
+
+  useLayoutEffect(() => {
+    const element = box.current
+    if (!element) return undefined
+    setWidth(element.getBoundingClientRect().width)
+    const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width))
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+
+  const points = ORDER_STEPS.map((step, index) => {
+    const at = index < done ? dates[index] : expected[index]
+    return at ? { index, label: step.label, at: at.getTime(), done: index < done } : null
+  }).filter(Boolean)
+
+  if (points.length < 2) return null
+
+  const quick = !shipped && prediction?.shipDateRange?.quick ? new Date(prediction.shipDateRange.quick).getTime() : null
+  const slow = !shipped && prediction?.shipDateRange?.slow ? new Date(prediction.shipDateRange.slow).getTime() : null
+  const requested = prediction?.requestedShipDate ? Date.parse(`${prediction.requestedShipDate}T12:00:00+08:00`) : null
+  const last = points[points.length - 1]
+
+  const start = Math.min(...points.map((point) => point.at))
+  const end = Math.max(...points.map((point) => point.at), slow || 0, requested || 0, shipped ? 0 : now)
+  const span = Math.max(end - start, DAY)
+  const left = TIMELINE.gutter
+  const right = Math.max(width, 280) - TIMELINE.gutter
+  const x = (time) => left + ((time - start) / span) * (right - left)
+  const anchor = (position) => (position < left + 40 ? 'start' : position > right - 40 ? 'end' : 'middle')
+
+  const lastDone = [...points].reverse().find((point) => point.done)
+  const summary = [
+    ...points.map((point) => `${point.label} ${point.done ? '' : 'expected '}${formatShortDate(point.at)}`),
+    quick && slow ? `likely ship dates ${formatShortDate(quick)} to ${formatShortDate(slow)}` : null,
+    requested ? `requested ${formatShortDate(requested)}` : null,
+  ].filter(Boolean).join(', ')
+
+  return (
+    <div ref={box} className="mt-4">
+      {width > 0 && (
+        <svg width={width} height={TIMELINE.height} role="img" aria-label={`Timeline: ${summary}`} className="block">
+          {/* The likely ship dates */}
+          {quick && slow && (
+            <rect x={x(quick)} y={TIMELINE.line - 16} width={Math.max(x(slow) - x(quick), 3)} height={32} rx={4} fill={INK.band} fillOpacity={0.12} />
+          )}
+
+          {/* The date the customer asked for */}
+          {requested && (
+            <g>
+              <line x1={x(requested)} x2={x(requested)} y1={20} y2={TIMELINE.line + 22} stroke={INK.secondary} strokeDasharray="4 4" />
+              <text x={x(requested)} y={13} textAnchor={anchor(x(requested))} fontSize={11} fill={INK.secondary}>
+                Requested {formatShortDate(requested)}
+              </text>
+            </g>
+          )}
+
+          {/* The line, and the part already travelled */}
+          <line x1={left} x2={right} y1={TIMELINE.line} y2={TIMELINE.line} stroke={INK.track} strokeWidth={2} strokeLinecap="round" />
+          {lastDone && <line x1={x(start)} x2={x(lastDone.at)} y1={TIMELINE.line} y2={TIMELINE.line} stroke={INK.step} strokeWidth={2} strokeLinecap="round" />}
+
+          {/* Today */}
+          {!shipped && now >= start && now <= end && (
+            <g>
+              <line x1={x(now)} x2={x(now)} y1={TIMELINE.line - 12} y2={TIMELINE.line + 12} stroke={INK.primary} strokeWidth={1} />
+              <text x={x(now)} y={TIMELINE.line - 18} textAnchor={anchor(x(now))} fontSize={11} fill={INK.primary}>Today</text>
+            </g>
+          )}
+
+          {/* The steps */}
+          {points.map((point) => (
+            <g key={point.index}>
+              <title>{`${point.index + 1}. ${point.label}: ${point.done ? '' : 'expected '}${formatDate(new Date(point.at))}`}</title>
+              <circle cx={x(point.at)} cy={TIMELINE.line} r={9} fill={point.done ? INK.step : '#ffffff'} stroke={INK.step} strokeWidth={2} />
+              <text x={x(point.at)} y={TIMELINE.line} dominantBaseline="central" textAnchor="middle" fontSize={10} fontWeight={700} fill={point.done ? '#ffffff' : INK.step}>
+                {point.index + 1}
+              </text>
+            </g>
+          ))}
+
+          {/* The first and last dates */}
+          <text x={x(start)} y={TIMELINE.height - 4} textAnchor="start" fontSize={11} fill={INK.secondary}>{formatShortDate(start)}</text>
+          <text x={x(last.at)} y={TIMELINE.height - 4} textAnchor={anchor(x(last.at)) === 'start' ? 'start' : 'end'} fontSize={11} fontWeight={600} fill={INK.primary}>
+            {shipped ? 'Shipped' : last.index === ORDER_STEPS.length - 1 ? 'Ships around' : 'Expected'} {formatShortDate(last.at)}
+          </text>
+        </svg>
+      )}
+
+      <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+        <li className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-[#2D5A42]" /> Done</li>
+        {!shipped && <li className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-[#2D5A42] bg-white" /> Expected</li>}
+        {quick && slow && <li className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-4 rounded-sm bg-[#2a78d6]/15" /> Likely ship dates</li>}
+        {requested && <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-0 border-l border-dashed border-gray-500" /> Requested ship date</li>}
+      </ul>
     </div>
   )
 }

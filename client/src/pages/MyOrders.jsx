@@ -12,6 +12,7 @@ import OrderProgress from '../components/OrderProgress'
 import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
 import ShipDateSummary from '../components/ShipDateSummary'
+import LabelDesignsNote from '../components/LabelDesignsNote'
 import { loadMyEstimates } from '../services/predictionService'
 
 
@@ -73,6 +74,10 @@ export default function MyOrdersPage() {
             product_name,
             brand,
             unit
+          ),
+
+          compliance_label_exchanges (
+            status
           )
         )
       `)
@@ -214,6 +219,7 @@ export default function MyOrdersPage() {
                   {/* DATE */}
                   <td className="px-5 py-3">
                     <ShipDateSummary estimate={estimates[order.id]} />
+                    <LabelDesignsNote order={order} compact />
                   </td>
 
 
@@ -286,6 +292,8 @@ function MyOrderModal({ order, estimate, onClose }) {
             CONTENT
         ================================================= */}
         <div className="flex-1 overflow-y-auto p-6">
+
+          <LabelDesignsNote order={order} />
 
           <OrderProgress order={order}/>
 

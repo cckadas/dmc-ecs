@@ -10,7 +10,7 @@ import { MIN_PO_DELIVERY_DAYS, localDateString } from '../utils/dates'
 import { getCurrentSupplierPrices, lookupSupplierPrice, pricingErrorMessage } from '../services/pricingService'
 import { formatPeso } from '../services/creditService'
 import { summarizeCapacity, formatCbm } from '../utils/warehouseCapacity'
-import { loadSupplierTimings } from '../services/predictionService'
+import { loadExpectedDeliveries, loadSupplierTimings } from '../services/predictionService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faFolderOpen,
@@ -46,6 +46,8 @@ export default function PurchaseOrdersPage() {
   const [loadingCustomerOrders, setLoadingCustomerOrders] = useState(false)
   const [loadingSuppliers, setLoadingSuppliers] = useState(false)
   const [creatingPO, setCreatingPO] = useState(false)
+  // When each supplier's part of each PO should arrive, by PO and supplier.
+  const [arrivals, setArrivals] = useState({})
   const [showSupplierPFIModal, setShowSupplierPFIModal] = useState(false)
 
 
@@ -54,6 +56,11 @@ export default function PurchaseOrdersPage() {
   // =====================================================
   async function loadPurchaseOrders() {
     setLoading(true)
+
+    // Alongside: when each supplier's part should arrive (as in the estimates).
+    loadExpectedDeliveries()
+      .then((list) => setArrivals(Object.fromEntries(list.map((delivery) => [`${delivery.purchaseOrderId}:${delivery.supplierId}`, delivery]))))
+      .catch((arrivalError) => console.error('Failed to load expected deliveries:', arrivalError))
 
     const {data, error} = await supabase
       .from('purchase_orders')
@@ -768,6 +775,7 @@ export default function PurchaseOrdersPage() {
                             (supplier) => (
                               <div key={supplier.id} className="text-sm text-gray-700">
                                 {supplier.supplier_name}
+                                <ArrivalNote arrival={arrivals[`${po.id}:${supplier.id}`]} />
                               </div>
                             )
                           )}
@@ -1967,6 +1975,32 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
 // A YYYY-MM-DD date, e.g. "Nov 20, 2026".
 const formatDayString = (date) =>
   new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+
+
+// When a supplier's part of a PO should arrive: its promised date moved by how
+// early or late that supplier usually is. Nothing once it's in.
+function ArrivalNote({ arrival }) {
+  if (!arrival) return null
+
+  const day = formatDayString(arrival.expectedDay)
+
+  if (arrival.overdueDays > 0) {
+    return (
+      <p className="text-xs text-red-600">
+        {arrival.overdueDays} {arrival.overdueDays === 1 ? 'day' : 'days'} overdue · expected around {day}
+      </p>
+    )
+  }
+
+  return (
+    <p className={`text-xs ${arrival.likelyLate ? 'text-amber-700' : 'text-gray-500'}`}>
+      Expected around {day}
+      {arrival.likelyLate && (
+        <span className="ml-1.5 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-px text-[11px] font-medium">Likely late</span>
+      )}
+    </p>
+  )
+}
 
 
 // =====================================================

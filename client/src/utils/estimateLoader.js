@@ -11,7 +11,7 @@
 
 import { buildStageStatistics, predictOrder, supplierArrivals } from './predictions.js'
 import { estimateContext, startingDaysFrom, supplierHistories } from './estimateInputs.js'
-import { buildDeliveries } from './supplierScores.js'
+import { buildDeliveries, manilaDate } from './supplierScores.js'
 import { MODEL_KEYS, modelPredictor } from './predictionModel.js'
 
 // Rows, or none when the table can't be read (no access, or 017 not run yet).
@@ -81,16 +81,18 @@ export async function loadStartingValues(client) {
 
 // Every supplier delivery not in yet (one supplier's part of one PO), with when
 // it should arrive: its promised date moved by how late that supplier usually
-// is, as in the estimates. Also the cases still to come and their volume.
-// Soonest first. For the Receiving page's forecast and the overdue alerts.
+// is, as in the estimates (with the model where it's in use). Also the cases
+// still to come and their volume, and whether it's likely to come late.
+// Soonest first. For Receiving, the Purchase Orders list and the overdue alerts.
 export async function loadOpenDeliveries(client, { now = Date.now() } = {}) {
-  const [starting, lines, suppliers] = await Promise.all([
+  const [starting, lines, suppliers, models] = await Promise.all([
     loadStartingValues(client),
     allRows(() => client
       .from('purchase_order_items')
       .select('purchase_order_id, supplier_id, ordered_quantity, received_quantity, fully_received_at, products ( cbm ), purchase_orders ( id, po_number, customer_order_id, created_at, expected_delivery_date )')
       .order('id')),
     client.from('suppliers').select('id, supplier_name'),
+    loadModels(client),
   ])
 
   // The same lines give each supplier's finished deliveries, for its lateness.
@@ -98,6 +100,16 @@ export async function loadOpenDeliveries(client, { now = Date.now() } = {}) {
   const startingDays = startingDaysFrom(starting.settings)
   const names = Object.fromEntries(rowsOf(suppliers).map((supplier) => [supplier.id, supplier.supplier_name]))
   const fromNow = { typical: now, quick: now, slow: now }
+
+  // What each supplier was asked for on each PO, for the model.
+  const asked = new Map()
+  for (const line of lines) {
+    const key = `${line.purchase_orders?.id}:${line.supplier_id}`
+    const entry = asked.get(key) || { cases: 0, products: 0 }
+    entry.cases += Number(line.ordered_quantity) || 0
+    entry.products += 1
+    asked.set(key, entry)
+  }
 
   // One delivery per supplier per PO, counting only what's still to come.
   const open = new Map()
@@ -115,13 +127,19 @@ export async function loadOpenDeliveries(client, { now = Date.now() } = {}) {
 
   return [...open.values()].map(({ order, supplierId, cases, volume }) => {
     const theirs = starting.startingSuppliers[supplierId]
+    const whole = asked.get(`${order.id}:${supplierId}`) || { cases, products: 1 }
     const supplier = {
+      supplierId,
       name: names[supplierId] || 'A supplier',
       promised: order.expected_delivery_date,
+      orderedOn: order.created_at ? manilaDate(order.created_at) : null,
+      cases: whole.cases,
+      products: whole.products,
       history: histories[supplierId] || { leadDays: [], lateness: [] },
       starting: theirs ? { usualLeadDays: theirs.usual_lead_days, lateFrequency: theirs.late_frequency, usualLateDays: theirs.usual_late_days } : null,
     }
-    const { ends, overdue } = supplierArrivals([supplier], fromNow, now, startingDays, () => 0)
+    const { ends, overdue } = supplierArrivals([supplier], fromNow, now, startingDays, () => 0, models.supplier)
+    const expectedDay = manilaDate(ends.typical)
 
     return {
       purchaseOrderId: order.id,
@@ -131,7 +149,10 @@ export async function loadOpenDeliveries(client, { now = Date.now() } = {}) {
       supplierName: supplier.name,
       promised: order.expected_delivery_date,
       expectedOn: new Date(ends.typical),
+      expectedDay,
       overdueDays: overdue[0]?.days ?? 0,
+      // Not overdue yet, but expected after the promised date.
+      likelyLate: !overdue.length && expectedDay > String(order.expected_delivery_date).slice(0, 10),
       cases,
       volume,
     }
