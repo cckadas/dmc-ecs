@@ -224,6 +224,31 @@ export function buildStageStatistics(allHistory, labelingKindOf = null) {
 // Suppliers
 // =============================================================================
 
+// How often a supplier is late and by how much, as DMC staff put it: its own
+// numbers, else DMC's for every supplier, which DMC said are sometimes late.
+// starting: the starting days (supplier_late_days).
+function lateNumbers(supplier, starting) {
+  const theirs = supplier.starting || {}
+  const ownLateDays = theirs.usualLateDays === null || theirs.usualLateDays === undefined || theirs.usualLateDays === ''
+    ? null
+    : Number(theirs.usualLateDays)
+  const usualLate = ownLateDays ?? (Number(starting?.supplier_late_days) || 0)
+  const lateFrequency = theirs.lateFrequency || (usualLate > 0 ? USUAL_LATE_FREQUENCY : null)
+  return { usualLate, lateFrequency }
+}
+
+// The chance a supplier's delivery comes late: the share of its own deliveries
+// that came late, blended with how often DMC says it's late. A supplier late
+// 1 time in 5 by 3 weeks pushes the typical date out, but isn't likely late.
+export function lateChanceOf(supplier, starting) {
+  const { lateFrequency } = lateNumbers(supplier, starting)
+  const fromDmc = LATE_SHARES[lateFrequency] || 0
+  const lateness = (supplier.history?.lateness || []).filter((days) => days !== null && days !== undefined)
+  if (!lateness.length) return fromDmc
+  const share = recordShare(lateness.length)
+  return share * (lateness.filter((days) => days > 0).length / lateness.length) + (1 - share) * fromDmc
+}
+
 // When each supplier the order still waits on should deliver, in the typical,
 // quick and slow cases, and which deliveries are already overdue.
 //
@@ -246,13 +271,7 @@ export function supplierArrivals(suppliers, laneStarts, now, starting, busyExtra
 
     const history = supplier.history || { leadDays: [], lateness: [] }
     const theirs = supplier.starting || {}
-    // How late it is when late: its own number from DMC, else DMC's number for
-    // all suppliers, which DMC said are sometimes late.
-    const ownLateDays = theirs.usualLateDays === null || theirs.usualLateDays === undefined || theirs.usualLateDays === ''
-      ? null
-      : Number(theirs.usualLateDays)
-    const usualLate = ownLateDays ?? (Number(starting.supplier_late_days) || 0)
-    const lateFrequency = theirs.lateFrequency || (usualLate > 0 ? USUAL_LATE_FREQUENCY : null)
+    const { usualLate, lateFrequency } = lateNumbers(supplier, starting)
     let arrival
 
     // The model's days early or late, for a PO sent at a time with so many days given.

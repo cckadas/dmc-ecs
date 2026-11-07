@@ -9,7 +9,7 @@
 // Imports carry their .js extension so the server (Node) can load this too.
 // =============================================================================
 
-import { buildStageStatistics, predictOrder, supplierArrivals } from './predictions.js'
+import { buildStageStatistics, lateChanceOf, predictOrder, supplierArrivals } from './predictions.js'
 import { estimateContext, startingDaysFrom, supplierHistories } from './estimateInputs.js'
 import { buildDeliveries, manilaDate } from './supplierScores.js'
 import { MODEL_KEYS, isOutdatedModel, modelPredictor } from './predictionModel.js'
@@ -84,7 +84,8 @@ export async function loadStartingValues(client) {
 // Every supplier delivery not in yet (one supplier's part of one PO), with when
 // it should arrive: its promised date moved by how late that supplier usually
 // is, as in the estimates (with the model where it's in use). Also the cases
-// still to come and their volume, and whether it's likely to come late.
+// still to come and their volume, and whether it's likely to come late (late
+// at least half the time).
 // Soonest first. For Receiving, the Purchase Orders list and the overdue alerts.
 export async function loadOpenDeliveries(client, { now = Date.now() } = {}) {
   const [starting, lines, suppliers, models] = await Promise.all([
@@ -140,8 +141,9 @@ export async function loadOpenDeliveries(client, { now = Date.now() } = {}) {
       history: histories[supplierId] || { leadDays: [], lateness: [] },
       starting: theirs ? { usualLeadDays: theirs.usual_lead_days, lateFrequency: theirs.late_frequency, usualLateDays: theirs.usual_late_days } : null,
     }
-    const { ends, overdue } = supplierArrivals([supplier], fromNow, now, startingDays, () => 0, models.supplier)
+    const { ends, overdue, usedModel } = supplierArrivals([supplier], fromNow, now, startingDays, () => 0, models.supplier)
     const expectedDay = manilaDate(ends.typical)
+    const promisedDay = String(order.expected_delivery_date).slice(0, 10)
 
     return {
       purchaseOrderId: order.id,
@@ -153,8 +155,9 @@ export async function loadOpenDeliveries(client, { now = Date.now() } = {}) {
       expectedOn: new Date(ends.typical),
       expectedDay,
       overdueDays: overdue[0]?.days ?? 0,
-      // Not overdue yet, but expected after the promised date.
-      likelyLate: !overdue.length && expectedDay > String(order.expected_delivery_date).slice(0, 10),
+      // Not overdue yet, but late at least half the time: by the model's middle
+      // case where it's in use, else by how often this supplier is late.
+      likelyLate: !overdue.length && (usedModel ? expectedDay > promisedDay : lateChanceOf(supplier, startingDays) >= 0.5),
       cases,
       volume,
     }
