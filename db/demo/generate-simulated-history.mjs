@@ -22,11 +22,12 @@
 // random variation, for the statistics and the model to find:
 //   - a payment check takes a day or two, ordering from suppliers about a week
 //   - each supplier promises its own time, from 1 week to 4, and keeps to it
-//     most of the time: about 1 delivery in 8 comes late (some suppliers more
-//     than others), by 1 to 4 weeks
+//     most of the time (some suppliers more than others); when late, it's by
+//     1 to 4 weeks
 //   - a PO given less time than its supplier usually needs comes late
 //   - from September to December (the "Ber months") deliveries take up to a
 //     few weeks longer, more than the suppliers allow for in their promises
+//   - all told, about 1 delivery in 5 comes late, as DMC said
 //   - each customer mostly reorders its usual products; an order fills a
 //     20-ft container, or now and then a 40-ft
 //   - labeling takes about a week for a repeat order in a 20-ft, two weeks in
@@ -217,7 +218,7 @@ for (const customer of [...MADE_UP, ...EXISTING]) customer.usual = shuffle(PRODU
 // and now and then a new one, filling the container ------------------------------
 
 function planOrder(customer) {
-  const size = chance(0.28) ? (chance(0.25) ? '40-ft HC' : '40-ft') : '20-ft'
+  const size = chance(0.32) ? (chance(0.25) ? '40-ft HC' : '40-ft') : '20-ft'
   const count = Math.min(customer.usual.length, size === '20-ft' ? whole(2, 4) : whole(3, 5))
   let products = shuffle(customer.usual).slice(0, count)
 
@@ -310,7 +311,9 @@ function deliveries(lines, poTime, { tight = false } = {}) {
 
 // Labeling, from all goods in to the labels applied ------------------------------------
 
-const LABELING_DAYS = { regular: 7, big: 14, new: 21 }
+// DMC's 1, 2 and 3 weeks, less about a day: the labels are done during office
+// hours, so a finish on a weekend or an evening counts from the next workday.
+const LABELING_DAYS = { regular: 6.2, big: 13.2, new: 20.2 }
 
 function labelingDays(kind, lines) {
   const days = LABELING_DAYS[kind] + 0.4 * (lines.length - 3)
@@ -459,9 +462,10 @@ const finishedPlan = [
 ]
 if (finishedPlan.length !== FINISHED_ORDERS) throw new Error(`Expected ${FINISHED_ORDERS} finished orders, planned ${finishedPlan.length}`)
 
-// When each starts, then their products in the order each customer placed them,
+// When each starts (the last about two months back, so orders ship in every
+// month up to now), then their products in the order each customer placed them,
 // so each order knows whether it's new to its customer.
-const lastStart = NOW - 100 * DAY
+const lastStart = NOW - 75 * DAY
 const plans = shuffle(finishedPlan)
   .map((customer) => ({ customer, createdAt: between(START, lastStart) }))
   .sort((a, b) => a.createdAt - b.createdAt)
@@ -492,6 +496,54 @@ ACTIVE.map((plan, index) => ({ ...plan, customer: MADE_UP[index % MADE_UP.length
     orders.push(activeOrder(plan))
   })
 
+orders.sort((a, b) => a.times['pending payment'] - b.times['pending payment'])
+
+// Moves an order back by whole weeks (so its weekdays stay the same).
+function shiftOrder(order, days) {
+  for (const key of Object.keys(order.times)) order.times[key] -= days * DAY
+  order.requested = addDays(order.requested, -days)
+  if (order.po) {
+    order.po.promised = addDays(order.po.promised, -days)
+    order.po.parts.forEach((part) => {
+      part.receivedAt -= days * DAY
+      part.paidOn = addDays(part.paidOn, -days)
+    })
+  }
+}
+
+// An order that ran past today started earlier, so a customer's orders can end
+// up in another order than planned. Each order's kind again, from the final
+// dates, as the system will work them out: a finished one whose kind changed
+// gets that kind's labeling time (moved back by whole weeks if it would then
+// run past today). Until nothing changes.
+function settleKinds() {
+  for (let round = 0; round < 8; round++) {
+    orders.sort((a, b) => a.times['pending payment'] - b.times['pending payment'])
+    const seen = new Map()
+    let changed = 0
+
+    for (const order of orders) {
+      if (!seen.has(order.customer.key)) seen.set(order.customer.key, new Set())
+      const ordered = seen.get(order.customer.key)
+      const kind = kindOf(order, ordered)
+      order.lines.forEach((line) => ordered.add(line.key))
+      if (kind === order.kind) continue
+
+      changed++
+      order.kind = kind
+      if (order.status !== 'shipped') continue
+
+      const ready = officeTime(order.times['warehouse preparation'] + labelingDays(kind, order.lines) * DAY)
+      order.times['ready for shipment'] = ready
+      order.times.shipped = officeTime(ready + between(0.2, 1.6) * DAY)
+      const over = order.times.shipped - (NOW - 0.5 * DAY)
+      if (over > 0) shiftOrder(order, Math.ceil(over / (7 * DAY)) * 7)
+    }
+
+    if (!changed) return
+  }
+}
+settleKinds()
 orders.sort((a, b) => a.times['pending payment'] - b.times['pending payment'])
 
 // The kinds again, from the final dates, as the system will work them out.
@@ -637,6 +689,11 @@ const deliveryStats = (() => {
   return { count, late }
 })()
 const kindCounts = orders.filter((order) => order.status === 'shipped').reduce((counts, order) => ({ ...counts, [order.kind]: (counts[order.kind] || 0) + 1 }), {})
+// Orders shipped each month, so every month has some.
+const shippedByMonth = orders.filter((order) => order.status === 'shipped').reduce((months, order) => {
+  const month = dayOf(order.times.shipped).slice(0, 7)
+  return { ...months, [month]: (months[month] || 0) + 1 }
+}, {})
 
 
 // The SQL --------------------------------------------------------------------------
@@ -885,5 +942,6 @@ console.log(`  ${MADE_UP.length} made-up customers, ${finished} finished orders,
 console.log(`  ${rows.items.length} order lines, ${rows.pos.length} POs, ${rows.poLines.length} PO lines, ${deliveryCount} supplier deliveries, ${rows.labels.length} label records, ${rows.history.length} status changes`)
 console.log(`  Deliveries in: ${deliveryStats.count}, late: ${deliveryStats.late} (${Math.round((100 * deliveryStats.late) / deliveryStats.count)}%)`)
 console.log(`  Finished orders by labeling kind: ${Object.entries(kindCounts).map(([kind, count]) => `${kind} ${count}`).join(', ')}; kinds changed by the final dates: ${kindMismatches}`)
+console.log(`  Shipped by month: ${Object.entries(shippedByMonth).sort().map(([month, count]) => `${month} ${count}`).join(', ')}`)
 console.log('  Supplier patterns (position: usual lead days, on-time share, late by):')
 console.log(`  ${SUPPLIERS.map((supplier) => `${supplier.slot}: ${supplier.lead}d ${Math.round(supplier.onTime * 100)}% +${supplier.lateBy}d`).join(' · ')}`)
