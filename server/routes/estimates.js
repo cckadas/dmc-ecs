@@ -24,12 +24,12 @@ router.get('/', async (req, res) => {
 
 // =============================================
 // POST /api/customer/estimates/draft
-// { items: [{ product_id, quantity }], deliveryLocationId?, requestedShipDate? }
+// { items: [{ product_id, quantity }], deliveryLocationId?, requestedShipDate?, containerSize? }
 // A quotation request or quotation's estimate, as if the down payment were
 // made today.
 // =============================================
 router.post('/draft', async (req, res) => {
-  const { items, deliveryLocationId, requestedShipDate } = req.body || {}
+  const { items, deliveryLocationId, requestedShipDate, containerSize } = req.body || {}
 
   const valid = Array.isArray(items)
     && items.length > 0
@@ -45,6 +45,7 @@ router.post('/draft', async (req, res) => {
       items: items.map((item) => ({ product_id: item.product_id, quantity: Number(item.quantity) || 0 })),
       deliveryLocationId: typeof deliveryLocationId === 'string' ? deliveryLocationId : null,
       requestedShipDate: typeof requestedShipDate === 'string' && DATE.test(requestedShipDate) ? requestedShipDate : null,
+      containerSize: typeof containerSize === 'string' && containerSize.length <= 20 ? containerSize : null,
     })
 
     res.json({ estimate })

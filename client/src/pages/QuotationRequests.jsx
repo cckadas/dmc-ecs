@@ -639,6 +639,7 @@ function QuotationShipEstimate({ quotation }) {
       items: (quotation.quotation_items || []).map((item) => ({ product_id: item.product_id, quantity: Number(item.quantity) || 0 })),
       deliveryLocationId: quotation.quotation_request?.delivery_location_id || null,
       requestedShipDate: preferredDate,
+      containerSize: quotation.container_size || null,
     })
       .then((result) => { if (active) setEstimate(result) })
       .catch((error) => console.error('Failed to estimate the ship date:', error))

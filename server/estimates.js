@@ -67,8 +67,8 @@ export async function customerEstimates(customerId) {
 
 // An order the customer hasn't placed yet, as if paid today: a quotation request
 // being filled in, or a quotation they're viewing. Only their own delivery
-// location counts.
-export async function customerDraftEstimate(customerId, { items, deliveryLocationId, requestedShipDate }) {
+// location counts. Their past orders tell whether its products are new to them.
+export async function customerDraftEstimate(customerId, { items, deliveryLocationId, requestedShipDate, containerSize = null }) {
   const { estimateDraft, forCustomer } = await loadShared()
 
   let locationId = null
@@ -86,6 +86,8 @@ export async function customerDraftEstimate(customerId, { items, deliveryLocatio
     items,
     deliveryLocationId: locationId,
     requestedShipDate,
+    customerId,
+    containerSize,
     history: await allStatusHistory(),
   })
 

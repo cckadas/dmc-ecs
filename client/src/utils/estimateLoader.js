@@ -12,7 +12,9 @@
 import { buildStageStatistics, predictOrder, supplierArrivals } from './predictions.js'
 import { estimateContext, startingDaysFrom, supplierHistories } from './estimateInputs.js'
 import { buildDeliveries, manilaDate } from './supplierScores.js'
-import { MODEL_KEYS, modelPredictor } from './predictionModel.js'
+import { MODEL_KEYS, isOutdatedModel, modelPredictor } from './predictionModel.js'
+import { labelingKindOf, labelingKinds, productsOrderedBy } from './labelingKind.js'
+import { planContainer } from './containers.js'
 
 // Rows, or none when the table can't be read (no access, or 017 not run yet).
 const rowsOf = (result) => (result?.error ? [] : result?.data || [])
@@ -66,7 +68,7 @@ export async function loadStartingValues(client) {
   const [settings, suppliers, countries, busyMonths] = await Promise.all([
     client.from('prediction_settings').select('key, days, is_placeholder'),
     client.from('prediction_suppliers').select('supplier_id, usual_lead_days, late_frequency, usual_late_days'),
-    client.from('prediction_countries').select('country, sailing_days, extra_labeling_days, is_placeholder'),
+    client.from('prediction_countries').select('country, sailing_days, is_placeholder'),
     client.from('prediction_busy_months').select('month, extra_days'),
   ])
 
@@ -175,8 +177,47 @@ export async function loadModels(client, { inUseOnly = true } = {}) {
     available: !result?.error,
     supplier: pick(MODEL_KEYS.supplier),
     labeling: pick(MODEL_KEYS.labeling),
-    rows: rows.map(({ key, metrics, in_use: inUse, trained_at: trainedAt }) => ({ key, metrics, inUse, trainedAt })),
+    // outdated: saved before the model's inputs changed, so not used.
+    rows: rows.map((row) => ({ key: row.key, metrics: row.metrics, inUse: row.in_use && !isOutdatedModel(row), trainedAt: row.trained_at, outdated: isOutdatedModel(row) })),
   }
+}
+
+
+// Every order's labeling kind (utils/labelingKind.js), with the orders and
+// items it came from, for an order not placed yet. Empty when the reader can't
+// see every order (a customer), and the estimates then use all labeling times.
+export async function loadLabelingKinds(client) {
+  const [orders, items] = await Promise.all([
+    allRows(() => client.from('customer_orders').select('id, customer_id, created_at, status, container_size').order('id')).catch(() => []),
+    allRows(() => client.from('customer_order_items').select('id, customer_order_id, product_id').order('id')).catch(() => []),
+  ])
+
+  const kinds = labelingKinds(orders, items)
+  return { kinds, kindOf: kinds.size ? (orderId) => kinds.get(orderId) : null, orders, items }
+}
+
+
+// The smallest container that holds a draft's cases (utils/containers.js), or
+// the largest when even that's too small. Null when a product isn't measured.
+async function plannedContainer(client, items, products) {
+  const [sizes, fill] = await Promise.all([
+    client.from('container_sizes').select('code, inside_cbm, max_weight_kg, sort_order').order('sort_order'),
+    client.from('business_settings').select('value').eq('key', 'container_fill_percent').maybeSingle(),
+  ])
+
+  const byId = Object.fromEntries(products.map((product) => [product.id, product]))
+  const plan = planContainer({
+    lines: items.map((item) => ({
+      name: item.product_id,
+      quantity: Number(item.quantity) || 0,
+      cbm: byId[item.product_id]?.cbm,
+      grossWeightKg: byId[item.product_id]?.gross_weight_kg,
+    })),
+    sizes: rowsOf(sizes),
+    fillPercent: fill?.data?.value ?? 100,
+  })
+
+  return plan.smallest?.code || (plan.tooBig ? plan.options.at(-1)?.code : null) || null
 }
 
 
@@ -223,14 +264,15 @@ async function loadOrderDetails(client, orders) {
 // customer's date and country. history = every status change: the browser reads
 // it through status_history_for_estimates, the server straight from the table.
 export async function estimateOrders(client, orders, history) {
-  const [starting, records, details, models] = await Promise.all([
+  const [starting, records, details, models, labeling] = await Promise.all([
     loadStartingValues(client),
     loadSupplierRecords(client),
     loadOrderDetails(client, orders),
     loadModels(client),
+    loadLabelingKinds(client),
   ])
 
-  const { stageStatistics, historyByOrder } = buildStageStatistics(history)
+  const { stageStatistics, historyByOrder } = buildStageStatistics(history, labeling.kindOf)
 
   const predictions = orders.map((order) => predictOrder(order, stageStatistics, historyByOrder, estimateContext({
     order,
@@ -245,6 +287,8 @@ export async function estimateOrders(client, orders, history) {
     busyMonths: starting.busyMonths,
     country: details.locations.find((location) => location.id === order.delivery_location_id)?.country,
     models,
+    labelingKind: labeling.kinds.get(order.id) || null,
+    containerSize: labeling.orders.find((row) => row.id === order.id)?.container_size || null,
   })))
 
   return { predictions, historyByOrder }
@@ -253,27 +297,36 @@ export async function estimateOrders(client, orders, history) {
 
 // An order not placed yet, as if its down payment were made today: for a
 // quotation request being filled in, or a quotation the customer is looking at.
-//   items: [{ product_id, quantity }]
-export async function estimateDraft(client, { items = [], deliveryLocationId, requestedShipDate, history = [] }) {
+//   items:         [{ product_id, quantity }]
+//   customerId:    whose it is, to tell whether its products are new to them
+//   containerSize: the container chosen, if any; else the smallest that fits
+export async function estimateDraft(client, { items = [], deliveryLocationId, requestedShipDate, history = [], customerId = null, containerSize = null }) {
   const productIds = [...new Set(items.map((item) => item.product_id).filter(Boolean))]
 
-  const [starting, records, products, location, models] = await Promise.all([
+  const [starting, records, products, location, models, labeling] = await Promise.all([
     loadStartingValues(client),
     loadSupplierRecords(client),
     productIds.length
-      ? client.from('products').select('id, supplier_id').in('id', productIds)
+      ? client.from('products').select('id, supplier_id, cbm, gross_weight_kg').in('id', productIds)
       : Promise.resolve({ data: [] }),
     deliveryLocationId
       ? client.from('delivery_locations').select('country').eq('id', deliveryLocationId).maybeSingle()
       : Promise.resolve({ data: null }),
     loadModels(client),
+    loadLabelingKinds(client),
   ])
+
+  // Its labeling kind: new unless the customer has ordered every product before.
+  const container = containerSize || (productIds.length ? await plannedContainer(client, items, rowsOf(products)).catch(() => null) : null)
+  const labelingKind = customerId
+    ? labelingKindOf({ productIds, earlierProductIds: productsOrderedBy(customerId, labeling.orders, labeling.items), containerSize: container })
+    : null
 
   const supplierOf = Object.fromEntries(rowsOf(products).map((product) => [product.id, product.supplier_id]))
   const draftItems = items.map((item) => ({ quantity: item.quantity, products: { supplier_id: supplierOf[item.product_id] } }))
   const order = { id: 'draft', status: 'pending payment', created_at: new Date().toISOString(), requested_ship_date: requestedShipDate || null }
 
-  const { stageStatistics, historyByOrder } = buildStageStatistics(history)
+  const { stageStatistics, historyByOrder } = buildStageStatistics(history, labeling.kindOf)
 
   return predictOrder(order, stageStatistics, historyByOrder, estimateContext({
     order,
@@ -288,6 +341,8 @@ export async function estimateDraft(client, { items = [], deliveryLocationId, re
     busyMonths: starting.busyMonths,
     country: location?.data?.country,
     models,
+    labelingKind,
+    containerSize: container,
   }))
 }
 

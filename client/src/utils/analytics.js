@@ -226,8 +226,9 @@ export function finishedForAccuracy(orders, historyByOrder) {
 // items: [{ customer_order_id, quantity, products: { supplier_id } }] of the
 // finished orders; locations: [{ id, country }]; deliveries: buildDeliveries';
 // starting: loadStartingValues'; names: { supplier_id: name }; models: the
-// saved models (estimateLoader's loadModels with inUseOnly false)
-export function accuracyCheck({ orders = [], history = [], items = [], locations = [], deliveries = [], starting = {}, names = {}, models = null }) {
+// saved models (estimateLoader's loadModels with inUseOnly false); kinds: each
+// order's labeling kind (utils/labelingKind.js), as a Map
+export function accuracyCheck({ orders = [], history = [], items = [], locations = [], deliveries = [], starting = {}, names = {}, models = null, kinds = null }) {
   const { historyByOrder } = buildStageStatistics(history)
   const finished = finishedForAccuracy(orders, historyByOrder)
 
@@ -240,12 +241,16 @@ export function accuracyCheck({ orders = [], history = [], items = [], locations
   const testOn = finished.slice(finished.length - tested)
 
   const learnIds = new Set(learnFrom.map(({ order }) => order.id))
-  const learned = buildStageStatistics(history.filter((entry) => learnIds.has(entry.customer_order_id))).stageStatistics
+  const kindOf = kinds?.size ? (orderId) => kinds.get(orderId) : null
+  const learned = buildStageStatistics(history.filter((entry) => learnIds.has(entry.customer_order_id)), kindOf).stageStatistics
   const nothing = buildStageStatistics([]).stageStatistics
 
   const daysOff = { starting: [], statistics: [], model: [] }
-  const withModel = models && (models.supplier || models.labeling) ? { supplier: models.supplier, labeling: models.labeling } : null
-  const modelInUse = Boolean(models?.supplier?.inUse || models?.labeling?.inUse)
+  // As the estimates use them: each model only once it beat the statistics. With
+  // neither in use yet, the row shows how the saved ones would do.
+  const inUse = { supplier: models?.supplier?.inUse ? models.supplier : null, labeling: models?.labeling?.inUse ? models.labeling : null }
+  const modelInUse = Boolean(inUse.supplier || inUse.labeling)
+  const withModel = modelInUse ? inUse : models && (models.supplier || models.labeling) ? { supplier: models.supplier, labeling: models.labeling } : null
 
   for (const { order, verifiedAt, shippedAt } of testOn) {
     const asOf = { ...order, status: 'payment verified' }
@@ -271,6 +276,7 @@ export function accuracyCheck({ orders = [], history = [], items = [], locations
         country: locations.find((location) => location.id === order.delivery_location_id)?.country,
         now: verifiedAt,
         models: method === 'model' ? withModel : null,
+        labelingKind: kinds?.get(order.id) || null,
       }))
 
       daysOff[method].push(Math.abs(daysBetween(manilaDate(prediction.estimatedShipDate), shippedOn)))

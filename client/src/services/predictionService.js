@@ -47,9 +47,10 @@ export async function predictOrders(orders) {
 
 
 // Staff: an order not placed yet, as if its down payment were made today, e.g.
-// a quotation request being priced. items: [{ product_id, quantity }]
-export async function previewEstimate({ items, deliveryLocationId, requestedShipDate }) {
-  return estimateDraft(supabase, { items, deliveryLocationId, requestedShipDate, history: await loadStatusHistory() })
+// a quotation request being priced. items: [{ product_id, quantity }];
+// customerId: whose request it is; containerSize: the container chosen, if any.
+export async function previewEstimate({ items, deliveryLocationId, requestedShipDate, customerId = null, containerSize = null }) {
+  return estimateDraft(supabase, { items, deliveryLocationId, requestedShipDate, customerId, containerSize, history: await loadStatusHistory() })
 }
 
 
@@ -121,8 +122,9 @@ export async function loadMyEstimates() {
 
 
 // Customer: a quotation request or quotation's estimate, as if paid today.
-export async function previewMyEstimate({ items, deliveryLocationId, requestedShipDate }) {
-  const { estimate } = await callServer('/draft', { items, deliveryLocationId, requestedShipDate })
+// containerSize: the quotation's container, if it has one.
+export async function previewMyEstimate({ items, deliveryLocationId, requestedShipDate, containerSize = null }) {
+  const { estimate } = await callServer('/draft', { items, deliveryLocationId, requestedShipDate, containerSize })
   return estimate
 }
 

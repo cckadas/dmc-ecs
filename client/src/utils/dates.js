@@ -1,7 +1,8 @@
 // Business-rule lead times, in days. Kept here so each rule has one place to
 // change once the team confirms it.
 export const MIN_PREFERRED_SHIP_DAYS = 14
-export const MIN_PO_DELIVERY_DAYS = 14
+// DMC (Nov 2026): some suppliers promise delivery within a week.
+export const MIN_PO_DELIVERY_DAYS = 7
 
 // DMC: a quotation is valid for exactly 7 days from the day it's generated,
 // not counting Sundays. The database sets the same date (db/migrations/009).

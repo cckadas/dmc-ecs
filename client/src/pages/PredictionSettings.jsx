@@ -7,7 +7,9 @@ import { faFloppyDisk } from '@fortawesome/free-solid-svg-icons'
 import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
 import { loadSupplierScores } from '../services/supplierScoreService'
-import { RECORD_WEIGHT } from '../utils/predictions'
+import { LATE_SHARES, RECORD_WEIGHT, USUAL_LATE_FREQUENCY } from '../utils/predictions'
+import { countryFrom } from '../utils/estimateInputs'
+import { countryName } from '../utils/countryPlaces'
 
 
 // =============================================
@@ -28,13 +30,18 @@ const settingsErrorMessage = (error) =>
     ? 'The prediction settings aren\'t in the database yet. Run database script 017 first.'
     : error?.message || 'Couldn\'t load the prediction settings.'
 
+// How often "sometimes", "rarely" and "often" mean, as a share of deliveries.
+const lateShare = (frequency) => `about ${Math.round(LATE_SHARES[frequency] * 100)}%`
+
 const STEPS = [
   { key: 'payment_check', label: "Checking a customer's payment", hint: 'From the proof of payment to sales verifying it' },
   { key: 'ordering', label: 'Ordering from suppliers', hint: 'From the payment being verified to the POs being sent' },
-  { key: 'supplier_lead', label: 'Supplier delivery (default)', hint: "For suppliers DMC hasn't given a time for below" },
-  { key: 'labeling', label: 'Labeling', hint: 'From all goods arriving to all labels applied' },
-  { key: 'shipping', label: 'From ready to shipped', hint: 'Booking and loading the container' },
-  { key: 'labeling_per_1000_cases', label: 'Extra labeling per 1,000 cases', hint: 'For bigger orders taking longer to label' },
+  { key: 'supplier_lead', label: 'Supplier delivery (default)', hint: 'From PO to delivery, for suppliers without their own time below' },
+  { key: 'supplier_late_days', label: 'How late suppliers are (default)', hint: `When late, for suppliers without their own number below. They count as late ${USUAL_LATE_FREQUENCY} (${lateShare(USUAL_LATE_FREQUENCY)} of deliveries)` },
+  { key: 'labeling', label: 'Labeling: repeat order, 20-ft', hint: 'Every product ordered before by the customer. From all goods arriving to all labels applied' },
+  { key: 'labeling_big_container', label: 'Labeling: repeat order, 40-ft', hint: 'Every product ordered before, filling a 40-ft or a 40-ft high cube' },
+  { key: 'labeling_new', label: 'Labeling: new customer or product', hint: "The customer's first order, or one with a product they haven't ordered before: its labels are new" },
+  { key: 'shipping', label: 'From ready to shipped', hint: 'Booking and loading the container, until it leaves for the port' },
 ]
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
@@ -216,14 +223,16 @@ function SuppliersSection() {
   const [drafts, setDrafts] = useState({})
   const [scores, setScores] = useState({})
   const [defaultDays, setDefaultDays] = useState(null)
+  const [defaultLateDays, setDefaultLateDays] = useState(null)
   const [loadError, setLoadError] = useState('')
 
 
   async function loadSuppliers() {
-    const [list, saved, fallback] = await Promise.all([
+    const [list, saved, fallback, fallbackLate] = await Promise.all([
       supabase.from('suppliers').select('id, supplier_name').order('supplier_name', { ascending: true }),
       supabase.from('prediction_suppliers').select('supplier_id, usual_lead_days, late_frequency, usual_late_days'),
       supabase.from('prediction_settings').select('days').eq('key', 'supplier_lead').maybeSingle(),
+      supabase.from('prediction_settings').select('days').eq('key', 'supplier_late_days').maybeSingle(),
     ])
 
     const error = list.error || saved.error
@@ -241,6 +250,7 @@ function SuppliersSection() {
       return [supplier.id, { lead: text(row.usual_lead_days), frequency: row.late_frequency || '', late: text(row.usual_late_days), saved: Boolean(bySupplier[supplier.id]) }]
     })))
     setDefaultDays(fallback.data ? Number(fallback.data.days) : null)
+    setDefaultLateDays(fallbackLate.data ? Number(fallbackLate.data.days) : null)
     setLoadError('')
 
     // What actually happened, beside DMC's numbers. Not needed to save.
@@ -309,7 +319,8 @@ function SuppliersSection() {
       </h2>
 
       <p className="mb-3 text-sm text-gray-500">
-        As DMC staff know them. A supplier left blank uses the default supplier delivery time{defaultDays !== null ? ` (${defaultDays} days)` : ''}.
+        As DMC staff know them. A supplier left blank uses the defaults above: delivery in{defaultDays !== null ? ` ${defaultDays}` : ' the default'} days,
+        late {USUAL_LATE_FREQUENCY} ({lateShare(USUAL_LATE_FREQUENCY)} of deliveries) by{defaultLateDays !== null ? ` ${defaultLateDays}` : ' the default'} days.
         Records shows what has actually happened in the last 12 months, for comparison.
       </p>
 
@@ -361,9 +372,9 @@ function SuppliersSection() {
                       className={`${input} w-36`}
                     >
                       <option value="">Not set</option>
-                      <option value="rarely">Rarely</option>
-                      <option value="sometimes">Sometimes</option>
-                      <option value="often">Often</option>
+                      <option value="rarely">Rarely ({lateShare('rarely')})</option>
+                      <option value="sometimes">Sometimes ({lateShare('sometimes')})</option>
+                      <option value="often">Often ({lateShare('often')})</option>
                     </select>
                   </td>
 
@@ -374,6 +385,7 @@ function SuppliersSection() {
                       step="0.5"
                       value={draft.late ?? ''}
                       onChange={(e) => updateDraft(supplier.id, 'late', e.target.value)}
+                      placeholder={defaultLateDays !== null ? String(defaultLateDays) : ''}
                       aria-label={`${supplier.supplier_name}: usually late by`}
                       className={`${input} w-24 text-right`}
                     />
@@ -408,7 +420,10 @@ function SuppliersSection() {
 
 
 // =============================================
-// SAILING DAYS AND EXTRA LABELING, BY COUNTRY
+// SAILING DAYS, BY COUNTRY
+//
+// DMC: labeling doesn't depend on the country, only on whether the customer or
+// a product is new (Each step's usual days), so only sailing days are here.
 // =============================================
 function CountriesSection() {
   const { profile } = useAuth()
@@ -421,7 +436,7 @@ function CountriesSection() {
 
   async function loadCountries() {
     const [saved, locations] = await Promise.all([
-      supabase.from('prediction_countries').select('country, sailing_days, extra_labeling_days, is_placeholder'),
+      supabase.from('prediction_countries').select('country, sailing_days, is_placeholder'),
       supabase.from('delivery_locations').select('country'),
     ])
 
@@ -431,25 +446,29 @@ function CountriesSection() {
     }
 
     // Default first, then every country a customer delivers to, saved or not.
-    const byName = new Map((saved.data || []).map((row) => [row.country.trim().toLowerCase(), row]))
+    // Names are matched as the estimates match them: "UK" is the United Kingdom.
+    const savedRows = saved.data || []
+    const byName = new Map(savedRows.map((row) => [countryName(row.country), row]))
     const names = new Map([['default', 'Default']])
-    for (const row of saved.data || []) names.set(row.country.trim().toLowerCase(), row.country.trim())
+    for (const row of savedRows) names.set(countryName(row.country), row.country.trim())
     for (const row of locations.data || []) {
       const name = (row.country || '').trim()
-      if (name && !names.has(name.toLowerCase())) names.set(name.toLowerCase(), name)
+      if (name && !names.has(countryName(name))) names.set(countryName(name), name)
     }
 
+    // One without its own row goes by the nearest that has one (or Default).
     const list = [...names.entries()]
-      .map(([key, name]) => ({ key, name, row: byName.get(key) || null }))
+      .map(([key, name]) => {
+        const row = byName.get(key) || null
+        const borrowed = row ? null : countryFrom(savedRows, name)
+        return { key, name, row, nearest: borrowed?.nearest || null, borrowedDays: borrowed?.sailingDays ?? null }
+      })
       .sort((a, b) => (a.key === 'default' ? -1 : b.key === 'default' ? 1 : a.name.localeCompare(b.name)))
 
     const text = (value) => (value === null || value === undefined ? '' : String(Number(value)))
 
     setCountries(list)
-    setDrafts(Object.fromEntries(list.map((country) => [country.key, {
-      sailing: text(country.row?.sailing_days),
-      labeling: country.row ? text(country.row.extra_labeling_days) : '',
-    }])))
+    setDrafts(Object.fromEntries(list.map((country) => [country.key, { sailing: text(country.row?.sailing_days) }])))
     setLoadError('')
   }
 
@@ -462,18 +481,12 @@ function CountriesSection() {
       return
     }
 
-    if (draft.labeling !== '' && !isWholeOrHalf(draft.labeling)) {
-      toast.error(`Enter the extra labeling days for ${country.name}: 0 or more.`)
-      return
-    }
-
     const { error } = await supabase
       .from('prediction_countries')
       .upsert(
         {
           country: country.row?.country || country.name,
           sailing_days: draft.sailing === '' ? null : Number(draft.sailing),
-          extra_labeling_days: draft.labeling === '' ? 0 : Number(draft.labeling),
           is_placeholder: false,
           updated_by: profile?.id,
           updated_at: new Date().toISOString(),
@@ -499,12 +512,13 @@ function CountriesSection() {
   return (
     <div>
       <h2 className="text-lg font-semibold text-[#1F3A2C]">
-        Sailing days and extra labeling, by country
+        Sailing days, by country
       </h2>
 
       <p className="mb-3 text-sm text-gray-500">
         Sailing days give the customer an estimated arrival at their port: the ship date plus these days.
-        The system can't learn them, because it doesn't record arrivals. A country without its own row uses Default.
+        The system can't learn them, because it doesn't record arrivals. As DMC said, a country without its own row
+        goes by the nearest country that has one; Default is for a country the system can't place.
       </p>
 
       <LoadError message={loadError} />
@@ -515,7 +529,6 @@ function CountriesSection() {
             <tr>
               <th className={th}>Country</th>
               <th className={th}>Sailing Days</th>
-              <th className={th}>Extra Labeling Days</th>
               <th className={th}>Source</th>
               <th className={th}>Actions</th>
             </tr>
@@ -526,7 +539,13 @@ function CountriesSection() {
               <tr key={country.key} className="border-t border-gray-200 text-sm">
                 <td className="px-5 py-3 font-medium text-gray-800">
                   {country.name}
-                  {!country.row && <p className="text-xs font-normal text-amber-700">Not set: uses Default</p>}
+                  {!country.row && (
+                    <p className="text-xs font-normal text-amber-700">
+                      {country.nearest
+                        ? `Not set: uses ${country.nearest}'s, the nearest${country.borrowedDays !== null ? ` (${country.borrowedDays} days)` : ''}`
+                        : 'Not set: uses Default'}
+                    </p>
+                  )}
                 </td>
 
                 <td className="px-5 py-3">
@@ -536,20 +555,8 @@ function CountriesSection() {
                     step="0.5"
                     value={drafts[country.key]?.sailing ?? ''}
                     onChange={(e) => setDrafts({ ...drafts, [country.key]: { ...drafts[country.key], sailing: e.target.value } })}
+                    placeholder={country.borrowedDays !== null && country.borrowedDays !== undefined ? String(country.borrowedDays) : ''}
                     aria-label={`Sailing days to ${country.name}`}
-                    className={`${input} w-24 text-right`}
-                  />
-                </td>
-
-                <td className="px-5 py-3">
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.5"
-                    value={drafts[country.key]?.labeling ?? ''}
-                    onChange={(e) => setDrafts({ ...drafts, [country.key]: { ...drafts[country.key], labeling: e.target.value } })}
-                    placeholder="0"
-                    aria-label={`Extra labeling days for ${country.name}`}
                     className={`${input} w-24 text-right`}
                   />
                 </td>

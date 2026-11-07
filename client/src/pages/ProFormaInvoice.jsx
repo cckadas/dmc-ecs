@@ -839,12 +839,15 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
       items: request.quotation_request_items.map((item) => ({ product_id: item.products.id, quantity: item.quantity })),
       deliveryLocationId: request.delivery_location_id,
       requestedShipDate: request.preferred_ship_date,
+      // Labeling takes longer for a new customer or product, and a 40-ft.
+      customerId: request.profiles?.id || null,
+      containerSize: containerCode || null,
     })
       .then((estimate) => { if (active) setShipEstimate(estimate) })
       .catch((error) => console.error('Failed to estimate the ship date:', error))
 
     return () => { active = false }
-  }, [request.id])
+  }, [request.id, containerCode])
 
 
   // ===================================================

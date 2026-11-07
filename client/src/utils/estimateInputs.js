@@ -11,9 +11,10 @@
 
 import { DEFAULT_STARTING_DAYS, normalizeStatus } from './predictions.js'
 import { manilaDate, SCORE_WINDOW_DAYS } from './supplierScores.js'
+import { countryName, nearestCountry } from './countryPlaces.js'
+import { isBigContainer } from './labelingKind.js'
 
 const DAY = 1000 * 60 * 60 * 24
-const countryKey = (country) => (country || '').trim().toLowerCase()
 
 
 // prediction_settings rows ({ key, days }) over the built-in placeholders.
@@ -34,17 +35,33 @@ export function busyMonthsFrom(rows = []) {
 }
 
 
-// The customer's country from prediction_countries rows, else the Default row.
+// The customer's country from prediction_countries rows. A country without its
+// own row goes by the nearest country DMC already ships to, as DMC said; one
+// whose place isn't known (utils/countryPlaces.js) uses the Default row.
+// Returns { sailingDays, isPlaceholder, nearest: the country it went by, if any }.
 export function countryFrom(rows = [], country) {
-  const row = rows.find((entry) => countryKey(entry.country) === countryKey(country))
-    || rows.find((entry) => countryKey(entry.country) === 'default')
+  const name = countryName(country)
+  const isDefault = (entry) => countryName(entry.country) === 'default'
+  const shipsTo = rows.filter((entry) => !isDefault(entry) && Number(entry.sailing_days) > 0)
 
+  let row = name ? rows.find((entry) => !isDefault(entry) && countryName(entry.country) === name) : null
+  let nearest = null
+
+  if (!row && name) {
+    const near = nearestCountry(name, shipsTo.map((entry) => entry.country))
+    if (near) {
+      row = shipsTo.find((entry) => entry.country === near.country)
+      nearest = near.country
+    }
+  }
+
+  row = row || rows.find(isDefault)
   if (!row) return {}
 
   return {
     sailingDays: row.sailing_days === null || row.sailing_days === undefined ? null : Number(row.sailing_days),
-    extraLabelingDays: Number(row.extra_labeling_days) || 0,
     isPlaceholder: Boolean(row.is_placeholder),
+    nearest,
   }
 }
 
@@ -119,13 +136,14 @@ export function orderSuppliers({ items = [], purchaseOrders = [], poLines = [], 
 }
 
 
-// Cases ordered, for labeling time per 1,000 cases. Order lines are in cases.
+// Cases ordered, for the labeling model. Order lines are in cases.
 export const casesIn = (items = []) => items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
 
 
 // Everything predictOrder's context needs for one order. Missing pieces just
-// leave that part to the defaults.
-export function estimateContext({ order, items, purchaseOrders, poLines, histories, startingSuppliers, supplierNames, settings, countries, busyMonths, country, now, models = null }) {
+// leave that part to the defaults. labelingKind: utils/labelingKind.js's;
+// containerSize: the container code, when it isn't on the order (a draft).
+export function estimateContext({ order, items, purchaseOrders, poLines, histories, startingSuppliers, supplierNames, settings, countries, busyMonths, country, now, models = null, labelingKind = null, containerSize = null }) {
   const shipped = normalizeStatus(order?.status) === 'shipped'
 
   return {
@@ -136,6 +154,8 @@ export function estimateContext({ order, items, purchaseOrders, poLines, histori
     cases: casesIn(items),
     products: (items || []).length,
     countryName: country || '',
+    labelingKind,
+    bigContainer: isBigContainer(containerSize || order?.container_size),
     models,
     suppliers: shipped ? [] : orderSuppliers({
       items,

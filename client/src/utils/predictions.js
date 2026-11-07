@@ -16,10 +16,13 @@
 // Out of it come the ready date (all labels applied), the ship date and, when
 // the sailing time to the customer's country is set, the arrival date.
 //
-// No imports on purpose: the website (services/predictionService.js) and the
-// server's customer assistant (server/chatbot) both use this file, so every
-// screen and the chatbot give the same estimate.
+// The website (services/predictionService.js) and DMC's server (estimates and
+// the customer assistant) both use this file, so every screen and the chatbot
+// give the same estimate. Its imports carry their .js extension for the server.
 // =============================================================================
+
+import { MIN_PO_DELIVERY_DAYS } from './dates.js'
+import { LABELING_SETTING } from './labelingKind.js'
 
 export const ORDER_STATUS_FLOW = [
   'pending payment',
@@ -40,21 +43,29 @@ export const ESTIMATE_STEPS = [
 ]
 
 // Placeholders, in days, until admin enters DMC's own numbers (Prediction
-// settings, db/migrations/017). supplier_lead is for suppliers DMC gave no time for.
+// settings, db/migrations/017). For suppliers DMC gave no numbers of their own:
+// supplier_lead, and supplier_late_days, how late they are when they're late.
+// Labeling has one per kind of order (utils/labelingKind.js).
 export const DEFAULT_STARTING_DAYS = {
   payment_check: 1,
   ordering: 2,
   supplier_lead: 14,
+  supplier_late_days: 0,
   labeling: 5,
+  labeling_big_container: 5,
+  labeling_new: 5,
   shipping: 4,
-  labeling_per_1000_cases: 0,
 }
 
 // How often a supplier is late, as DMC staff put it, as a share of deliveries.
-export const LATE_SHARES = { rarely: 0.1, sometimes: 0.3, often: 0.5 }
+// DMC: suppliers are "sometimes" late, about 20% of deliveries.
+export const LATE_SHARES = { rarely: 0.1, sometimes: 0.2, often: 0.5 }
+
+// How often a supplier DMC gave no numbers of its own is late.
+export const USUAL_LATE_FREQUENCY = 'sometimes'
 
 export const RECORD_WEIGHT = 5          // records count for n ÷ (n + 5)
-const MIN_PO_DAYS = 14                  // DMC's minimum for a PO's promised date (utils/dates.js)
+const MIN_PO_DAYS = MIN_PO_DELIVERY_DAYS // DMC's minimum for a PO's promised date
 const QUICK_SHARE = 0.8                 // a starting value's likely range:
 const SLOW_SHARE = 1.3                  //   20% quicker to 30% slower
 const MIN_FINISHED_DAYS = 1             // quicker "finished" orders are test runs
@@ -160,7 +171,9 @@ function finishedOrder(sorted) {
 }
 
 // How long finished orders spent in each step, plus every order's history.
-export function buildStageStatistics(allHistory) {
+// labelingKindOf (optional): order id → its labeling kind (utils/labelingKind.js),
+// to keep each kind's labeling times apart: labeling.byKind.
+export function buildStageStatistics(allHistory, labelingKindOf = null) {
   const historyByOrder = {}
   allHistory.forEach((entry) => {
     if (!historyByOrder[entry.customer_order_id]) historyByOrder[entry.customer_order_id] = []
@@ -168,12 +181,14 @@ export function buildStageStatistics(allHistory) {
   })
 
   const durations = Object.fromEntries(ESTIMATE_STEPS.map((step) => [step.key, []]))
+  const labelingByKind = labelingKindOf ? { regular: [], big: [], new: [] } : null
   let finishedOrders = 0
 
-  Object.values(historyByOrder).forEach((entries) => {
+  Object.entries(historyByOrder).forEach(([orderId, entries]) => {
     const sorted = [...entries].sort(byTime)
     if (!finishedOrder(sorted)) return
     finishedOrders++
+    const kind = labelingKindOf ? labelingKindOf(orderId) : null
 
     // Time spent in a step = from entering its status until the next change.
     for (let i = 0; i < sorted.length - 1; i++) {
@@ -184,6 +199,7 @@ export function buildStageStatistics(allHistory) {
       if (days < 0 || days > MAX_STEP_DAYS) continue
 
       durations[step.key].push(days)
+      if (step.key === 'labeling' && labelingByKind?.[kind]) labelingByKind[kind].push(days)
     }
   })
 
@@ -196,6 +212,7 @@ export function buildStageStatistics(allHistory) {
       p75: percentile(values, 0.75),
       sampleCount: values.length,
       confidence: confidenceFor(values),
+      ...(step.key === 'labeling' && labelingByKind ? { byKind: labelingByKind } : {}),
     }]
   }))
 
@@ -229,6 +246,13 @@ export function supplierArrivals(suppliers, laneStarts, now, starting, busyExtra
 
     const history = supplier.history || { leadDays: [], lateness: [] }
     const theirs = supplier.starting || {}
+    // How late it is when late: its own number from DMC, else DMC's number for
+    // all suppliers, which DMC said are sometimes late.
+    const ownLateDays = theirs.usualLateDays === null || theirs.usualLateDays === undefined || theirs.usualLateDays === ''
+      ? null
+      : Number(theirs.usualLateDays)
+    const usualLate = ownLateDays ?? (Number(starting.supplier_late_days) || 0)
+    const lateFrequency = theirs.lateFrequency || (usualLate > 0 ? USUAL_LATE_FREQUENCY : null)
     let arrival
 
     // The model's days early or late, for a PO sent at a time with so many days given.
@@ -245,8 +269,7 @@ export function supplierArrivals(suppliers, laneStarts, now, starting, busyExtra
       // usually is. DMC's numbers: late on a share of deliveries, by so many days.
       const lateness = (history.lateness || []).filter((days) => days !== null && days !== undefined)
       const share = recordShare(lateness.length)
-      const usualLate = Number(theirs.usualLateDays) || 0
-      const start = { typical: (LATE_SHARES[theirs.lateFrequency] || 0) * usualLate, quick: 0, slow: usualLate }
+      const start = { typical: (LATE_SHARES[lateFrequency] || 0) * usualLate, quick: 0, slow: usualLate }
       const late = lateness.length
         ? {
             typical: share * median(lateness) + (1 - share) * start.typical,
@@ -287,7 +310,7 @@ export function supplierArrivals(suppliers, laneStarts, now, starting, busyExtra
       confidences.push(model && supplier.orderedOn ? model.confidence : confidenceFor(lateness))
     } else if (model) {
       // Not ordered yet, with the model: given what Add PO will suggest (its
-      // usual time, at least DMC's 14 days), how early or late it should come.
+      // usual time, at least DMC's PO minimum), how early or late it should come.
       const startingLead = (Number(theirs.usualLeadDays) || starting.supplier_lead) + busyExtraFor(laneStarts.typical)
       const daysGiven = Math.max(MIN_PO_DAYS, Math.ceil(blendStep(history.leadDays || [], startingLead).typical))
       const days = byModel(daysGiven, laneStarts.typical)
@@ -306,7 +329,7 @@ export function supplierArrivals(suppliers, laneStarts, now, starting, busyExtra
       // DMC's "usually late by" widens the slow case of its starting value.
       const slow = history.leadDays?.length
         ? span.slow
-        : Math.max(span.slow, startingLead + (Number(theirs.usualLateDays) || 0))
+        : Math.max(span.slow, startingLead + usualLate)
 
       arrival = {
         typical: laneStarts.typical + span.typical * DAY,
@@ -336,8 +359,9 @@ export function supplierArrivals(suppliers, laneStarts, now, starting, busyExtra
 //   startingDays  DMC's starting values (DEFAULT_STARTING_DAYS's keys)
 //   suppliers     see supplierArrivals; without them the supplier step uses
 //                 the records of the whole step
-//   cases         cases ordered, for labeling_per_1000_cases
-//   country       { sailingDays, extraLabelingDays } for the customer's country
+//   cases         cases ordered, for the labeling model
+//   country       { sailingDays } for the customer's country (estimateInputs' countryFrom)
+//   labelingKind  regular, big or new (utils/labelingKind.js); bigContainer: a 40-ft
 //   busyMonths    { 1-12: extra days } for suppliers ordered from in that month
 //   products      order lines, and countryName, for the labeling model
 //   models        { supplier, labeling }: the saved models in use, if any
@@ -369,19 +393,23 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
     }
   }
 
-  const statsFor = (key) => stageStatistics?.[key]?.durations || []
+  // Labeling learns only from orders of the same kind, when the kinds are known.
+  const statsFor = (key) => {
+    const byKind = key === 'labeling' && labelingKind ? stageStatistics?.labeling?.byKind : null
+    return byKind ? byKind[labelingKind] || [] : stageStatistics?.[key]?.durations || []
+  }
   const country = context.country || {}
   const busyMonths = context.busyMonths || {}
   const busyExtraFor = (time) => Number(busyMonths[new Date(time + 8 * 60 * 60 * 1000).getUTCMonth() + 1]) || 0
 
-  // DMC's starting values, adjusted for this order where DMC said labeling
-  // takes longer: some countries, and bigger orders.
+  // DMC's starting values. Labeling's depends on the kind of order: repeat
+  // products in a 20-ft or in a 40-ft, or a new customer or product.
+  const labelingKind = context.labelingKind || null
   const startingFor = {
     payment_check: starting.payment_check,
     ordering: starting.ordering,
     suppliers: starting.supplier_lead,
-    labeling: starting.labeling + (Number(country.extraLabelingDays) || 0)
-      + (Number(starting.labeling_per_1000_cases) || 0) * (Number(context.cases) || 0) / 1000,
+    labeling: Number(starting[LABELING_SETTING[labelingKind || 'regular']] ?? starting.labeling),
     shipping: starting.shipping,
   }
 
@@ -419,8 +447,8 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
       })
       if (confidence !== null) confidences.push(confidence)
     } else {
-      // Labeling, with the model: its days for this order's size, country and
-      // month, instead of everyone's usual days.
+      // Labeling, with the model: its days for this order's size, kind, country
+      // and month, instead of everyone's usual days.
       let whole = full
       if (step.key === 'labeling' && labelingModel) {
         const predicted = labelingModel.predict({
@@ -428,6 +456,8 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
           products: Number(context.products) || 1,
           country: context.countryName,
           month: new Date(lanes.typical + 8 * 60 * 60 * 1000).getUTCMonth() + 1,
+          newLabels: labelingKind === 'new' ? 1 : 0,
+          bigContainer: context.bigContainer ? 1 : 0,
         })
         const typical = Math.max(0.5, predicted.typical)
         whole = { typical, quick: Math.max(0.3, Math.min(predicted.quick, typical)), slow: Math.max(predicted.slow, typical), confidence: labelingModel.confidence }

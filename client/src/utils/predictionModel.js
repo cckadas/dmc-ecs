@@ -7,7 +7,9 @@
 //              which supplier, the cases and products ordered from it, the
 //              month the PO went out, and the days it was given
 //   labeling   days from the goods coming in to the labels applied, from the
-//              cases and products in the order, its country and the month
+//              cases and products in the order, whether its customer or one of
+//              its products is new, whether it fills a 40-ft, its country and
+//              the month
 //
 // TensorFlow.js trains it in the browser (utils/modelTrainer.js, from the
 // Predictive Analytics page) and its weights are saved in the database
@@ -17,15 +19,21 @@
 // Imports carry their .js extension so the server (Node) can load this too.
 // =============================================================================
 
-import { LATE_SHARES, blendStep, recordShare } from './predictions.js'
-import { countryFrom, startingDaysFrom } from './estimateInputs.js'
+import { LATE_SHARES, USUAL_LATE_FREQUENCY, blendStep, recordShare } from './predictions.js'
+import { startingDaysFrom } from './estimateInputs.js'
 import { manilaDate } from './supplierScores.js'
+import { LABELING_SETTING, isBigContainer, labelingKinds } from './labelingKind.js'
 
 export const MODEL_KEYS = { supplier: 'supplier_lateness', labeling: 'labeling_days' }
 export const MODEL_MIN_RECORDS = 30     // finished records to learn from before it's tried
 export const MODEL_MAX_AGE_DAYS = 7     // older than this, the page retrains it
 export const HIDDEN_UNITS = 8
 export const CLOSE_DAYS = 3             // "within 3 days", as in the accuracy check
+
+// The labeling model's inputs changed (the order's kind and container), so one
+// saved before can't be used: the page trains a new one.
+export const LABELING_SPEC_VERSION = 2
+export const isOutdatedModel = (row) => row?.key === MODEL_KEYS.labeling && Number(row?.spec?.version || 1) < LABELING_SPEC_VERSION
 
 const DAY = 24 * 60 * 60 * 1000
 const daysBetween = (fromDay, toDay) => Math.round((Date.parse(toDay) - Date.parse(fromDay)) / DAY)
@@ -94,9 +102,11 @@ export function supplierRecords(lines) {
 
 // One per order that finished labeling: the days from entering warehouse
 // preparation (all goods in) to ready for shipment.
-//   history: status changes; orders: { id, delivery_location_id };
-//   items: { customer_order_id, quantity }; locations: { id, country }
+//   history: status changes;
+//   orders: { id, delivery_location_id, customer_id, created_at, status, container_size };
+//   items: { customer_order_id, quantity, product_id }; locations: { id, country }
 export function labelingRecords({ history = [], orders = [], items = [], locations = [] }) {
+  const kinds = labelingKinds(orders, items)
   const byOrder = new Map()
   for (const entry of history) {
     if (!byOrder.has(entry.customer_order_id)) byOrder.set(entry.customer_order_id, [])
@@ -125,10 +135,14 @@ export function labelingRecords({ history = [], orders = [], items = [], locatio
     const days = (knownAt - startedAt) / DAY
     if (days <= 0.05 || days > 60) continue
 
+    const kind = kinds.get(order.id) || null
     records.push({
       orderId: order.id,
       cases: sum(lines.map((line) => Number(line.quantity) || 0)),
       products: lines.length,
+      kind,
+      newLabels: kind === 'new' ? 1 : 0,
+      bigContainer: isBigContainer(order.container_size) ? 1 : 0,
       country: (countryOf[order.delivery_location_id] || '').trim().toLowerCase(),
       month: monthOfDay(manilaDate(startedAt)),
       startedAt,
@@ -164,6 +178,7 @@ export function buildSpec(kind, records) {
 
   return {
     kind,
+    version: LABELING_SPEC_VERSION,
     countries: [...new Set(records.map((record) => record.country).filter(Boolean))].sort(),
     cases: stats(records.map((record) => record.cases)),
     products: stats(records.map((record) => record.products)),
@@ -181,7 +196,7 @@ export function encode(spec, record) {
 
   const country = (record.country || '').trim().toLowerCase()
   const which = spec.countries.map((name) => (name === country ? 1 : 0))
-  return [...which, which.includes(1) ? 0 : 1, z(record.cases || 0, spec.cases), z(record.products || 1, spec.products), ...season(record.month)]
+  return [...which, which.includes(1) ? 0 : 1, z(record.cases || 0, spec.cases), z(record.products || 1, spec.products), record.newLabels ? 1 : 0, record.bigContainer ? 1 : 0, ...season(record.month)]
 }
 
 
@@ -204,7 +219,7 @@ export const confidenceFrom = (withinShare) => Math.max(40, Math.min(95, Math.ro
 // A saved model as the estimates ask it: the typical value, and the likely
 // range from how far off it was on the records it was tested on.
 export function modelPredictor(row) {
-  if (!row?.weights || !row?.spec) return null
+  if (!row?.weights || !row?.spec || isOutdatedModel(row)) return null
   const { low = -2, high = 2 } = row.metrics?.residuals || {}
 
   return {
@@ -233,8 +248,8 @@ export function scoreOf(predicted, actual) {
 // What the statistics would have said for each test record, learning from the
 // same training records: the baseline the model has to beat.
 //   supplier: that supplier's usual lateness, blended with DMC's numbers
-//   labeling: the usual labeling days, blended with DMC's starting value for
-//             the country and order size
+//   labeling: the usual labeling days of orders of the same kind, blended with
+//             DMC's starting value for that kind
 export function statisticsFor(kind, train, test, starting = {}) {
   if (kind === 'supplier') {
     const bySupplier = new Map()
@@ -243,10 +258,16 @@ export function statisticsFor(kind, train, test, starting = {}) {
       bySupplier.get(record.supplierId).push(record.value)
     }
 
+    const startingDays = startingDaysFrom(starting.settings)
+
     return test.map((record) => {
       const lateness = bySupplier.get(record.supplierId) || []
       const theirs = starting.startingSuppliers?.[record.supplierId]
-      const start = (LATE_SHARES[theirs?.late_frequency] || 0) * (Number(theirs?.usual_late_days) || 0)
+      // Its own numbers from DMC, else DMC's for every supplier (predictions.js).
+      const ownLate = theirs?.usual_late_days === null || theirs?.usual_late_days === undefined ? null : Number(theirs.usual_late_days)
+      const lateDays = ownLate ?? (Number(startingDays.supplier_late_days) || 0)
+      const frequency = theirs?.late_frequency || (lateDays > 0 ? USUAL_LATE_FREQUENCY : null)
+      const start = (LATE_SHARES[frequency] || 0) * lateDays
       if (!lateness.length) return start
       const share = recordShare(lateness.length)
       return share * median(lateness) + (1 - share) * start
@@ -255,11 +276,11 @@ export function statisticsFor(kind, train, test, starting = {}) {
 
   const startingDays = startingDaysFrom(starting.settings)
   const durations = train.map((record) => record.value)
+  const byKind = { regular: [], big: [], new: [] }
+  for (const record of train) byKind[record.kind]?.push(record.value)
 
   return test.map((record) => {
-    const country = countryFrom(starting.countries, record.country)
-    const startingValue = startingDays.labeling + (Number(country.extraLabelingDays) || 0)
-      + (Number(startingDays.labeling_per_1000_cases) || 0) * record.cases / 1000
-    return blendStep(durations, startingValue).typical
+    const startingValue = Number(startingDays[LABELING_SETTING[record.kind || 'regular']] ?? startingDays.labeling)
+    return blendStep(record.kind ? byKind[record.kind] : durations, startingValue).typical
   })
 }

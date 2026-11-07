@@ -2,7 +2,7 @@
 // Simulated history: the generator
 //
 // Writes db/demo/simulated_history.sql: about a year of made-up orders, supplier
-// deliveries, payments and labels, built to behave like real ones, so the
+// deliveries, payments and labels, built to behave like DMC's, so the
 // predictions have records to learn from for the defense. None of it comes from
 // DMC's records. The customers, orders, quantities, prices and dates are all
 // made up here, with a fixed random seed, so it comes out the same every time.
@@ -18,17 +18,22 @@
 // @simulated.example.com emails. They can't sign in: they have no password.
 // db/demo/remove_simulated_history.sql takes it all out again.
 //
-// Patterns built in, for the statistics and the model to find:
-//   - each supplier has its own usual lead time (11 to 21 days) and on-time
-//     rate (55% to 95%)
-//   - each supplier works to its own usual time, so a PO given only DMC's
-//     14-day minimum comes late from one that usually needs longer, and big
-//     orders (1,200 cases or more) take a day more
-//   - bigger orders take longer to label: about 1 more day per 200 cases
-//   - Japan and Taiwan take about 2 more days to label (translated labels)
-//   - November and December take about 20% longer (the holiday rush)
-//   - payment checks take 1 to 2 days, longer over a weekend
-//   - random variation, and a few very late deliveries
+// The times follow what DMC staff said their usual times are (Nov 2026), with
+// random variation, for the statistics and the model to find:
+//   - a payment check takes a day or two, ordering from suppliers about a week
+//   - each supplier promises its own time, from 1 week to 4, and keeps to it
+//     most of the time: about 1 delivery in 8 comes late (some suppliers more
+//     than others), by 1 to 4 weeks
+//   - a PO given less time than its supplier usually needs comes late
+//   - from September to December (the "Ber months") deliveries take up to a
+//     few weeks longer, more than the suppliers allow for in their promises
+//   - each customer mostly reorders its usual products; an order fills a
+//     20-ft container, or now and then a 40-ft
+//   - labeling takes about a week for a repeat order in a 20-ft, two weeks in
+//     a 40-ft, and three weeks when the customer or one of its products is new
+//     (client/src/utils/labelingKind.js), a little more with more products
+//   - a container leaves within a day or two of being ready
+//   - a few very late deliveries
 // =============================================================================
 
 import fs from 'node:fs'
@@ -38,9 +43,11 @@ import { fileURLToPath } from 'node:url'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const OUTPUT = path.join(here, 'simulated_history.sql')
 
-const SEED = 20261104
+const SEED = 20261108
 const FINISHED_ORDERS = 120
 const SUPPLIER_SLOTS = 10
+const PRODUCT_SLOTS = 5          // products used from each manufacturer
+const MIN_PO_DAYS = 7            // DMC's minimum for a PO's promised date (client/src/utils/dates.js)
 
 const DAY = 24 * 60 * 60 * 1000
 const HOUR = 60 * 60 * 1000
@@ -75,7 +82,6 @@ const random = mulberry32(SEED)
 const between = (low, high) => low + (high - low) * random()
 const whole = (low, high) => Math.floor(between(low, high + 1))
 const chance = (share) => random() < share
-const pick = (list) => list[Math.floor(random() * list.length)]
 
 function normal() {
   const u = random() || 1e-9
@@ -109,11 +115,9 @@ const weekdayOf = (day) => new Date(`${day}T00:00:00Z`).getUTCDay() // 0 Sunday 
 const monthOf = (time) => new Date(time + MANILA).getUTCMonth() + 1
 const atHour = (day, hour) => Date.parse(`${day}T00:00:00+08:00`) + hour * HOUR
 const addDays = (day, days) => new Date(Date.parse(`${day}T00:00:00Z`) + days * DAY).toISOString().slice(0, 10)
-const daysBetween = (from, to) => Math.round((Date.parse(to) - Date.parse(from)) / DAY)
 
-// The holiday rush.
-const busy = (time) => [11, 12].includes(monthOf(time))
-const rush = (time) => (busy(time) ? 1.2 : 1)
+// September to December: suppliers are slower.
+const berMonth = (time) => monthOf(time) >= 9
 
 // The first office moment (Monday to Friday, 9 a.m. to 5 p.m.) at or after a time.
 function officeTime(time) {
@@ -135,13 +139,14 @@ function officeTime(time) {
 
 // The made-up customers ----------------------------------------------------------
 
+// Made-up shipping costs.
 const COUNTRIES = {
-  'Hong Kong': { shipping: 60000, extraLabeling: 0 },
-  Japan: { shipping: 95000, extraLabeling: 2 },
-  Singapore: { shipping: 70000, extraLabeling: 0 },
-  Taiwan: { shipping: 80000, extraLabeling: 2 },
-  'United Arab Emirates': { shipping: 125000, extraLabeling: 0 },
-  'United States': { shipping: 165000, extraLabeling: 0 },
+  'Hong Kong': { shipping: 60000 },
+  Japan: { shipping: 95000 },
+  Singapore: { shipping: 70000 },
+  Taiwan: { shipping: 80000 },
+  'United Arab Emirates': { shipping: 125000 },
+  'United States': { shipping: 165000 },
 }
 
 const MADE_UP = [
@@ -172,41 +177,82 @@ const EXISTING = [
 ]
 
 
+// Containers: the placeholder costs of db/migrations/016, and how many cases an
+// order filling one has (at about 0.02 m³ a case) ------------------------------
+
+const CONTAINERS = {
+  '20-ft': { cost: 80000, cases: [800, 1500] },
+  '40-ft': { cost: 120000, cases: [1900, 3000] },
+  '40-ft HC': { cost: 130000, cases: [2200, 3300] },
+}
+
+
 // The suppliers' made-up patterns, by position (the SQL matches each position
 // to one of the system's manufacturers) ----------------------------------------------
 
-const LEADS = shuffle([11, 12, 13, 14, 15, 16, 17, 18, 19, 21])
-const ON_TIME = shuffle([0.95, 0.92, 0.88, 0.85, 0.8, 0.75, 0.7, 0.65, 0.6, 0.55])
+const LEADS = shuffle([7, 9, 12, 14, 16, 18, 21, 21, 24, 28])
+const ON_TIME = shuffle([0.97, 0.95, 0.93, 0.92, 0.9, 0.88, 0.85, 0.82, 0.8, 0.75])
 
 const SUPPLIERS = Array.from({ length: SUPPLIER_SLOTS }, (_, index) => ({
   slot: index + 1,
   lead: LEADS[index],
   onTime: ON_TIME[index],
-  // Made-up prices per case for up to 5 of its products.
-  prices: Array.from({ length: 5 }, () => Math.round(between(180, 950) / 5) * 5),
+  // When it's late, usually by about this many days.
+  lateBy: whole(8, 24),
+  // Made-up prices per case for its products.
+  prices: Array.from({ length: PRODUCT_SLOTS }, () => Math.round(between(180, 950) / 5) * 5),
 }))
 
+const PRODUCTS = SUPPLIERS.flatMap((supplier) => Array.from({ length: PRODUCT_SLOTS }, (_, index) => ({
+  supplier,
+  productSlot: index + 1,
+  key: `${supplier.slot}:${index + 1}`,
+})))
 
-// One order's lines: 1 to 3 suppliers, 1 or 2 products from each -----------------
+// The products each customer usually orders.
+for (const customer of [...MADE_UP, ...EXISTING]) customer.usual = shuffle(PRODUCTS).slice(0, whole(4, 7))
 
-function orderLines() {
-  const count = chance(0.45) ? 1 : chance(0.73) ? 2 : 3
-  const suppliers = shuffle(SUPPLIERS).slice(0, count)
 
-  return suppliers.flatMap((supplier) => {
-    const productSlots = shuffle([1, 2, 3, 4, 5]).slice(0, chance(0.6) ? 1 : 2)
-    return productSlots.map((productSlot) => {
-      const price = supplier.prices[productSlot - 1]
-      return {
-        id: uuid(),
-        supplier,
-        productSlot,
-        quantity: whole(5, 60) * 10,
-        price,
-        cost: Math.round(price * 0.78 * 100) / 100,
-      }
-    })
+// One order: its container and its lines, mostly the customer's usual products
+// and now and then a new one, filling the container ------------------------------
+
+function planOrder(customer) {
+  const size = chance(0.28) ? (chance(0.25) ? '40-ft HC' : '40-ft') : '20-ft'
+  const count = Math.min(customer.usual.length, size === '20-ft' ? whole(2, 4) : whole(3, 5))
+  let products = shuffle(customer.usual).slice(0, count)
+
+  if (chance(0.12)) {
+    const fresh = shuffle(PRODUCTS).find((product) => !customer.usual.includes(product))
+    customer.usual.push(fresh)
+    products = [...products.slice(0, Math.max(1, count - 1)), fresh]
+  }
+
+  const [low, high] = CONTAINERS[size].cases
+  const cases = between(low, high)
+  const weights = products.map(() => between(0.5, 1.5))
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0)
+
+  const lines = products.map((product, index) => {
+    const price = product.supplier.prices[product.productSlot - 1]
+    return {
+      id: uuid(),
+      supplier: product.supplier,
+      productSlot: product.productSlot,
+      key: product.key,
+      quantity: Math.max(50, Math.round((cases * weights[index]) / totalWeight / 10) * 10),
+      price,
+      cost: Math.round(price * 0.78 * 100) / 100,
+    }
   })
+
+  return { size, lines }
+}
+
+// Its labeling kind, as client/src/utils/labelingKind.js works it out: new when
+// its customer hadn't ordered one of its products before (ordered: their keys).
+function kindOf({ size, lines }, ordered) {
+  if (lines.some((line) => !ordered.has(line.key))) return 'new'
+  return size === '20-ft' ? 'regular' : 'big'
 }
 
 
@@ -221,9 +267,15 @@ function deliveries(lines, poTime, { tight = false } = {}) {
 
   const parts = [...bySupplier.values()]
   const slowest = Math.max(...parts.map((part) => part.supplier.lead))
-  // Procurement usually gives the slowest supplier its usual time (never under
-  // DMC's 14-day minimum), but now and then only the minimum.
-  const daysGiven = tight || chance(0.2) ? 14 : Math.max(14, slowest + whole(0, 2))
+  const ber = berMonth(poTime)
+
+  // Procurement gives the slowest supplier the time it promises (a little more
+  // in the Ber months), and now and then pushes for less, never under DMC's
+  // minimum.
+  const promisedDays = slowest + (ber ? whole(5, 12) : 0)
+  const daysGiven = tight || chance(0.08)
+    ? Math.max(MIN_PO_DAYS, promisedDays - whole(4, 9))
+    : promisedDays + whole(0, 2)
   const promised = addDays(dayOf(poTime), daysGiven)
 
   return {
@@ -232,16 +284,14 @@ function deliveries(lines, poTime, { tight = false } = {}) {
     parts: parts.map(({ supplier, lines: supplierLines }) => {
       const cases = supplierLines.reduce((sum, line) => sum + line.quantity, 0)
 
-      // Each supplier works to its own usual time, whatever date was promised:
-      // reliable ones keep to it, unreliable ones slip, by more the less
-      // reliable they are. So one given only 14 days that usually needs more
-      // comes late.
-      let days = supplier.lead + (chance(supplier.onTime)
-        ? -whole(0, 2)
-        : whole(1, 3 + Math.round((1 - supplier.onTime) * 10)))
-      days = Math.round(days * rush(poTime))          // the holiday rush: about 20% longer
-      if (cases >= 1200) days += 1                     // big orders
-      if (chance(0.03)) days += whole(7, 14)           // a very late one
+      // Each supplier works to its own time, whatever date it was given: on time
+      // most of the time, else late by its usual few weeks. So one given less
+      // than it needs comes late.
+      let days = supplier.lead + (chance(supplier.onTime) ? -whole(0, 2) : supplier.lateBy + whole(-4, 5))
+      if (ber) days += whole(3, 16)                    // the Ber months: slower than promised
+      if (cases >= 1500) days += 1                     // big orders
+      if (chance(0.02)) days += whole(14, 28)          // a very late one
+      days = Math.max(days, 3)
 
       let receivedDay = addDays(dayOf(poTime), days)
       // No Sunday deliveries: Saturday if that's still on time, else Monday.
@@ -258,39 +308,44 @@ function deliveries(lines, poTime, { tight = false } = {}) {
 }
 
 
-// Labeling: about 2.5 days, plus a day per 200 cases, plus 2 for translated labels ------
+// Labeling, from all goods in to the labels applied ------------------------------------
 
-function labelingDays(lines, country, time) {
-  const cases = lines.reduce((sum, line) => sum + line.quantity, 0)
-  const days = (2.5 + cases / 200 + (COUNTRIES[country]?.extraLabeling || 0) + 0.25 * lines.length) * rush(time)
-  return Math.max(1, days * Math.max(0.6, 1 + 0.12 * normal()))
+const LABELING_DAYS = { regular: 7, big: 14, new: 21 }
+
+function labelingDays(kind, lines) {
+  const days = LABELING_DAYS[kind] + 0.4 * (lines.length - 3)
+  return Math.max(2, days * Math.max(0.6, 1 + 0.15 * normal()))
 }
 
 
 // A finished order, from start to shipped ---------------------------------------------
 
-function finishedOrder(customer, createdAt) {
+function finishedOrder(plan) {
+  const { customer, size, lines, kind } = plan
+  let createdAt = plan.createdAt
+
   for (let attempt = 0; ; attempt++) {
-    const lines = orderLines()
     const t0 = officeTime(createdAt)
     const submitted = t0 + between(0.3, 6) * DAY
     const verified = officeTime(submitted + between(0.6, 1.8) * DAY)
-    const ordered = officeTime(verified + between(0.7, 2.4) * rush(verified) * DAY)
+    const ordered = officeTime(verified + between(4.5, 8.5) * DAY)
     const po = deliveries(lines, ordered)
     const lastArrival = Math.max(...po.parts.map((part) => part.receivedAt))
     const warehouse = lastArrival + between(0.05, 0.25) * DAY
-    const ready = officeTime(warehouse + labelingDays(lines, customer.country, warehouse) * DAY)
-    const shipped = officeTime(ready + between(2, 5.5) * rush(ready) * DAY)
+    const ready = officeTime(warehouse + labelingDays(kind, lines) * DAY)
+    const shipped = officeTime(ready + between(0.2, 1.6) * DAY)
 
     if (shipped < NOW - 0.5 * DAY || attempt > 20) {
       const tight = chance(0.25)
       return {
         customer,
+        size,
         lines,
+        kind,
         status: 'shipped',
         times: { 'pending payment': t0, submitted, 'payment verified': verified, procurement: ordered, 'warehouse preparation': warehouse, 'ready for shipment': ready, shipped },
         po,
-        requested: addDays(dayOf(t0), tight ? whole(22, 32) : whole(35, 60)),
+        requested: addDays(dayOf(t0), tight ? whole(35, 45) : whole(55, 90)),
         labels: 'applied to units',
       }
     }
@@ -308,24 +363,24 @@ const ACTIVE = [
   { status: 'pending payment', age: 3.5, tight: true },
   { status: 'submitted', age: 0.3 },
   { status: 'submitted', age: 3.4 },                                       // stuck in the payment check
-  { status: 'payment verified', age: 0.8 },
-  { status: 'payment verified', age: 5.2 },                                // the POs are late going out
-  { status: 'procurement', age: 4 },
-  { status: 'procurement', age: 11 },
-  { status: 'procurement', age: 17, overdue: true },                       // a delivery is overdue
-  { status: 'procurement', age: 21, tight: true },
-  { status: 'warehouse preparation', age: 1.5, labels: 'original label received' },
-  { status: 'warehouse preparation', age: 4, labels: 'printed & awaiting application' },
-  { status: 'warehouse preparation', age: 11, tight: true, labels: 'awaiting customer translated design' }, // labeling is taking long
-  { status: 'ready for shipment', age: 0.6 },
+  { status: 'payment verified', age: 2 },
+  { status: 'payment verified', age: 11 },                                 // the POs are late going out
+  { status: 'procurement', age: 5 },
+  { status: 'procurement', age: 13 },
+  { status: 'procurement', age: 24, overdue: true },                       // a delivery is overdue
+  { status: 'procurement', age: 30, tight: true },
+  { status: 'warehouse preparation', age: 2, labels: 'original label received' },
+  { status: 'warehouse preparation', age: 6, labels: 'printed & awaiting application' },
+  { status: 'warehouse preparation', age: 30, tight: true, labels: 'awaiting customer translated design' }, // labeling is taking long
+  { status: 'ready for shipment', age: 0.4 },
   { status: 'ready for shipment', age: 2.5 },
 ]
 
 const STEPS = ['pending payment', 'submitted', 'payment verified', 'procurement', 'warehouse preparation', 'ready for shipment', 'shipped']
 
 // Worked out backwards from when it entered its current step.
-function activeOrder(customer, plan) {
-  const lines = orderLines()
+function activeOrder(plan) {
+  const { customer, size, lines, kind } = plan
   const step = STEPS.indexOf(plan.status)
   const entered = NOW - plan.age * DAY
   const times = { [plan.status]: entered }
@@ -333,8 +388,8 @@ function activeOrder(customer, plan) {
 
   if (step >= 4) {
     // In the warehouse: every supplier delivered before it got there.
-    const warehouse = step === 4 ? entered : entered - labelingDays(lines, customer.country, entered) * DAY
-    let ordered = officeTime(warehouse - 20 * DAY)
+    const warehouse = step === 4 ? entered : entered - labelingDays(kind, lines) * DAY
+    let ordered = officeTime(warehouse - 35 * DAY)
     po = deliveries(lines, ordered)
 
     // Move the whole PO (sent, promised, delivered) by whole days, so the last
@@ -364,6 +419,7 @@ function activeOrder(customer, plan) {
     }
     if (plan.overdue) {
       // The slowest supplier is past its promised date and hasn't delivered.
+      po.promised = addDays(dayOf(NOW), -whole(3, 6))
       const last = po.parts.reduce((latest, part) => (part.receivedAt > latest.receivedAt ? part : latest))
       last.receivedAt = NOW + 3 * DAY
     }
@@ -374,18 +430,20 @@ function activeOrder(customer, plan) {
   const before = STEPS.slice(0, STEPS.indexOf(Object.keys(times).find((key) => times[key] === first)))
   let time = first
   for (const earlier of [...before].reverse()) {
-    const length = { 'pending payment': between(0.3, 4), submitted: between(0.6, 1.8), 'payment verified': between(0.7, 2.4) }[earlier] || 1
+    const length = { 'pending payment': between(0.3, 4), submitted: between(0.6, 1.8), 'payment verified': between(4.5, 8.5) }[earlier] || 1
     time -= length * DAY
     times[earlier] = time
   }
 
   return {
     customer,
+    size,
     lines,
+    kind,
     status: plan.status,
     times,
     po,
-    requested: addDays(dayOf(times['pending payment']), plan.tight ? whole(20, 28) : whole(40, 60)),
+    requested: addDays(dayOf(times['pending payment']), plan.tight ? whole(30, 40) : whole(60, 90)),
     labels: plan.labels || (step >= 5 ? 'applied to units' : null),
   }
 }
@@ -401,18 +459,53 @@ const finishedPlan = [
 ]
 if (finishedPlan.length !== FINISHED_ORDERS) throw new Error(`Expected ${FINISHED_ORDERS} finished orders, planned ${finishedPlan.length}`)
 
-const lastStart = NOW - 52 * DAY
-for (const customer of shuffle(finishedPlan)) {
-  orders.push(finishedOrder(customer, between(START, lastStart)))
+// When each starts, then their products in the order each customer placed them,
+// so each order knows whether it's new to its customer.
+const lastStart = NOW - 100 * DAY
+const plans = shuffle(finishedPlan)
+  .map((customer) => ({ customer, createdAt: between(START, lastStart) }))
+  .sort((a, b) => a.createdAt - b.createdAt)
+
+const orderedBy = new Map()
+const productsOrdered = (customer) => {
+  if (!orderedBy.has(customer.key)) orderedBy.set(customer.key, new Set())
+  return orderedBy.get(customer.key)
+}
+
+for (const plan of plans) {
+  Object.assign(plan, planOrder(plan.customer))
+  const ordered = productsOrdered(plan.customer)
+  plan.kind = kindOf(plan, ordered)
+  plan.lines.forEach((line) => ordered.add(line.key))
+  orders.push(finishedOrder(plan))
 }
 
 // The orders under way belong to made-up customers only, so the system's own
-// customer accounts keep their real balances.
-ACTIVE.forEach((plan, index) => {
-  orders.push(activeOrder(MADE_UP[index % MADE_UP.length], plan))
-})
+// customer accounts keep their real balances. The older ones first.
+ACTIVE.map((plan, index) => ({ ...plan, customer: MADE_UP[index % MADE_UP.length] }))
+  .sort((a, b) => STEPS.indexOf(b.status) - STEPS.indexOf(a.status) || b.age - a.age)
+  .forEach((plan) => {
+    Object.assign(plan, planOrder(plan.customer))
+    const ordered = productsOrdered(plan.customer)
+    plan.kind = kindOf(plan, ordered)
+    plan.lines.forEach((line) => ordered.add(line.key))
+    orders.push(activeOrder(plan))
+  })
 
 orders.sort((a, b) => a.times['pending payment'] - b.times['pending payment'])
+
+// The kinds again, from the final dates, as the system will work them out.
+const kindMismatches = (() => {
+  const seen = new Map()
+  let mismatches = 0
+  for (const order of orders) {
+    if (!seen.has(order.customer.key)) seen.set(order.customer.key, new Set())
+    const ordered = seen.get(order.customer.key)
+    if (kindOf(order, ordered) !== order.kind) mismatches++
+    order.lines.forEach((line) => ordered.add(line.key))
+  }
+  return mismatches
+})()
 
 
 // Numbers, totals and rows --------------------------------------------------------
@@ -436,7 +529,8 @@ for (const order of orders) {
 
   const subtotal = money(order.lines.reduce((sum, line) => sum + line.quantity * line.price, 0))
   const shipping = COUNTRIES[order.customer.country].shipping
-  const total = money(subtotal + shipping)
+  const containerCost = CONTAINERS[order.size].cost
+  const total = money(subtotal + containerCost + shipping)
   const downPayment = money(total / 2)
   const step = STEPS.indexOf(order.status)
 
@@ -452,6 +546,8 @@ for (const order of orders) {
     number: order.number,
     subtotal,
     shipping,
+    containerSize: order.size,
+    containerCost,
     total,
     downPayment,
     settled,
@@ -526,6 +622,22 @@ for (const order of orders) {
   }
 }
 
+// How the made-up deliveries turned out, for the summary.
+const deliveryStats = (() => {
+  let count = 0
+  let late = 0
+  for (const order of orders) {
+    if (!order.po) continue
+    for (const part of order.po.parts) {
+      if (part.receivedAt >= NOW) continue
+      count++
+      if (dayOf(part.receivedAt) > order.po.promised) late++
+    }
+  }
+  return { count, late }
+})()
+const kindCounts = orders.filter((order) => order.status === 'shipped').reduce((counts, order) => ({ ...counts, [order.kind]: (counts[order.kind] || 0) + 1 }), {})
+
 
 // The SQL --------------------------------------------------------------------------
 
@@ -551,7 +663,7 @@ const sql = `-- ================================================================
 -- =============================================================================
 -- Made by db/demo/generate-simulated-history.mjs (seed ${SEED}) on ${TODAY}.
 -- Run it once in the Supabase SQL editor (project scotywfepxfispgpauwm), after
--- 018. It's all or nothing: if any line fails, nothing is added.
+-- 019. It's all or nothing: if any line fails, nothing is added.
 --
 -- None of it is DMC's: the customers, orders, quantities, prices and dates are
 -- made up. It uses the manufacturers and products already in the system, picked
@@ -563,6 +675,7 @@ const sql = `-- ================================================================
 --   ${finished} finished orders and ${orders.length - finished} under way, in every step
 --   ${rows.pos.length} purchase orders: ${deliveryCount} supplier deliveries
 --   payments, labels and every status change, with dates
+-- Its times follow DMC staff's usual times; see the generator for how.
 --
 -- Marked: order numbers SIM-ORD-…, PO numbers SIM-PO-…, companies "(simulated)",
 -- emails @simulated.example.com. To take it all out:
@@ -663,11 +776,11 @@ where not exists (select 1 from sim_customer s where s.key = f.key);
 
 -- Orders -----------------------------------------------------------------------------
 ${valuesInsert(
-  `insert into public.customer_orders (id, customer_id, delivery_location_id, quotation_number, order_number, subtotal, shipping_cost, total_amount, down_payment_amount, settled_amount, pending_payment_amount, status, created_at, requested_ship_date, estimated_ship_date)
-select v.id::uuid, c.id, c.location_id, v.quotation_number, v.order_number, v.subtotal, v.shipping, v.total, v.down_payment, v.settled, v.pending, v.status, v.created_at::timestamptz, v.requested::date, v.shipped_on::date`,
-  'id, customer_key, quotation_number, order_number, subtotal, shipping, total, down_payment, settled, pending, status, created_at, requested, shipped_on',
+  `insert into public.customer_orders (id, customer_id, delivery_location_id, quotation_number, order_number, subtotal, shipping_cost, container_size, container_cost, total_amount, down_payment_amount, settled_amount, pending_payment_amount, status, created_at, requested_ship_date, estimated_ship_date)
+select v.id::uuid, c.id, c.location_id, v.quotation_number, v.order_number, v.subtotal, v.shipping, v.container_size, v.container_cost, v.total, v.down_payment, v.settled, v.pending, v.status, v.created_at::timestamptz, v.requested::date, v.shipped_on::date`,
+  'id, customer_key, quotation_number, order_number, subtotal, shipping, container_size, container_cost, total, down_payment, settled, pending, status, created_at, requested, shipped_on',
   rows.orders,
-  (row) => [text(row.id), text(row.customerKey), text(row.quotationNumber), text(row.number), amount(row.subtotal), amount(row.shipping), amount(row.total), amount(row.downPayment), amount(row.settled), amount(row.pending), text(row.status), stamp(row.createdAt), text(row.requested), text(row.shippedOn)],
+  (row) => [text(row.id), text(row.customerKey), text(row.quotationNumber), text(row.number), amount(row.subtotal), amount(row.shipping), text(row.containerSize), amount(row.containerCost), amount(row.total), amount(row.downPayment), amount(row.settled), amount(row.pending), text(row.status), stamp(row.createdAt), text(row.requested), text(row.shippedOn)],
   'join sim_customer c on c.key = v.customer_key',
 )}
 
@@ -770,5 +883,7 @@ fs.writeFileSync(OUTPUT, sql)
 console.log(`Wrote ${path.relative(process.cwd(), OUTPUT)} (${Math.round(sql.length / 1024)} KB), ${dayOf(START)} to ${TODAY}:`)
 console.log(`  ${MADE_UP.length} made-up customers, ${finished} finished orders, ${orders.length - finished} under way`)
 console.log(`  ${rows.items.length} order lines, ${rows.pos.length} POs, ${rows.poLines.length} PO lines, ${deliveryCount} supplier deliveries, ${rows.labels.length} label records, ${rows.history.length} status changes`)
-console.log('  Supplier patterns (position: usual lead days, on-time share):')
-console.log(`  ${SUPPLIERS.map((supplier) => `${supplier.slot}: ${supplier.lead}d ${Math.round(supplier.onTime * 100)}%`).join(' · ')}`)
+console.log(`  Deliveries in: ${deliveryStats.count}, late: ${deliveryStats.late} (${Math.round((100 * deliveryStats.late) / deliveryStats.count)}%)`)
+console.log(`  Finished orders by labeling kind: ${Object.entries(kindCounts).map(([kind, count]) => `${kind} ${count}`).join(', ')}; kinds changed by the final dates: ${kindMismatches}`)
+console.log('  Supplier patterns (position: usual lead days, on-time share, late by):')
+console.log(`  ${SUPPLIERS.map((supplier) => `${supplier.slot}: ${supplier.lead}d ${Math.round(supplier.onTime * 100)}% +${supplier.lateBy}d`).join(' · ')}`)

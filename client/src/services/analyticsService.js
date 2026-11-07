@@ -1,6 +1,6 @@
 import { supabase } from '../supabase'
 import { loadStatusHistory } from './predictionService'
-import { allRows, estimateOrders, loadAllDeliveries, loadModels, loadStartingValues } from '../utils/estimateLoader'
+import { allRows, estimateOrders, loadAllDeliveries, loadLabelingKinds, loadModels, loadStartingValues } from '../utils/estimateLoader'
 import { buildStageStatistics, normalizeStatus } from '../utils/predictions'
 import { startingDaysFrom } from '../utils/estimateInputs'
 import {
@@ -60,7 +60,7 @@ export async function loadAnalytics(parts = ALL_PARTS) {
     loadAllDeliveries(supabase).catch(() => []),
     supabase.from('suppliers').select('id, supplier_name').order('supplier_name'),
     needOrders
-      ? allRows(() => supabase.from('customer_orders').select('id, order_number, status, created_at, requested_ship_date, delivery_location_id').order('id'))
+      ? allRows(() => supabase.from('customer_orders').select('id, order_number, status, created_at, requested_ship_date, delivery_location_id, customer_id, container_size').order('id'))
       : Promise.resolve([]),
     // Every saved model, in use or not, for the accuracy check and the method note.
     loadModels(supabase, { inUseOnly: false }),
@@ -88,11 +88,12 @@ export async function loadAnalytics(parts = ALL_PARTS) {
     const finished = finishedForAccuracy(allOrders, historyByOrder)
 
     if (finished.length >= MIN_ACCURACY_ORDERS) {
-      const [items, locations] = await Promise.all([
+      const [items, locations, labeling] = await Promise.all([
         rowsByIds('customer_order_items', 'customer_order_id, quantity, products ( supplier_id )', 'customer_order_id', finished.map(({ order }) => order.id)),
         rowsByIds('delivery_locations', 'id, country', 'id', [...new Set(finished.map(({ order }) => order.delivery_location_id).filter(Boolean))]),
+        loadLabelingKinds(supabase),
       ])
-      accuracy = accuracyCheck({ orders: allOrders, history, items, locations, deliveries, starting, names, models })
+      accuracy = accuracyCheck({ orders: allOrders, history, items, locations, deliveries, starting, names, models, kinds: labeling.kinds })
     } else {
       accuracy = { enough: false, finished: finished.length, needed: MIN_ACCURACY_ORDERS }
     }

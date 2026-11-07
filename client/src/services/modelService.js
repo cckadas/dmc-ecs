@@ -31,9 +31,9 @@ async function loadTensorflow() {
 }
 
 
-// Never trained, or trained over 7 days ago.
+// Never trained, trained over 7 days ago, or saved before its inputs changed.
 export function modelIsStale(rows = []) {
-  return !rows.length || rows.some((row) => !row.trainedAt || Date.now() - Date.parse(row.trainedAt) > MODEL_MAX_AGE_DAYS * DAY)
+  return !rows.length || rows.some((row) => row.outdated || !row.trainedAt || Date.now() - Date.parse(row.trainedAt) > MODEL_MAX_AGE_DAYS * DAY)
 }
 
 
@@ -49,8 +49,8 @@ export async function retrainModels(trainedBy, onProgress) {
       .from('purchase_order_items')
       .select('supplier_id, ordered_quantity, fully_received_at, purchase_orders ( id, po_number, customer_order_id, created_at, expected_delivery_date )')
       .order('id')),
-    allRows(() => supabase.from('customer_orders').select('id, order_number, status, delivery_location_id').order('id')),
-    allRows(() => supabase.from('customer_order_items').select('customer_order_id, quantity').order('id')),
+    allRows(() => supabase.from('customer_orders').select('id, order_number, status, delivery_location_id, customer_id, created_at, container_size').order('id')),
+    allRows(() => supabase.from('customer_order_items').select('customer_order_id, quantity, product_id').order('id')),
     allRows(() => supabase.from('delivery_locations').select('id, country').order('id')),
   ])
 
