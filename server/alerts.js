@@ -14,7 +14,8 @@ import { allStatusHistory, loadShared } from './estimates.js'
 //
 // Each alert goes out once: the ones sent are kept in prediction_alerts
 // (db/migrations/018). If the requested or promised date changes, that's a new
-// alert. Customers never get these: their pages say "May be late" instead.
+// alert. Customers never get these: their pages only say when the estimate is
+// after the date they asked for, never why.
 // =============================================================================
 
 const HOUR = 60 * 60 * 1000

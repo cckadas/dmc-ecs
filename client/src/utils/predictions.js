@@ -529,10 +529,10 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
   const roughEstimate = confidence < 60
 
   // What the customer is told: never a supplier's name.
+  // What a customer is told: only how the estimate compares with the date they
+  // asked for. Never why (a supplier, a slow step): that's for staff.
   let customerNote = null
   if (daysPastRequested > 0) customerNote = 'May be later than your requested date. DMC will contact you.'
-  else if (overdueSuppliers.length) customerNote = 'Waiting for goods from our suppliers.'
-  else if (reasons.length) customerNote = 'Taking a little longer than usual.'
   else if (requestedShipDate) customerNote = 'On track for your requested date.'
 
   return {

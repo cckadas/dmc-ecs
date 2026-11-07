@@ -270,8 +270,9 @@ function EstimateLines({ prediction, forStaff }) {
   else if (prediction.customerNote && prediction.customerNote !== 'On track for your requested date.') note = prediction.customerNote
   else if (requested) note = `On track for your requested date (${requested}).`
 
-  // From the server a customer's estimate says only whether it's late, not why.
-  const late = prediction.late ?? prediction.risk === 'at risk'
+  // Staff: at risk for any reason. A customer: only later than the date they
+  // asked for, never why.
+  const late = forStaff ? prediction.risk === 'at risk' : (prediction.daysPastRequested ?? 0) > 0
 
   return (
     <>

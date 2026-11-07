@@ -1,6 +1,6 @@
 import { supabase } from '../supabase'
 import { authHeaders } from './apiAuth'
-import { allRows, estimateDraft, estimateOrders, loadAllDeliveries, loadOpenDeliveries, loadStartingValues } from '../utils/estimateLoader'
+import { allRows, estimateDraft, estimateOrders, forCustomer, loadAllDeliveries, loadOpenDeliveries, loadStartingValues } from '../utils/estimateLoader'
 import { startingDaysFrom, supplierHistories } from '../utils/estimateInputs'
 import { blendStep } from '../utils/predictions'
 import { scoreSuppliers } from '../utils/supplierScores'
@@ -145,8 +145,9 @@ export async function loadOrderProgress(order, { forStaff = true } = {}) {
     }
   }
 
+  // A customer gets the same customer-safe version the server sends.
   const { predictions } = await estimateOrders(supabase, [order], history)
-  return { history: own, prediction: predictions[0] }
+  return { history: own, prediction: forStaff ? predictions[0] : forCustomer(predictions[0]) }
 }
 
 

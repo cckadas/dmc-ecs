@@ -371,7 +371,8 @@ export function forCustomer(prediction) {
     daysPastRequested: prediction.daysPastRequested ?? null,
     customerNote: prediction.customerNote || null,
     roughEstimate: Boolean(prediction.roughEstimate),
-    late: prediction.risk === 'at risk',
+    // Only later than the date they asked for, never "at risk" for other reasons.
+    late: (prediction.daysPastRequested ?? 0) > 0,
     stepsAhead: (prediction.stepsAhead || []).map(({ key, label, expectedEnd }) => ({ key, label, expectedEnd })),
   }
 }

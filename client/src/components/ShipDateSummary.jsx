@@ -3,8 +3,9 @@
 //
 // An order's estimated ship date in one short line, for lists: "Around Nov 28",
 // and whether that's on track for the date the customer asked for. Takes a
-// customer's estimate from the server or a staff prediction; forStaff says
-// "At risk" instead of "May be late".
+// customer's estimate from the server or a staff prediction. Staff see "At
+// risk" for any reason; a customer sees only "After your requested date",
+// never that something is running slow.
 // =============================================
 
 const formatShort = (date) =>
@@ -23,7 +24,7 @@ export default function ShipDateSummary({ estimate, forStaff = false }) {
     )
   }
 
-  const late = estimate.late ?? estimate.risk === 'at risk'
+  const late = forStaff ? estimate.risk === 'at risk' : (estimate.daysPastRequested ?? 0) > 0
 
   return (
     <div>
@@ -33,7 +34,7 @@ export default function ShipDateSummary({ estimate, forStaff = false }) {
       </p>
 
       {late ? (
-        <p className="text-xs font-medium text-amber-700">{forStaff ? 'At risk' : 'May be late'}</p>
+        <p className="text-xs font-medium text-amber-700">{forStaff ? 'At risk' : 'After your requested date'}</p>
       ) : estimate.requestedShipDate ? (
         <p className="text-xs font-medium text-green-700">On track</p>
       ) : null}
