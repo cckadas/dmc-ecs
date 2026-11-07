@@ -8,7 +8,6 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBoxOpen, faPaperPlane } from '@fortawesome/free-solid-svg-icons'
 import { generatePackingList } from '../services/packingListService'
 import { generateCertificateOfShipment, generateCertificateOfClearance } from '../services/certificateService'
-import { localDateString } from '../utils/dates'
 
 import StatusBadge from '../components/StatusBadge'
 import TableScroll from '../components/TableScroll'
@@ -334,6 +333,21 @@ export default function StagingTrackerPage() {
     try {
 
       // =================================================
+      // CHECK IT CAN SHIP, BEFORE MAKING ITS DOCUMENTS
+      // =================================================
+      // Every item's labels applied, and not shipped already, checked now
+      // rather than when the page loaded (db/migrations/021).
+      const { error: checkError } = await supabase.rpc('ship_customer_order', {
+        p_customer_order_id: order.id,
+        p_check_only: true,
+      })
+
+      if (checkError) {
+        throw checkError
+      }
+
+
+      // =================================================
       // GET PURCHASE ORDERS FOR CUSTOMER ORDER
       // =================================================
       const { data: purchaseOrders, error: purchaseOrderError } =
@@ -528,97 +542,43 @@ export default function StagingTrackerPage() {
       }
 
       // =================================================
-      // FREE THE ORDER'S RACKS
+      // SHIP IT, IN ONE STEP
       // =================================================
-      const { error: rackError } = await supabase.rpc('release_order_racks', {
+      // The database checks again, then frees the racks, marks the order
+      // shipped today (its real ship date, which the estimates learn from) and
+      // records it, all or nothing. A second click is refused, so nothing is
+      // done twice (db/migrations/021).
+      const { data: shippedRows, error: shipError } = await supabase.rpc('ship_customer_order', {
         p_customer_order_id: order.id,
       })
 
-      if (rackError) {
-        throw rackError
+      if (shipError) {
+        throw shipError
       }
 
-
-      // =================================================
-      // UPDATE CUSTOMER ORDER
-      // =================================================
-      // The day it actually shipped. Until now the order showed its estimate
-      // (utils/predictions.js); this used to be a guess of today + 14 days.
-      const formattedShipDate = localDateString(0)
-
-      const { error: customerOrderError } =
-        await supabase
-          .from('customer_orders')
-          .update({
-            status: 'shipped',
-            estimated_ship_date: formattedShipDate,
-          })
-          .eq('id', order.id)
-
-      if (customerOrderError) {
-        throw customerOrderError
-      }
-
-      const { error: historyError } = await supabase
-        .from('customer_order_status_history')
-        .insert({
-          customer_order_id: order.id,
-          previous_status: packingOrder.status,
-          new_status: 'shipped',
-          changed_at: new Date().toISOString()
-        })
-
-      if (historyError) {
-        throw historyError
-      }
-
-
-
-
-
-
-
-
-
-
-
-
-      // =============================================
-      // GET CUSTOMER ID
-      // =============================================
-      const { data: customerOrder, error: customerError } = await supabase
-        .from('customer_orders')
-        .select('customer_id, order_number')
-        .eq('id', order.id)
-        .single()
-
-      if (customerError) {
-        throw customerError
-      }
-
-      if (!customerOrder?.customer_id) {
-        throw new Error('Customer ID not found for this order.')
-      }
-
-
-      // =============================================
-      // CREATE NOTIFICATION
-      // =============================================
-      await createNotification({
-        userId: customerOrder.customer_id,
-        role: 'customer',
-        title: `${customerOrder.order_number} is shipped`,
-        message: `Your order ${customerOrder.order_number} status is now "Shipped". Please check your order details for more information.`,
-        type: 'info',
-        relatedCustomerOrderId: order.id,
-        link: '/my-orders',
-      })
-
-
-      // =================================================
-      // SUCCESS
-      // =================================================
+      const shipped = shippedRows?.[0] || {}
       toast.success('Customer order marked as shipped successfully.')
+
+
+      // =============================================
+      // TELL THE CUSTOMER
+      // =============================================
+      // It's shipped either way: a failed notification is reported, not retried.
+      try {
+        await createNotification({
+          userId: shipped.customer_id,
+          role: 'customer',
+          title: `${shipped.order_number} is shipped`,
+          message: `Your order ${shipped.order_number} status is now "Shipped". Please check your order details for more information.`,
+          type: 'info',
+          relatedCustomerOrderId: order.id,
+          link: '/my-orders',
+        })
+      } catch (notifyError) {
+        console.error('Failed to notify the customer:', notifyError)
+        toast.error('Shipped, but the customer could not be notified.')
+      }
+
       await loadCustomerOrders()
     }
 
@@ -773,7 +733,7 @@ export default function StagingTrackerPage() {
                         {/* MARK AS SHIPPED BUTTON */}
                         <button
                           type="button"
-                          disabled={items.length < Number(orderGroup.total_items)}
+                          disabled={loading || items.length < Number(orderGroup.total_items)}
                           onClick={() => markOrderAsShipped(customerOrder)}
                           className="inline-flex items-center gap-2 rounded-lg bg-[#2D5A42] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#234A35] disabled:cursor-not-allowed disabled:opacity-50"
                         >
