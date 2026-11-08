@@ -5,12 +5,72 @@ import { supabase } from '../supabase'
 import { useToast } from '../context/ToastContext'
 import { createNotification } from '../services/notificationService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBoxOpen, faPaperPlane } from '@fortawesome/free-solid-svg-icons'
+import { faBoxOpen, faPaperPlane, faTruckRampBox } from '@fortawesome/free-solid-svg-icons'
 import { generatePackingList } from '../services/packingListService'
 import { generateCertificateOfShipment, generateCertificateOfClearance } from '../services/certificateService'
 
 import StatusBadge from '../components/StatusBadge'
 import TableScroll from '../components/TableScroll'
+
+
+const formatLoadedAt = (value) =>
+  new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+
+
+// The racks holding each order's goods, by order and product:
+// { 'orderId:productId': ['RACK-001', ...] }. Staff see where to load from,
+// and which racks loading frees.
+async function loadRacksByProduct(customerOrderIds) {
+  const { data: purchaseOrders, error: poError } = await supabase
+    .from('purchase_orders')
+    .select('id, customer_order_id')
+    .in('customer_order_id', customerOrderIds)
+
+  if (poError) {
+    throw poError
+  }
+
+  const orderOfPo = Object.fromEntries((purchaseOrders || []).map((po) => [po.id, po.customer_order_id]))
+  const poIds = Object.keys(orderOfPo)
+  if (!poIds.length) return {}
+
+  const { data: lines, error: linesError } = await supabase
+    .from('purchase_order_items')
+    .select('id, purchase_order_id, product_id, warehouse_rack_id')
+    .in('purchase_order_id', poIds)
+
+  if (linesError) {
+    throw linesError
+  }
+
+  const lineIds = (lines || []).map((line) => line.id)
+  const [links, racks] = await Promise.all([
+    lineIds.length
+      ? supabase.from('purchase_order_item_racks').select('purchase_order_item_id, warehouse_rack_id').in('purchase_order_item_id', lineIds)
+      : Promise.resolve({ data: [] }),
+    supabase.from('warehouse_racks').select('id, rack_id'),
+  ])
+
+  if (links.error) throw links.error
+  if (racks.error) throw racks.error
+
+  const rackName = Object.fromEntries((racks.data || []).map((rack) => [rack.id, rack.rack_id]))
+  const lineById = Object.fromEntries((lines || []).map((line) => [line.id, line]))
+  const byProduct = {}
+  const add = (line, rackId) => {
+    const key = `${orderOfPo[line.purchase_order_id]}:${line.product_id}`
+    byProduct[key] = [...new Set([...(byProduct[key] || []), rackName[rackId] || 'a rack'])]
+  }
+
+  for (const link of links.data || []) {
+    if (lineById[link.purchase_order_item_id]) add(lineById[link.purchase_order_item_id], link.warehouse_rack_id)
+  }
+  for (const line of lines || []) {
+    if (line.warehouse_rack_id) add(line, line.warehouse_rack_id)
+  }
+
+  return byProduct
+}
 
 
 export default function StagingTrackerPage() {
@@ -76,6 +136,7 @@ export default function StagingTrackerPage() {
           quantity,
           unit_price,
           subtotal,
+          loaded_at,
 
           products (
             id,
@@ -137,6 +198,12 @@ export default function StagingTrackerPage() {
             {}
           )
       }
+
+
+      // =================================================
+      // WHERE EACH PRODUCT'S GOODS ARE
+      // =================================================
+      const racksByProduct = await loadRacksByProduct(customerOrderIds)
 
 
       // =================================================
@@ -273,7 +340,8 @@ export default function StagingTrackerPage() {
         // =================================================
         groupedOrders[customerOrder.id].items.push({
           ...item,
-          compliance_label_exchange: exchange
+          compliance_label_exchange: exchange,
+          racks: racksByProduct[`${item.customer_order_id}:${item.product_id}`] || [],
         })
       })
 
@@ -321,6 +389,50 @@ export default function StagingTrackerPage() {
   // =====================================================
   // MARK CUSTOMER ORDER AS SHIPPED
   // =====================================================
+  // =====================================================
+  // MARK GOODS AS LOADED INTO THE CONTAINER
+  // =====================================================
+  // Loading frees the racks those goods were in, for the next delivery,
+  // without waiting for the order to ship. It only frees space: shipping
+  // works as before (db/migrations/022).
+  async function loadItems(order, items) {
+    const toLoad = items.filter((item) => !item.loaded_at)
+    if (!order?.id || !toLoad.length) return
+
+    const racks = [...new Set(toLoad.flatMap((item) => item.racks || []))]
+    const what = toLoad.length === 1 ? (toLoad[0].products?.product_name || 'this product') : `${toLoad.length} products`
+    const freeing = racks.length ? ` This frees ${racks.join(', ')} for new deliveries.` : ''
+
+    if (!window.confirm(`Mark ${what} as loaded into the container?${freeing}`)) return
+
+    setLoading(true)
+
+    try {
+      const { data, error } = await supabase.rpc('load_order_items', {
+        p_customer_order_id: order.id,
+        p_item_ids: toLoad.map((item) => item.id),
+      })
+
+      if (error) {
+        throw error
+      }
+
+      const freed = data?.[0]?.racks_freed ?? 0
+      toast.success(`Marked as loaded.${freed ? ` ${freed} ${freed === 1 ? 'rack' : 'racks'} freed.` : ''}`)
+      await loadCustomerOrders()
+    }
+
+    catch (error) {
+      console.error('Failed to mark goods as loaded:', error)
+      toast.error(error.message || 'Failed to mark goods as loaded.')
+    }
+
+    finally {
+      setLoading(false)
+    }
+  }
+
+
   async function markOrderAsShipped(order) {
 
     if (!order?.id) {
@@ -730,6 +842,19 @@ export default function StagingTrackerPage() {
                         </div>
 
 
+                        {/* LOAD ALL BUTTON */}
+                        <button
+                          type="button"
+                          disabled={loading || items.every((item) => item.loaded_at)}
+                          onClick={() => loadItems(customerOrder, items)}
+                          className="inline-flex items-center gap-2 rounded-lg border border-[#2D5A42] bg-white px-4 py-2 text-sm font-medium text-[#2D5A42] transition hover:bg-[#F4F8F5] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <FontAwesomeIcon icon={faTruckRampBox} className="h-4 w-4"/>
+
+                          {items.every((item) => item.loaded_at) ? 'All loaded' : 'Load all'}
+                        </button>
+
+
                         {/* MARK AS SHIPPED BUTTON */}
                         <button
                           type="button"
@@ -769,6 +894,14 @@ export default function StagingTrackerPage() {
 
                           <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                             Compliance Status
+                          </th>
+
+                          <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                            Racks
+                          </th>
+
+                          <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                            Container
                           </th>
                         </tr>
                       </thead>
@@ -815,6 +948,33 @@ export default function StagingTrackerPage() {
                                 {/* COMPLIANCE STATUS */}
                                 <td className="px-6 py-4">
                                   <StatusBadge status={exchange?.status}/>
+                                </td>
+
+                                {/* RACKS: where to load from, until loading frees them */}
+                                <td className="px-6 py-4 text-sm text-gray-700">
+                                  {item.loaded_at
+                                    ? <span className="text-gray-400">Freed</span>
+                                    : item.racks?.length
+                                      ? item.racks.join(', ')
+                                      : <span className="text-gray-400">-</span>}
+                                </td>
+
+                                {/* CONTAINER */}
+                                <td className="px-6 py-4">
+                                  {item.loaded_at ? (
+                                    <span className="text-sm font-medium text-green-700">
+                                      Loaded {formatLoadedAt(item.loaded_at)}
+                                    </span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      disabled={loading}
+                                      onClick={() => loadItems(customerOrder, [item])}
+                                      className="rounded-md border border-[#2D5A42] px-3 py-1 text-xs font-medium text-[#2D5A42] transition hover:bg-[#F4F8F5] disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                      Mark loaded
+                                    </button>
+                                  )}
                                 </td>
                               </tr>
                             )
