@@ -4,11 +4,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faXmark, faFloppyDisk, faLocationDot, faLayerGroup, faWarehouse, faBox, faToggleOn, faToggleOff, faBoxOpen } from '@fortawesome/free-solid-svg-icons'
+import { faXmark, faFloppyDisk, faLocationDot, faLayerGroup, faWarehouse, faBox, faToggleOn, faToggleOff, faBoxOpen, faPlus } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 
 import IconButton from '../components/IconButton'
 import RoleActivityBadge from '../components/RoleActivityBadge'
+import WarehouseCapacityBanner from '../components/WarehouseCapacityBanner'
+import { formatCbm } from '../utils/warehouseCapacity'
 
 
 export default function WarehouseLocationsPage() {
@@ -47,7 +49,8 @@ export default function WarehouseLocationsPage() {
           is_active,
           created_at,
           updated_at,
-          is_occupied
+          is_occupied,
+          capacity_cbm
         `)
         .order('location', { ascending: true })
         .order('section', { ascending: true })
@@ -203,6 +206,29 @@ export default function WarehouseLocationsPage() {
 
 
   // =====================================================
+  // OPEN ADD MODAL
+  // =====================================================
+  // For a full warehouse, an admin can add a rack, e.g. an overflow area.
+  function openAddModal() {
+    if (!isAdmin) {
+      return
+    }
+
+    setSelectedRack({
+      rack_id: '',
+      name: '',
+      location: '',
+      section: '',
+      description: '',
+      is_active: true,
+      capacity_cbm: '',
+    })
+
+    setShowEditModal(true)
+  }
+
+
+  // =====================================================
   // CLOSE EDIT MODAL
   // =====================================================
   function closeEditModal() {
@@ -230,11 +256,6 @@ export default function WarehouseLocationsPage() {
       return
     }
 
-    if (!selectedRack?.id) {
-      toast.error('Missing rack information.')
-      return
-    }
-
     if (!selectedRack.rack_id?.trim()) {
       toast.error('Rack ID is required.')
       return
@@ -242,6 +263,11 @@ export default function WarehouseLocationsPage() {
 
     if (!selectedRack.name?.trim()) {
       toast.error('Rack name is required.')
+      return
+    }
+
+    if (!(Number(selectedRack.capacity_cbm) > 0)) {
+      toast.error('Enter the rack\'s capacity in cubic metres.')
       return
     }
 
@@ -255,16 +281,22 @@ export default function WarehouseLocationsPage() {
         section: selectedRack.section?.trim() || null,
         description: selectedRack.description?.trim() || null,
         is_active: Boolean( selectedRack.is_active ),
+        capacity_cbm: Number(selectedRack.capacity_cbm),
         updated_at: new Date().toISOString(),
       }
 
-      const { data, error } =
-        await supabase
-          .from('warehouse_racks')
-          .update(updateData)
-          .eq('id', selectedRack.id)
-          .select()
-          .single()
+      const { data, error } = selectedRack.id
+        ? await supabase
+            .from('warehouse_racks')
+            .update(updateData)
+            .eq('id', selectedRack.id)
+            .select()
+            .single()
+        : await supabase
+            .from('warehouse_racks')
+            .insert(updateData)
+            .select()
+            .single()
 
       if (error) {
         throw error
@@ -275,17 +307,19 @@ export default function WarehouseLocationsPage() {
       // UPDATE UI
       // =================================================
       setRacks((prev) =>
-        prev.map((rack) =>
-          rack.id === selectedRack.id
-            ? {
-                ...rack,
-                ...data,
-              }
-            : rack
-        )
+        selectedRack.id
+          ? prev.map((rack) =>
+              rack.id === selectedRack.id
+                ? {
+                    ...rack,
+                    ...data,
+                  }
+                : rack
+            )
+          : [...prev, data]
       )
 
-      toast.success('Warehouse rack updated successfully.')
+      toast.success(selectedRack.id ? 'Warehouse rack updated successfully.' : 'Warehouse rack added successfully.')
       closeEditModal()
     }
 
@@ -336,8 +370,19 @@ export default function WarehouseLocationsPage() {
         {/* =================================================
             LOCATION FILTER CHIPS
         ================================================= */}
-        {!loading && locations.length > 0 && (
+        {!loading && (locations.length > 0 || isAdmin) && (
           <div className="flex flex-wrap items-center gap-2">
+
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={openAddModal}
+                className="flex items-center gap-2 rounded-lg bg-[#1F3A2C] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#2D5A42]"
+              >
+                <FontAwesomeIcon icon={faPlus}/>
+                Add Rack
+              </button>
+            )}
 
             {/* =================================================
                 ALL LOCATIONS
@@ -367,6 +412,9 @@ export default function WarehouseLocationsPage() {
           </div>
         )}
       </div>
+
+
+      <WarehouseCapacityBanner racks={racks} className="mb-6"/>
 
 
       {/* =================================================
@@ -532,6 +580,11 @@ function RackCard({ rack, toggling, onToggleOccupied, onEdit }) {
       </div>
 
 
+      <p className="mt-3 text-sm text-gray-500">
+        Capacity: {formatCbm(rack.capacity_cbm)}
+      </p>
+
+
       {/* =================================================
           STATUS
       ================================================= */}
@@ -575,11 +628,11 @@ function RackEditModal({ rack, isAdmin, saving, onChange, onSave, onClose }) {
         <div className="flex items-center justify-between border-b px-6 py-4">
           <div>
             <h2 className="text-xl font-semibold text-gray-800">
-              Edit Warehouse Rack
+              {rack.id ? 'Edit Warehouse Rack' : 'Add Warehouse Rack'}
             </h2>
 
             <p className="text-sm text-gray-500">
-              Update the details of this warehouse rack.
+              {rack.id ? 'Update the details of this warehouse rack.' : 'Add a rack the warehouse can store deliveries in.'}
             </p>
           </div>
 
@@ -669,6 +722,30 @@ function RackEditModal({ rack, isAdmin, saving, onChange, onSave, onClose }) {
 
 
             {/* =================================================
+                CAPACITY
+            ================================================= */}
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Capacity (m³)
+              </label>
+
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={rack.capacity_cbm ?? ''}
+                onChange={(e) => onChange('capacity_cbm', e.target.value)}
+                placeholder="e.g. 10"
+                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-[#1F3A2C] focus:ring-1 focus:ring-[#1F3A2C]"
+              />
+
+              <p className="mt-1 text-xs text-gray-500">
+                How much this rack holds. A delivery larger than this is split across racks.
+              </p>
+            </div>
+
+
+            {/* =================================================
                 DESCRIPTION
             ================================================= */}
             <div className="md:col-span-2">
@@ -733,7 +810,7 @@ function RackEditModal({ rack, isAdmin, saving, onChange, onSave, onClose }) {
             Cancel
           </button>
 
-          {isAdmin ?? (
+          {isAdmin && (
             <button
               type="button"
               onClick={onSave}
@@ -741,7 +818,7 @@ function RackEditModal({ rack, isAdmin, saving, onChange, onSave, onClose }) {
               className="flex items-center gap-2 rounded-md bg-[#1F3A2C] px-4 py-2 text-sm font-medium text-white hover:bg-[#162C21] disabled:cursor-not-allowed disabled:opacity-50"
             >
               <FontAwesomeIcon icon={ saving ? faToggleOn : faFloppyDisk}/>
-              {saving ? 'Saving...' : 'Save Changes'}
+              {saving ? 'Saving...' : rack.id ? 'Save Changes' : 'Add Rack'}
             </button>       
           )}
         </div>

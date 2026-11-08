@@ -7,6 +7,8 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faWarehouse, faMagnifyingGlass, faBox, faLocationDot } from '@fortawesome/free-solid-svg-icons'
 
 import StatusBadge from '../components/StatusBadge'
+import TableScroll from '../components/TableScroll'
+import WarehouseCapacityBanner from '../components/WarehouseCapacityBanner'
 
 
 export default function WarehouseHoldingsPage() {
@@ -32,7 +34,7 @@ export default function WarehouseHoldingsPage() {
       // =================================================
       // LOAD PURCHASE ORDER ITEMS CURRENTLY IN RACKS
       // =================================================
-      const { data: purchaseOrderItems, error: purchaseOrderItemsError } = await supabase
+      const { data: purchaseOrderItemRows, error: purchaseOrderItemsError } = await supabase
         .from('purchase_order_items')
         .select(`
           id,
@@ -43,6 +45,11 @@ export default function WarehouseHoldingsPage() {
           unit_price,
           status,
           warehouse_rack_id,
+
+          purchase_order_item_racks (
+            warehouse_rack_id,
+            quantity
+          ),
 
           products (
             id,
@@ -56,6 +63,16 @@ export default function WarehouseHoldingsPage() {
       if (purchaseOrderItemsError) {
         throw purchaseOrderItemsError
       }
+
+      // One row per rack: a delivery can be split across several.
+      const purchaseOrderItems = (purchaseOrderItemRows || []).flatMap((item) =>
+        (item.purchase_order_item_racks || []).map((entry) => ({
+          ...item,
+          row_key: `${item.id}-${entry.warehouse_rack_id}`,
+          warehouse_rack_id: entry.warehouse_rack_id,
+          rack_quantity: entry.quantity,
+        }))
+      )
 
 
       // =================================================
@@ -71,7 +88,8 @@ export default function WarehouseHoldingsPage() {
           section,
           description,
           is_active,
-          is_occupied
+          is_occupied,
+          capacity_cbm
         `)
         .eq('is_active', true)
 
@@ -453,6 +471,9 @@ export default function WarehouseHoldingsPage() {
       </div>
 
 
+      <WarehouseCapacityBanner racks={racks} className="mb-6"/>
+
+
       {/* =================================================
           SUMMARY
       ================================================= */}
@@ -568,8 +589,8 @@ export default function WarehouseHoldingsPage() {
         /* =================================================
            WAREHOUSE ITEMS TABLE
         ================================================= */
-        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-          <div className="overflow-x-auto">
+        <div className="overflow-clip rounded-xl border border-gray-200 bg-white shadow-sm">
+          <TableScroll>
             <table className="min-w-full">
 
               <thead className="bg-[#F4F8F5]">
@@ -610,7 +631,7 @@ export default function WarehouseHoldingsPage() {
                   const rack = item.warehouse_rack
 
                   return (
-                    <tr key={item.id} className="border-t border-gray-200 hover:bg-gray-50">
+                    <tr key={item.row_key} className="border-t border-gray-200 hover:bg-gray-50">
 
                       {/* LOCATION */}
                       <td className="px-6 py-4">
@@ -660,7 +681,7 @@ export default function WarehouseHoldingsPage() {
                       <td className="px-6 py-4">
 
                         <span className="font-medium text-gray-800">
-                          {item.received_quantity}{' '}
+                          {item.rack_quantity}{' '}
                         </span>
 
                         {product?.unit && (
@@ -710,7 +731,7 @@ export default function WarehouseHoldingsPage() {
               </tbody>
 
             </table>
-          </div>
+          </TableScroll>
         </div>
       )}
     </div>

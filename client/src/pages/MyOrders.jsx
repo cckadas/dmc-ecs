@@ -7,9 +7,13 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faFolderOpen, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 import StatusBadge from '../components/StatusBadge'
+import OrderProgress from '../components/OrderProgress'
 
 import IconButton from '../components/IconButton'
-import RoleActivityBadge from '../components/RoleActivityBadge'
+import TableScroll from '../components/TableScroll'
+import ShipDateSummary from '../components/ShipDateSummary'
+import LabelDesignsNote from '../components/LabelDesignsNote'
+import { loadMyEstimates } from '../services/predictionService'
 
 
 export default function MyOrdersPage() {
@@ -20,6 +24,8 @@ export default function MyOrdersPage() {
   const [selectedOrder, setSelectedOrder] = useState(null)
   const [showModal, setShowModal] = useState(false)
   const [loading, setLoading] = useState(true)
+  // Each order's estimated ship date, from DMC's server, by order id.
+  const [estimates, setEstimates] = useState({})
 
 
   // =============================================
@@ -40,12 +46,18 @@ export default function MyOrdersPage() {
         order_number,
         quotation_number,
         subtotal,
+        container_size,
+        container_cost,
         shipping_cost,
         estimated_ship_date,
+        requested_ship_date,
+        delivery_location_id,
         total_amount,
         down_payment_amount,
         status,
         settled_amount,
+        pending_payment_amount,
+        expiry_date,
         payment_proof_dp,
         payment_proof_complete,
         pfi_file_path,
@@ -62,6 +74,10 @@ export default function MyOrdersPage() {
             product_name,
             brand,
             unit
+          ),
+
+          compliance_label_exchanges (
+            status
           )
         )
       `)
@@ -96,6 +112,11 @@ export default function MyOrdersPage() {
   useEffect(() => {
     if (profile?.id) {
       loadMyOrders()
+
+      // Not needed to show the orders, so a failure just leaves the dates out.
+      loadMyEstimates()
+        .then(setEstimates)
+        .catch((error) => console.error('Failed to load ship date estimates:', error))
     }
   }, [profile?.id])
 
@@ -119,7 +140,7 @@ export default function MyOrdersPage() {
 
 
       {/* TABLE */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+      <TableScroll className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
 
           {/* TABLE HEADER */}
@@ -142,7 +163,7 @@ export default function MyOrdersPage() {
               </th>
 
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
-                Date
+                Ship Date
               </th>
 
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
@@ -197,11 +218,8 @@ export default function MyOrdersPage() {
 
                   {/* DATE */}
                   <td className="px-5 py-3">
-                    {order.estimated_ship_date && !isNaN(new Date(order.estimated_ship_date).getTime()) ? (
-                      new Date(order.estimated_ship_date).toLocaleDateString()
-                    ) : (
-                      <RoleActivityBadge status="unavailable" />
-                    )}
+                    <ShipDateSummary estimate={estimates[order.id]} />
+                    <LabelDesignsNote order={order} compact />
                   </td>
 
 
@@ -221,13 +239,14 @@ export default function MyOrdersPage() {
             )}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
 
       {/* MODAL */}
       {showModal && selectedOrder && (
         <MyOrderModal
           order={selectedOrder}
+          estimate={estimates[selectedOrder.id]}
           onClose={() => {
             setShowModal(false)
             setSelectedOrder(null)
@@ -244,7 +263,7 @@ export default function MyOrdersPage() {
 // =====================================================
 // VIEW CUSTOMER ORDER MODAL
 // =====================================================
-function MyOrderModal({ order, onClose }) {
+function MyOrderModal({ order, estimate, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-xl">
@@ -274,6 +293,11 @@ function MyOrderModal({ order, onClose }) {
         ================================================= */}
         <div className="flex-1 overflow-y-auto p-6">
 
+          <LabelDesignsNote order={order} />
+
+          <OrderProgress order={order}/>
+
+
 
           {/* =================================================
               ORDER INFORMATION
@@ -300,13 +324,9 @@ function MyOrderModal({ order, onClose }) {
 
             <div>
               <p className="text-xs uppercase text-gray-500"> Estimated Ship Date </p>
-              <p className="mt-1 font-medium text-gray-800">
-                {order.estimated_ship_date && !isNaN(new Date(order.estimated_ship_date).getTime()) ? (
-                  new Date(order.estimated_ship_date).toLocaleDateString()
-                ) : (
-                  <RoleActivityBadge status="unavailable" />
-                )}
-              </p>
+              <div className="mt-1">
+                <ShipDateSummary estimate={estimate} />
+              </div>
             </div>
           </div>
 
@@ -318,7 +338,7 @@ function MyOrderModal({ order, onClose }) {
             Order Items
           </h3>
 
-          <div className="overflow-x-auto rounded-lg border">
+          <TableScroll className="rounded-lg border">
             <table className=" min-w-full">
 
               <thead className="bg-gray-50">
@@ -392,7 +412,7 @@ function MyOrderModal({ order, onClose }) {
               </tbody>
 
             </table>
-          </div>
+          </TableScroll>
 
 
           {/* =================================================
@@ -418,9 +438,23 @@ function MyOrderModal({ order, onClose }) {
                   </span>
                 </div>
 
+                {order.container_cost != null && (
+                  <div className="mb-3 flex justify-between text-sm">
+                    <span className="font-semibold text-gray-700">
+                      Container ({order.container_size})
+                    </span>
+
+                    <span className="text-lg font-bold text-gray-800">
+                      ₱ {Number(order.container_cost).toLocaleString(undefined, {
+                        minimumFractionDigits: 2
+                      })}
+                    </span>
+                  </div>
+                )}
+
                 <div className="mb-3 flex justify-between text-sm">
                   <span className="font-semibold text-gray-700">
-                    Purchase Total
+                    Shipping Cost
                   </span>
 
                   <span className="text-lg font-bold text-gray-800">

@@ -4,12 +4,17 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlus, faTrash, faFileSignature, faDownload, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faPlus, faTrash, faFileSignature, faDownload, faXmark, faChevronDown } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 import { MIN_PREFERRED_SHIP_DAYS, localDateString } from '../utils/dates'
+import { getCreditStatus, formatPeso } from '../services/creditService'
+import { getMinimumOrderQuantities } from '../services/pricingService'
+import { groupByFamily, sizeLabel } from '../utils/productGroups'
+import { previewMyEstimate } from '../services/predictionService'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
+import TableScroll from '../components/TableScroll'
 
 
 export default function QuotationRequestsPage() {
@@ -24,6 +29,27 @@ export default function QuotationRequestsPage() {
   const [selectedQuotation, setSelectedQuotation] = useState(null)
   const [loadingQuotation, setLoadingQuotation] = useState(false)
   const [creatingCO, setCreatingCO] = useState(false)
+  const [credit, setCredit] = useState(null)
+
+
+  // =============================================
+  // LOAD CREDIT STATUS
+  //
+  // Once the unpaid balance reaches DMC's credit limit, new requests and
+  // quotation approvals are blocked until the customer pays.
+  // =============================================
+  async function loadCredit() {
+    try {
+      const status = await getCreditStatus(profile.id)
+      setCredit(status)
+      return status
+    } catch (error) {
+      // Not set up yet, or offline: the database still enforces the limit.
+      console.error('Failed to load credit status:', error)
+      setCredit(null)
+      return null
+    }
+  }
 
 
   // =============================================
@@ -73,6 +99,7 @@ export default function QuotationRequestsPage() {
       .from('delivery_locations')
       .select('*')
       .eq('profile_id', profile.id)
+      .eq('is_archived', false)
       .order('location_name')
 
     if (error) {
@@ -90,7 +117,7 @@ export default function QuotationRequestsPage() {
   async function loadProducts() {
     const { data, error } = await supabase
       .from('products')
-      .select('id, product_name, brand, unit')
+      .select('id, product_name, brand, unit, availability, family, pack_size')
       .order('product_name')
 
     if (error) {
@@ -137,7 +164,10 @@ export default function QuotationRequestsPage() {
       .insert(items)
 
     if (itemError) {
-      toast.error(itemError)
+      // The request was saved but its products weren't (e.g. one is below
+      // its minimum order), so remove it rather than leave an empty request.
+      await supabase.from('quotation_requests').delete().eq('id', request.id)
+      toast.error(itemError.message || 'Failed to save the requested products.')
       return
     }
 
@@ -211,6 +241,8 @@ export default function QuotationRequestsPage() {
         quotation_request_id,
         quotation_number,
         subtotal,
+        container_size,
+        container_cost,
         shipping_cost,
         total_amount,
         down_payment_amount,
@@ -220,7 +252,12 @@ export default function QuotationRequestsPage() {
         pfi_file_path,
 
         quotation_request:quotation_requests (
-          delivery_location_id
+          delivery_location_id,
+          preferred_ship_date
+        ),
+
+        customer_orders (
+          order_number
         ),
 
         quotation_items (
@@ -261,46 +298,14 @@ export default function QuotationRequestsPage() {
 
     if (!confirmed) return
 
-    // Get the quotation request ID
-    const { data: quotation, error: fetchError } = await supabase
-      .from('quotations')
-      .select('quotation_request_id')
-      .eq('id', quotationId)
-      .eq('status', 'pending approval')
-      .single()
+    // In one database step, so the quotation and its request can't disagree.
+    const { error } = await supabase.rpc('reject_quotation', {
+      p_quotation_id: quotationId,
+    })
 
-    if (fetchError || !quotation) {
-      console.error(fetchError)
-      alert('Quotation is no longer available for rejection.')
-      return
-    }
-
-    // Update quotation status
-    const { error: quotationError } = await supabase
-      .from('quotations')
-      .update({
-        status: 'rejected',
-      })
-      .eq('id', quotationId)
-      .eq('status', 'pending approval')
-
-    if (quotationError) {
-      console.error(quotationError)
-      toast.error('Failed to reject quotation.')
-      return
-    }
-
-    // Update quotation request status
-    const { error: requestError } = await supabase
-      .from('quotation_requests')
-      .update({
-        status: 'rejected',
-      })
-      .eq('id', quotation.quotation_request_id)
-
-    if (requestError) {
-      console.error(requestError)
-      toast.error('Quotation was rejected, but failed to update the request status.')
+    if (error) {
+      console.error(error)
+      toast.error(error.message || 'Failed to reject quotation.')
       return
     }
 
@@ -335,6 +340,17 @@ export default function QuotationRequestsPage() {
       return
     }
 
+    // Approving creates an order, which a customer at their credit limit
+    // can't place. Re-checked here in case they paid or ordered elsewhere.
+    const creditStatus = await loadCredit()
+
+    if (creditStatus?.blocked) {
+      alert(
+        `Your unpaid balance of ${formatPeso(creditStatus.outstanding)} has reached your credit limit of ${formatPeso(creditStatus.creditLimit)}. Please pay your open orders before approving this quotation.`
+      )
+      return
+    }
+
     const confirmed = window.confirm(
       'Are you sure you want to approve this quotation?'
     )
@@ -346,151 +362,26 @@ export default function QuotationRequestsPage() {
 
     try {
 
-      // -------------------------------------------------
-      // CREATE CUSTOMER ORDER NUMBER
-      // -------------------------------------------------
-      const now = new Date()
-      const year = now.getFullYear()
+      // Creates the order from the quotation in one database step, which also
+      // numbers it. The quotation and its request are kept, marked approved.
+      const { data: orderNumber, error: approveError } = await supabase.rpc('approve_quotation', {
+        p_quotation_id: quotation.id,
+      })
 
-      const { data: existingORD, error: existingORDError } = await supabase
-        .from('customer_orders')
-        .select('order_number')
-        .like('order_number', `ORD-${year}-%`)
-
-      if (existingORDError) {
-        throw existingORDError
-      }
-
-      let nextNumber = 1
-
-      if (existingORD && existingORD.length > 0) {
-        const numbers = existingORD
-          .map((order) => {
-            const match = order.order_number?.match(/^ORD-\d{4}-(\d+)$/)
-            return match ? Number(match[1]) : 0
-          })
-          .filter((number) => number > 0)
-
-        if (numbers.length > 0) {
-          nextNumber = Math.max(...numbers) + 1
-        }
-      }
-
-      const orderNumber = `ORD-${year}-${String(nextNumber).padStart(5, '0')}`
-
-      const { data: order, error: orderError } = await supabase
-        .from('customer_orders')
-        .insert({
-          order_number: orderNumber,
-          customer_id: profile.id,
-          quotation_number: quotation.quotation_number,
-          subtotal: quotation.subtotal,
-          shipping_cost: quotation.shipping_cost,
-          total_amount: quotation.total_amount,
-          down_payment_amount: quotation.down_payment_amount,
-          delivery_location_id: quotation.quotation_request.delivery_location_id,
-          pfi_file_path: quotation.pfi_file_path,
-          expiry_date: expiryDate,
-          status: 'pending payment',
-        })
-        .select()
-        .single()
-
-      if (orderError) {
-        console.error(orderError)
-        alert('Failed to create customer order.')
+      if (approveError) {
+        console.error(approveError)
+        // The database's own message, e.g. the credit-limit refusal.
+        alert(approveError.message || 'Failed to approve the quotation.')
         return
       }
 
-
-      /* CREATE CUSTOMER ORDER ITEMS */
-      const orderItems = quotation.quotation_items.map((item) => ({
-        customer_order_id: order.id,
-        product_id: item.product_id,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        subtotal: item.subtotal,
-      }))
-
-      const { error: itemError } = await supabase
-        .from('customer_order_items')
-        .insert(orderItems)
-
-      if (itemError) {
-        console.error(itemError)
-        await supabase
-          .from('customer_orders')
-          .delete()
-          .eq('id', order.id)
-
-        alert('Failed to create customer order items.')
-        return
-      }
-
-
-      /* DELETE QUOTATION ITEMS */
-      const { error: quotationItemsError } = await supabase
-        .from('quotation_items')
-        .delete()
-        .eq('quotation_id', quotation.id)
-
-      if (quotationItemsError) {
-        console.error(quotationItemsError)
-        alert('Order was created, but quotation items could not be deleted.')
-        return
-      }
-
-
-      /* DELETE QUOTATION */
-      const { error: quotationError } = await supabase
-        .from('quotations')
-        .delete()
-        .eq('id', quotation.id)
-
-      if (quotationError) {
-        console.error(quotationError)
-        alert('Order was created, but quotation could not be deleted.')
-        return
-      }
-
-
-      /* DELETE QUOTATION REQUEST ITEMS */
-      const { error: requestItemsError } = await supabase
-        .from('quotation_request_items')
-        .delete()
-        .eq('quotation_request_id', quotation.quotation_request_id)
-
-      if (requestItemsError) {
-        console.error(requestItemsError)
-        alert(
-          'Order was created, but quotation request items could not be deleted.'
-        )
-        return
-      }
-
-
-      /* DELETE QUOTATION REQUEST */
-      const { error: requestError } = await supabase
-        .from('quotation_requests')
-        .delete()
-        .eq('id', quotation.quotation_request_id)
-
-      if (requestError) {
-        console.error(requestError)
-        alert(
-          'Order was created, but quotation request could not be deleted.'
-        )
-        return
-      }
-
-
-      /* SUCCESS */
-      toast.success('Quotation approved successfully.')
+      toast.success(`Quotation approved. Your order number is ${orderNumber}.`)
 
       setShowQuotationModal(false)
       setSelectedQuotation(null)
 
       await loadRequests()
+      await loadCredit()
     }
     
     catch (error) {
@@ -512,6 +403,7 @@ export default function QuotationRequestsPage() {
       loadRequests()
       loadDeliveryLocations()
       loadProducts()
+      loadCredit()
     }
   }, [profile])
 
@@ -536,7 +428,9 @@ export default function QuotationRequestsPage() {
 
         <button
           onClick={() => setShowModal(true)}
-          className="flex items-center gap-2 rounded-lg bg-[#2D5A42] px-4 py-2 text-sm font-medium text-white hover:bg-[#234633]"
+          disabled={credit?.blocked}
+          title={credit?.blocked ? 'Your unpaid balance has reached your credit limit' : undefined}
+          className="flex items-center gap-2 rounded-lg bg-[#2D5A42] px-4 py-2 text-sm font-medium text-white hover:bg-[#234633] disabled:cursor-not-allowed disabled:opacity-50"
         >
           <FontAwesomeIcon icon={faPlus}/>
           Create Quotation Request
@@ -544,8 +438,21 @@ export default function QuotationRequestsPage() {
       </div>
 
 
+      {/* Credit limit */}
+      {credit?.blocked && (
+        <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4">
+          <p className="text-sm font-medium text-red-800">
+            Your unpaid balance of {formatPeso(credit.outstanding)} has reached your credit limit of {formatPeso(credit.creditLimit)}.
+          </p>
+          <p className="mt-1 text-sm text-red-700">
+            You can't send new quotation requests or approve quotations until you pay your open orders on the Payments page.
+          </p>
+        </div>
+      )}
+
+
       {/* Table */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+      <TableScroll className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
           <thead className="bg-[#F4F8F5]">
             <tr>
@@ -626,10 +533,10 @@ export default function QuotationRequestsPage() {
                   </td>
 
                   <td className="px-5 py-3">
-                    {request.status === 'priced & sent to customer' ? (
-                      <IconButton icon={faFileSignature} title="View Quotation" color="blue" disabled={false} onClick={() => viewQuotation(request.id)}/>
+                    {request.status === 'awaiting pricing' ? (
+                      <IconButton icon={faTrash} title="Cancel Request" color="red" disabled={false} onClick={() => deleteRequest(request.id)}/>
                     ) : (
-                      <IconButton icon={faTrash} title={request.status === 'awaiting pricing' ? 'Cancel Request' : 'Cannot cancel this request'} color="red" disabled={request.status !== 'awaiting pricing'} onClick={() => deleteRequest(request.id)}/>
+                      <IconButton icon={faFileSignature} title="View Quotation" color="blue" disabled={false} onClick={() => viewQuotation(request.id)}/>
                     )}
                   </td>
                 </tr>
@@ -647,7 +554,7 @@ export default function QuotationRequestsPage() {
 
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
     {showModal && (
       <QuotationRequestModal
@@ -682,6 +589,76 @@ export default function QuotationRequestsPage() {
 // =============================================
 // QUOTATION MODAL
 // =============================================
+// =============================================
+// SHIP DATE ESTIMATE NOTE
+//
+// When an order would likely ship, its likely range and arrival, and a warning
+// when the preferred date is earlier. From DMC's server, as if paid today.
+// =============================================
+function ShipEstimateNote({ estimate, lead, preferredDate }) {
+  const fullDate = (date) => new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  const shortDate = (date) => new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  const tooEarly = Boolean(preferredDate) && estimate.daysPastRequested > 0
+
+  return (
+    <div className={`mb-6 rounded-lg border p-4 text-sm ${tooEarly ? 'border-amber-200 bg-amber-50' : 'border-green-200 bg-green-50'}`}>
+      <p className="font-medium text-gray-800">
+        {lead} {fullDate(estimate.estimatedShipDate)}.
+      </p>
+
+      {estimate.shipDateRange && (
+        <p className="mt-0.5 text-gray-600">
+          Likely {shortDate(estimate.shipDateRange.quick)} to {shortDate(estimate.shipDateRange.slow)}
+          {estimate.estimatedArrivalDate ? `, arriving at your port around ${fullDate(estimate.estimatedArrivalDate)}` : ''}.
+        </p>
+      )}
+
+      {tooEarly && (
+        <p className="mt-1 font-medium text-amber-800">
+          Your preferred date ({fullDate(`${preferredDate}T00:00:00`)}) is earlier than that, so it may be hard to meet.
+        </p>
+      )}
+
+      <p className="mt-1 text-xs text-gray-500">
+        An estimate from past orders and DMC's usual times, not a guaranteed date.
+      </p>
+    </div>
+  )
+}
+
+
+// The quotation's estimate, as if the customer approved and paid today.
+function QuotationShipEstimate({ quotation }) {
+  const [estimate, setEstimate] = useState(null)
+  const preferredDate = quotation.quotation_request?.preferred_ship_date || null
+
+  useEffect(() => {
+    let active = true
+
+    previewMyEstimate({
+      items: (quotation.quotation_items || []).map((item) => ({ product_id: item.product_id, quantity: Number(item.quantity) || 0 })),
+      deliveryLocationId: quotation.quotation_request?.delivery_location_id || null,
+      requestedShipDate: preferredDate,
+      containerSize: quotation.container_size || null,
+    })
+      .then((result) => { if (active) setEstimate(result) })
+      .catch((error) => console.error('Failed to estimate the ship date:', error))
+
+    return () => { active = false }
+  }, [quotation.id])
+
+  if (!estimate?.estimatedShipDate) return null
+
+  return (
+    <ShipEstimateNote
+      estimate={estimate}
+      lead="If you approve and pay the down payment today, it ships around"
+      preferredDate={preferredDate}
+    />
+  )
+}
+
+
 function QuotationModal({ quotation, loading, creating,onClose, onApprove, onReject }) {
   if (loading) {
     return (
@@ -708,6 +685,8 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
   )
 
   const isExpiringSoon = daysUntilExpiry <= 3
+
+  const order = Array.isArray(quotation.customer_orders) ? quotation.customer_orders[0] : quotation.customer_orders
 
 
   // =============================================
@@ -806,6 +785,10 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
             </div>
           </div>
 
+          {(quotation.status || '').trim().toLowerCase() === 'pending approval' && !isExpired && (
+            <QuotationShipEstimate quotation={quotation} />
+          )}
+
 
           {/* =================================================
               ITEMS
@@ -814,7 +797,7 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
             Quotation Items
           </h3>
 
-          <div className="overflow-x-auto rounded-lg border">
+          <TableScroll className="rounded-lg border">
             <table className=" min-w-full">
 
               <thead className="bg-gray-50">
@@ -886,7 +869,7 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
               </tbody>
 
             </table>
-          </div>
+          </TableScroll>
 
 
           {/* =================================================
@@ -911,6 +894,20 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
                     })}
                   </span>
                 </div>
+
+                {quotation.container_cost != null && (
+                  <div className="mb-3 flex justify-between text-sm">
+                    <span className="font-semibold text-gray-700">
+                      Container ({quotation.container_size})
+                    </span>
+
+                    <span className="text-lg font-bold text-gray-800">
+                      ₱ {Number(quotation.container_cost).toLocaleString(undefined, {
+                        minimumFractionDigits: 2
+                      })}
+                    </span>
+                  </div>
+                )}
 
                 <div className="mb-3 flex justify-between text-sm">
                   <span className="font-semibold text-gray-700">
@@ -960,45 +957,39 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
             FOOTER
         ================================================= */}
         <div className="flex w-full items-center gap-3 bg-gray-50 px-6 py-4">
-          {quotation.status === 'rejected' ? (
-            <div className="flex w-full items-center justify-between">
+          {['rejected', 'approved', 'cancelled'].includes(quotation.status) ? (
+            <div className="flex w-full items-center justify-between gap-4">
               <div>
-                <p className="font-medium text-red-600">
-                  Quotation Rejected
+                <p className={`font-medium ${quotation.status === 'approved' ? 'text-green-600' : 'text-red-600'}`}>
+                  Quotation {quotation.status === 'approved' ? 'Approved' : quotation.status === 'rejected' ? 'Rejected' : 'Cancelled'}
                 </p>
 
                 <p className="text-sm text-gray-500">
-                  This quotation has already been rejected.
+                  {quotation.status === 'approved' && `This quotation was approved${order?.order_number ? ` and became order ${order.order_number}` : ''}.`}
+                  {quotation.status === 'rejected' && 'This quotation was rejected.'}
+                  {quotation.status === 'cancelled' && 'The order made from this quotation was deleted.'}
                 </p>
               </div>
 
-              <button
-                onClick={onClose}
-                disabled={creating}
-                className="rounded-lg bg-gray-200 px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300 disabled:opacity-50"
-              >
-                Close
-              </button>
-            </div>
-          ) : quotation.status === 'approved' ? (
-            <div className="flex w-full items-center justify-between">
-              <div>
-                <p className="font-medium text-green-600">
-                  Quotation Approved
-                </p>
+              <div className="flex shrink-0 items-center gap-3">
+                <button
+                  type="button"
+                  onClick={downloadPFI}
+                  disabled={!quotation?.pfi_file_path || creating}
+                  className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <FontAwesomeIcon icon={faDownload} />
+                  Download PFI
+                </button>
 
-                <p className="text-sm text-gray-500">
-                  This quotation has already been approved.
-                </p>
+                <button
+                  onClick={onClose}
+                  disabled={creating}
+                  className="rounded-lg bg-gray-200 px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300 disabled:opacity-50"
+                >
+                  Close
+                </button>
               </div>
-
-              <button
-                onClick={onClose}
-                disabled={creating}
-                className="rounded-lg bg-[#2D5A42] px-5 py-2 text-sm font-medium text-white hover:bg-[#234633] disabled:opacity-50"
-              >
-                Close
-              </button>
             </div>
           ) : isExpired ? (
             <div className="flex w-full items-center justify-between gap-4">
@@ -1075,6 +1066,8 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
 function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit }) {
   const { toast } = useToast()
   const [selectedProducts, setSelectedProducts] = useState([])
+  const [minimums, setMinimums] = useState({})
+  const [productSearch, setProductSearch] = useState('')
 
   const [form, setForm] = useState({
     preferred_ship_date: '',
@@ -1082,6 +1075,91 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
   })
 
   const earliestShipDate = localDateString(MIN_PREFERRED_SHIP_DAYS)
+
+  // Each product's minimum order (its supplier's MOQ); no entry = no minimum.
+  const minimumFor = (productId) => minimums[productId] || 1
+
+  // An unavailable product can't go into a new request. Requests and orders
+  // already in progress aren't affected (the database checks new lines only).
+  const isUnavailable = (product) => (product?.availability || '').toLowerCase() === 'unavailable'
+
+  // The catalog is large, so the list is searchable, and each product's
+  // sizes are grouped under it. Ticked sizes stay ticked while searching.
+  const searchTerm = productSearch.trim().toLowerCase()
+  const visibleGroups = groupByFamily(
+    searchTerm
+      ? products.filter((product) =>
+          [product.product_name, product.family, product.brand]
+            .some((value) => (value || '').toLowerCase().includes(searchTerm))
+        )
+      : products
+  )
+
+  useEffect(() => {
+    getMinimumOrderQuantities()
+      .then(setMinimums)
+      .catch((error) => console.error('Failed to load minimum order quantities:', error))
+  }, [])
+
+
+  // When an order like this would likely ship, if the down payment were made
+  // today, from DMC's server. Waits until typing stops, and keeps only the
+  // latest answer.
+  const [shipEstimate, setShipEstimate] = useState(null)
+
+  useEffect(() => {
+    if (!selectedProducts.length) {
+      setShipEstimate(null)
+      return
+    }
+
+    let active = true
+    const timer = setTimeout(() => {
+      previewMyEstimate({
+        items: selectedProducts.map((item) => ({ product_id: item.product_id, quantity: Number(item.quantity) || 0 })),
+        deliveryLocationId: form.delivery_location_id || null,
+        requestedShipDate: form.preferred_ship_date || null,
+      })
+        .then((estimate) => { if (active) setShipEstimate(estimate) })
+        .catch((error) => {
+          console.error('Failed to estimate the ship date:', error)
+          if (active) setShipEstimate(null)
+        })
+    }, 600)
+
+    return () => {
+      active = false
+      clearTimeout(timer)
+    }
+  }, [selectedProducts, form.delivery_location_id, form.preferred_ship_date])
+
+
+  // Ticking a size adds it at the minimum the customer may order. Unticking it,
+  // or removing it from the selected list, takes it out.
+  function setPicked(product, picked) {
+    if (picked) {
+      setSelectedProducts([
+        ...selectedProducts,
+        { product_id: product.id, quantity: minimumFor(product.id), notes: '' },
+      ])
+    } else {
+      setSelectedProducts(selectedProducts.filter((p) => p.product_id !== product.id))
+    }
+  }
+
+  function updatePicked(productId, changes) {
+    setSelectedProducts(
+      selectedProducts.map((p) => (p.product_id === productId ? { ...p, ...changes } : p))
+    )
+  }
+
+  // Selected Products can be collapsed. It opens again to show the picks, and
+  // before submitting, so the browser can point at a quantity that needs fixing.
+  function openSelected() {
+    const section = document.getElementById('selected-products')
+    if (section) section.open = true
+    return section
+  }
 
 
   function handleSubmit(e) {
@@ -1110,6 +1188,27 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
       return
     }
 
+    // Also checked by the database when the request is saved.
+    const unavailable = selectedProducts
+      .map((item) => products.find((p) => p.id === item.product_id))
+      .find(isUnavailable)
+
+    if (unavailable) {
+      toast.error(`${unavailable.product_name} is currently unavailable and can't be requested.`)
+      return
+    }
+
+    // The minimum is checked again by the database when the request is saved.
+    const belowMinimum = selectedProducts.find(
+      (item) => item.quantity < minimumFor(item.product_id)
+    )
+
+    if (belowMinimum) {
+      const product = products.find((p) => p.id === belowMinimum.product_id)
+      toast.error(`${product?.product_name || 'A product'} has a minimum order of ${minimumFor(belowMinimum.product_id)} ${product?.unit || 'units'}.`)
+      return
+    }
+
     onSubmit({
       ...form,
       items: selectedProducts,
@@ -1119,7 +1218,7 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-xl">
 
         {/* Header */}
         <div className="border-b bg-[#F4F8F5] px-6 py-4">
@@ -1130,7 +1229,7 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-6 p-6">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-sm font-medium">
                 Preferred Shipping Date
@@ -1179,120 +1278,210 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
             </div>
 
 
-            <div className="col-span-2">
-              <label className="mb-1 block text-sm font-medium">
-                Products
-              </label>
+            <div className="sm:col-span-2">
+              <div className="mb-1 flex items-center justify-between gap-3">
+                <label className="block text-sm font-medium">
+                  Products
+                </label>
+
+                {selectedProducts.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      openSelected()?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                    }
+                    className="text-xs font-medium text-green-700 hover:underline"
+                  >
+                    {selectedProducts.length} selected · View all
+                  </button>
+                )}
+              </div>
+
+              <input
+                type="search"
+                value={productSearch}
+                onChange={(e) => setProductSearch(e.target.value)}
+                placeholder="Search by product or brand, e.g. corned beef"
+                className="mb-3 w-full rounded-lg border px-3 py-2 text-sm"
+              />
 
               <div className="space-y-3 max-h-80 overflow-y-auto">
 
-                {products.map((product) => {
-                  const selected = selectedProducts.find(
-                    (p) => p.product_id === product.id
-                  )
+                {visibleGroups.length === 0 && (
+                  <p className="py-6 text-center text-sm text-gray-500">
+                    No products match "{productSearch}".
+                  </p>
+                )}
 
-                  return (
-                    <div
-                      key={product.id}
-                      className="rounded-lg border p-3"
-                    >
-                      <div className="flex items-center gap-4">
-                        <input
-                          type="checkbox"
-                          checked={!!selected}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedProducts([
-                                ...selectedProducts,
-                                {
-                                  product_id: product.id,
-                                  quantity: 1,
-                                  notes: '',
-                                },
-                              ])
-                            } else {
-                              setSelectedProducts(
-                                selectedProducts.filter(
-                                  (p) => p.product_id !== product.id
-                                )
-                              )
-                            }
-                          }}
-                        />
+                {visibleGroups.map((group) => (
+                  <div key={group.key} className="rounded-lg border p-3">
+                    <p className="break-words font-medium">
+                      {group.family}
+                    </p>
 
-                      <div className="flex-1">
-                        <p className="font-medium">
-                          {product.product_name}
-                        </p>
+                    {group.brand && (
+                      <p className="text-sm text-gray-500">
+                        {group.brand}
+                      </p>
+                    )}
 
-                        <p className="text-sm text-gray-500">
-                          {product.brand}
-                          {product.unit && (
-                            <span className="ml-2 font-medium text-green-600">
-                              · Unit sold as per {product.unit}
-                            </span>
-                          )}
-                        </p>
-                      </div>
+                    <div className="mt-2 space-y-2">
+                      {group.items.map((product) => {
+                        const selected = selectedProducts.some(
+                          (p) => p.product_id === product.id
+                        )
+                        const unavailable = isUnavailable(product)
 
-                        {selected && (
-                          <input
-                            type="number"
-                            min={1}
-                            step={1}
-                            required
-                            value={selected.quantity}
-                            onChange={(e) =>
-                              setSelectedProducts(
-                                selectedProducts.map((p) =>
-                                  p.product_id === product.id
-                                    ? {
-                                        ...p,
-                                        // Keep a cleared field empty. Number('') is 0,
-                                        // which made typing "5" show "05".
-                                        quantity: e.target.value === '' ? '' : Number(e.target.value),
-                                      }
-                                    : p
-                                )
-                              )
-                            }
-                            className="w-20 rounded border px-2 py-1"
-                          />
-                        )}
-                      </div>
+                        // The whole row ticks the box. Quantity and notes are set
+                        // in Selected Products below the list.
+                        return (
+                          <label
+                            key={product.id}
+                            className={`flex items-center gap-3 rounded-md p-2 ${
+                              selected ? 'bg-green-50 ring-1 ring-green-200' : 'bg-gray-50'
+                            } ${unavailable ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              disabled={unavailable}
+                              title={unavailable ? 'This product is currently unavailable' : undefined}
+                              onChange={(e) => setPicked(product, e.target.checked)}
+                            />
 
-                      {selected && (
-                        <div className="mt-3">
-                          <label className="mb-1 block text-sm font-medium text-gray-700">
-                            Notes
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-gray-800">
+                                {sizeLabel(product)}
+                                {product.unit && (
+                                  <span className="ml-2 font-normal text-green-600">
+                                    · per {product.unit}
+                                  </span>
+                                )}
+                              </p>
+
+                              {unavailable ? (
+                                <p className="text-xs font-medium text-red-700">
+                                  Unavailable — can't be requested right now
+                                </p>
+                              ) : minimums[product.id] && (
+                                <p className="text-xs font-medium text-amber-700">
+                                  Minimum order: {minimums[product.id]} {product.unit || 'units'}
+                                </p>
+                              )}
+                            </div>
+
+                            {selected && (
+                              <span className="text-xs font-medium text-green-700">
+                                Added
+                              </span>
+                            )}
                           </label>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+            </div>
+
+              {/* Every selected product in one place, wherever it sits in the
+                  list, with its quantity and notes. Click the heading to
+                  collapse or expand it. */}
+              <details id="selected-products" open className="group mt-4 scroll-mt-4">
+                <summary className="mb-2 flex cursor-pointer list-none items-center justify-between gap-3 rounded-md py-1 text-sm font-medium [&::-webkit-details-marker]:hidden">
+                  <span>Selected Products ({selectedProducts.length})</span>
+
+                  <span className="flex items-center gap-1.5 text-xs font-medium text-green-700">
+                    <span className="group-open:hidden">Show</span>
+                    <span className="hidden group-open:inline">Hide</span>
+                    <FontAwesomeIcon icon={faChevronDown} className="h-3 w-3 transition-transform group-open:rotate-180"/>
+                  </span>
+                </summary>
+
+                {selectedProducts.length === 0 ? (
+                  <p className="rounded-lg border border-dashed px-3 py-4 text-center text-sm text-gray-500">
+                    Tick products above and they'll appear here.
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {selectedProducts.map((item) => {
+                      const product = products.find((p) => p.id === item.product_id) || { id: item.product_id }
+                      const name = product.family || product.product_name || 'Product'
+
+                      return (
+                        <li key={item.product_id} className="rounded-lg border p-3">
+                          <div className="flex items-start gap-3">
+                            <div className="min-w-0 flex-1">
+                              <p className="break-words text-sm font-medium text-gray-800">
+                                {name}
+                              </p>
+
+                              <p className="text-xs text-gray-500">
+                                {sizeLabel(product)}
+                                {product.brand ? ` · ${product.brand}` : ''}
+                              </p>
+
+                              {minimums[item.product_id] && (
+                                <p className="text-xs font-medium text-amber-700">
+                                  Minimum order: {minimums[item.product_id]} {product.unit || 'units'}
+                                </p>
+                              )}
+                            </div>
+
+                            <input
+                              type="number"
+                              min={minimumFor(item.product_id)}
+                              step={1}
+                              required
+                              value={item.quantity}
+                              aria-label={`Quantity of ${name}, ${sizeLabel(product)}`}
+                              onChange={(e) =>
+                                updatePicked(item.product_id, {
+                                  // Keep a cleared field empty. Number('') is 0,
+                                  // which made typing "5" show "05".
+                                  quantity: e.target.value === '' ? '' : Number(e.target.value),
+                                })
+                              }
+                              className="w-20 rounded border px-2 py-1"
+                            />
+
+                            <span className="pt-1.5 text-sm text-gray-500">
+                              {product.unit || 'units'}
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() => setPicked(product, false)}
+                              title={`Remove ${name}, ${sizeLabel(product)}`}
+                              aria-label={`Remove ${name}, ${sizeLabel(product)}`}
+                              className="rounded-md p-1.5 text-gray-400 transition hover:bg-red-50 hover:text-red-600"
+                            >
+                              <FontAwesomeIcon icon={faXmark}/>
+                            </button>
+                          </div>
 
                           <textarea
-                            rows={2}
-                            placeholder="Optional notes for this product..."
-                            value={selected.notes}
-                            onChange={(e) =>
-                              setSelectedProducts(
-                                selectedProducts.map((p) =>
-                                  p.product_id === product.id
-                                    ? {
-                                        ...p,
-                                        notes: e.target.value,
-                                      }
-                                    : p
-                                )
-                              )
-                            }
-                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
+                            rows={1}
+                            placeholder="Notes for this product (optional)"
+                            value={item.notes}
+                            onChange={(e) => updatePicked(item.product_id, { notes: e.target.value })}
+                            className="mt-2 w-full resize-y rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
                           />
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-            </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </details>
           </div>
           </div>
+
+          {shipEstimate?.estimatedShipDate && (
+            <ShipEstimateNote
+              estimate={shipEstimate}
+              lead="If the down payment were made today, orders like this would ship around"
+              preferredDate={form.preferred_ship_date}
+            />
+          )}
 
           {/* Buttons */}
           <div className="flex justify-end gap-3 pt-5">
@@ -1306,6 +1495,7 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
 
             <button
               type="submit"
+              onClick={openSelected}
               className="rounded-lg bg-[#1F3A2C] px-4 py-2 text-white transition hover:bg-[#2D5A42]"
             >
               Submit Request

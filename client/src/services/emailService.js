@@ -1,3 +1,5 @@
+import { authHeaders } from './apiAuth'
+
 const API = `${import.meta.env.VITE_SERVER_URL}/api`
 
 
@@ -12,6 +14,7 @@ async function postToServer(path, body, fallbackMessage) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...(await authHeaders()),
       },
       body: JSON.stringify(body),
     })

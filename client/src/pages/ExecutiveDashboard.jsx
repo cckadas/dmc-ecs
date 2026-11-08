@@ -9,6 +9,13 @@ import { faChartLine, faTruck, faExclamationTriangle, faCircleExclamation } from
 import CustomerOrderCard from '../components/CustomerOrderCard'
 import PurchaseOrderCard from '../components/PurchaseOrderCard'
 import ComplianceLabelCard from '../components/ComplianceLabelCard'
+import { predictOrders } from '../services/predictionService'
+import { loadSupplierScores } from '../services/supplierScoreService'
+import { MIN_DELIVERIES } from '../utils/supplierScores'
+import { OrderStepsBar } from '../components/OrderProgress'
+import PredictionNumbersPanel from '../components/PredictionNumbers'
+import SimulatedBadge from '../components/SimulatedBadge'
+import { isSimulated } from '../utils/simulated'
 
 
 export default function ExecutiveDashboard() {
@@ -276,39 +283,23 @@ export default function ExecutiveDashboard() {
 
 
       // =================================================
-      // LOAD SUPPLIER PERFORMANCE
+      // DELIVERY SCORES, WORKED OUT FROM ACTUAL DELIVERIES
+      // (utils/supplierScores.js, the same as Supplier Performance)
       // =================================================
-      const { data: performance, error: performanceError } = await supabase
-        .from('supplier_performance')
-        .select(`
-          id,
-          supplier_id,
-          total_orders,
-          on_time_deliveries,
-          late_deliveries,
-          average_lead_time_days,
-          reliability_rating,
-          notes,
-          created_at,
-          updated_at
-        `)
+      const scores = await loadSupplierScores(allSuppliers.map((supplier) => supplier.id))
 
-      if (performanceError) {
-        throw performanceError
-      }
-
-      const performanceRecords = performance || []
-
-
-      // =================================================
-      // MATCH EACH SUPPLIER WITH ITS LATEST PERFORMANCE
-      // =================================================
-      const supplierPerformanceData = allSuppliers.map((supplier) => {
-        const supplierRecords = performanceRecords.filter((record) => record.supplier_id === supplier.id)
-        const latestPerformance = supplierRecords.length > 0 ? supplierRecords[0] : null
-
-        return { supplier, performance: latestPerformance }
-      })
+      // Lowest score first, so the suppliers to watch are at the top; suppliers
+      // without enough deliveries for a score come last.
+      const supplierPerformanceData = allSuppliers
+        .map((supplier) => ({ supplier, score: scores[supplier.id] }))
+        .sort((a, b) => {
+          const scoreA = a.score?.score ?? null
+          const scoreB = b.score?.score ?? null
+          if (scoreA === null && scoreB === null) return 0
+          if (scoreA === null) return 1
+          if (scoreB === null) return -1
+          return scoreA - scoreB
+        })
 
       setSupplierPerformance(supplierPerformanceData)
     }
@@ -321,68 +312,6 @@ export default function ExecutiveDashboard() {
     finally {
       setSupplierPerformanceLoading(false)
     }
-  }
-
-
-  // =====================================================
-  // SHIPMENT PREDICTION HELPERS
-  // =====================================================
-  const ORDER_STATUS_FLOW = [
-    'pending payment',
-    'submitted',
-    'payment verified',
-    'procurement',
-    'warehouse preparation',
-    'ready for shipment',
-  ]
-
-  const normalizeStatus = (status) => {
-    return (status || '').trim().toLowerCase()
-  }
-
-  const median = (values) => {
-    if (!values.length) return null
-
-    const sorted = [...values].sort((a, b) => a - b)
-    const middle = Math.floor(sorted.length / 2)
-
-    if (sorted.length % 2 === 0) {
-      return (sorted[middle - 1] + sorted[middle]) / 2
-    }
-
-    return sorted[middle]
-  }
-
-  const percentile = (values, percentileValue) => {
-    if (!values.length) return null
-
-    const sorted = [...values].sort((a, b) => a - b)
-
-    const index = (sorted.length - 1) * percentileValue
-    const lower = Math.floor(index)
-    const upper = Math.ceil(index)
-
-    if (lower === upper) {
-      return sorted[lower]
-    }
-
-    return (
-      sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower)
-    )
-  }
-
-  const average = (values) => {
-    if (!values.length) return null
-    return values.reduce((sum, value) => sum + value, 0) / values.length
-  }
-
-  const standardDeviation = (values) => {
-    if (values.length < 2) { return 0 }
-
-    const avg = average(values)
-    const variance = values.reduce((sum, value) => { return sum + Math.pow(value - avg, 2) }, 0) / values.length
-
-    return Math.sqrt(variance)
   }
 
 
@@ -404,8 +333,9 @@ export default function ExecutiveDashboard() {
           order_number,
           quotation_number,
           status,
-          estimated_ship_date,
-          created_at
+          created_at,
+          requested_ship_date,
+          delivery_location_id
         `)
         .not('status', 'in', '(shipped,cancelled)')
 
@@ -413,293 +343,10 @@ export default function ExecutiveDashboard() {
         throw activeOrdersError
       }
 
-      // -------------------------------------------------
-      // LOAD STATUS HISTORY
-      // -------------------------------------------------
-      const { data: history, error: historyError } = await supabase
-        .from('customer_order_status_history')
-        .select(`
-          customer_order_id,
-          previous_status,
-          new_status,
-          changed_at
-        `)
-        .order('changed_at', {
-          ascending: true,
-        })
-
-      if (historyError) {
-        throw historyError
-      }
-
-      const allHistory = history || []
-      const orders = activeOrders || []
-
-
-      // =================================================
-      // BUILD HISTORICAL STAGE DURATIONS
-      //
-      // Example:
-      //
-      // procurement
-      //  → warehouse preparation
-      //
-      // gives us the amount of time spent in
-      // "procurement".
-      // =================================================
-      const stageDurations = {}
-
-      ORDER_STATUS_FLOW.forEach((status) => {
-        stageDurations[status] = []
-      })
-
-      // Group history by customer order
-      const historyByOrder = {}
-
-      allHistory.forEach((entry) => {
-        if (!historyByOrder[entry.customer_order_id]) {
-          historyByOrder[entry.customer_order_id] = []
-        }
-
-        historyByOrder[entry.customer_order_id].push(entry)
-      })
-
-      // Calculate how long each order stayed in each status
-      Object.values(historyByOrder).forEach((entries) => {
-        const sortedEntries = [...entries].sort((a, b) =>  new Date(a.changed_at).getTime() - new Date(b.changed_at).getTime())
-
-        for (let i = 0; i < sortedEntries.length - 1; i++) {
-          const current = sortedEntries[i]
-          const next = sortedEntries[i + 1]
-
-          const status = normalizeStatus(current.new_status)
-
-          if (!ORDER_STATUS_FLOW.includes(status)) {
-            continue
-          }
-
-          const startTime = new Date(current.changed_at).getTime()
-          const endTime = new Date(next.changed_at).getTime()
-
-          const durationDays = (endTime - startTime) / (1000 * 60 * 60 * 24)
-
-          // Ignore invalid durations
-          if (durationDays < 0) {
-            continue
-          }
-
-          // Ignore extremely abnormal records
-          // greater than 180 days
-          if (durationDays > 180) {
-            continue
-          }
-
-          stageDurations[status].push(durationDays)
-        }
-      })
-
-      // -------------------------------------------------
-      // BUILD STATISTICS FOR EACH STAGE
-      // -------------------------------------------------
-      const stageStatistics = {}
-
-      ORDER_STATUS_FLOW.forEach((status) => {
-        const durations = stageDurations[status] || []
-
-        const medianDuration = median(durations)
-        const p25 = percentile(durations, 0.25)
-        const p75 = percentile(durations, 0.75)
-        const avg = average(durations)
-        const deviation = standardDeviation(durations)
-
-        let confidence = 40
-
-        if (durations.length > 0) {
-
-          // More historical examples = more confidence
-          const sampleFactor = Math.min(durations.length / 20, 1)
-
-          // Less variation = more confidence
-          let consistencyFactor = 1
-
-          if (avg && avg > 0) {
-            const coefficientOfVariation = deviation / avg
-            consistencyFactor = 1 / (1 + coefficientOfVariation)
-          }
-
-          confidence = Math.round(45 + 50 * sampleFactor * consistencyFactor)
-          confidence = Math.max(40, Math.min(confidence, 95))
-        }
-
-        stageStatistics[status] = {
-          median: medianDuration,
-          p25,
-          p75,
-          average: avg,
-          standardDeviation: deviation,
-          sampleCount: durations.length,
-          confidence,
-        }
-      })
-
-      // -------------------------------------------------
-      // PREDICT EACH ACTIVE ORDER
-      // -------------------------------------------------
-      const predictions = orders.map((order) => {
-        const currentStatus = normalizeStatus(order.status)
-
-        // -----------------------------------------------
-        // READY FOR SHIPMENT
-        // -----------------------------------------------
-        if (currentStatus === 'ready for shipment') {
-          return {
-            ...order,
-            currentStatus,
-            estimatedReadyDate: new Date(),
-            confidence: 100,
-            risk: 'on track',
-            riskReason: 'Order is already ready for shipment.',
-            currentStageAge: 0,
-            expectedRemainingDays: 0,
-          }
-        }
-
-        // -----------------------------------------------
-        // UNKNOWN STATUS
-        // -----------------------------------------------
-        const currentStatusIndex = ORDER_STATUS_FLOW.indexOf(currentStatus)
-
-        if (currentStatusIndex === -1) {
-          return {
-            ...order,
-            currentStatus,
-            estimatedReadyDate: null,
-            confidence: 0,
-            risk: 'at risk',
-            riskReason: 'Current order status is not part of the prediction workflow.',
-            currentStageAge: 0,
-            expectedRemainingDays: null,
-          }
-        }
-
-        // -----------------------------------------------
-        // FIND CURRENT STATUS START TIME
-        // -----------------------------------------------
-        const orderHistory = historyByOrder[order.id] || []
-        const sortedOrderHistory = [...orderHistory].sort((a, b) => new Date(a.changed_at).getTime() - new Date(b.changed_at).getTime())
-
-        let currentStatusStartedAt = null
-
-        // Find the most recent transition into
-        // the current status.
-        for (let i = sortedOrderHistory.length - 1; i >= 0; i--) {
-          if (normalizeStatus(sortedOrderHistory[i].new_status) === currentStatus) {
-            currentStatusStartedAt = new Date( sortedOrderHistory[i].changed_at)
-            break
-          }
-        }
-
-        // If history does not contain the current
-        // status, fall back to order creation date.
-        if (!currentStatusStartedAt) {
-          currentStatusStartedAt = order.created_at ? new Date(order.created_at) : new Date()
-        }
-
-        // -----------------------------------------------
-        // CURRENT STAGE AGE
-        // -----------------------------------------------
-        const now = new Date()
-        const currentStageAge = Math.max(0, (now.getTime() - currentStatusStartedAt.getTime()) / (1000 * 60 * 60 * 24))
-
-        // -----------------------------------------------
-        // CALCULATE REMAINING TIME
-        // -----------------------------------------------
-        let remainingDays = 0
-        let stageConfidenceValues = []
-
-        for (let i = currentStatusIndex; i < ORDER_STATUS_FLOW.length; i++) {
-          const stage = ORDER_STATUS_FLOW[i]
-          const statistics = stageStatistics[stage]
-
-          if (statistics && statistics.median !== null) {
-            remainingDays += statistics.median
-
-            stageConfidenceValues.push(
-              statistics.confidence
-            )
-          }
-        }
-
-        // We already spent some time in the current
-        // status, so remove the median amount already
-        // expected to have elapsed.
-        const currentStageStatistics = stageStatistics[currentStatus]
-
-        if (currentStageStatistics && currentStageStatistics.median !== null) {
-          remainingDays -= Math.min(currentStageAge, currentStageStatistics.median)
-        }
-
-        remainingDays = Math.max(0, remainingDays)
-
-        // -----------------------------------------------
-        // ESTIMATED READY DATE
-        // -----------------------------------------------
-        const estimatedReadyDate = new Date(now.getTime() + remainingDays * 24 * 60 * 60 * 1000)
-
-        // -----------------------------------------------
-        // CONFIDENCE
-        // -----------------------------------------------
-        let confidence = 40
-
-        if (stageConfidenceValues.length > 0) {
-          confidence = Math.round( stageConfidenceValues.reduce((sum, value) => sum + value, 0) / stageConfidenceValues.length)
-        }
-
-        // -----------------------------------------------
-        // RISK DETECTION
-        // -----------------------------------------------
-        let risk = 'on track'
-        let riskReason = 'Order is progressing within historical expectations.'
-
-        // RULE 1:
-        // Expected ship date has already been
-        // exceeded by the predicted ready date.
-        if (order.estimated_ship_date) {
-          const expectedShipDate = new Date(`${order.estimated_ship_date}T23:59:59`)
-
-          if (estimatedReadyDate > expectedShipDate) {
-            risk = 'at risk'
-            riskReason = 'Predicted ready date is later than the estimated ship date.'
-          }
-        }
-
-        // RULE 2:
-        // Current stage is already taking longer
-        // than the historical 75th percentile.
-        if (currentStageStatistics && currentStageStatistics.p75 !== null && currentStageAge > currentStageStatistics.p75) {
-          risk = 'at risk'
-          riskReason = `Order has remained in ${currentStatus} longer than the historical 75th percentile.`
-        }
-
-        // RULE 3:
-        // Low confidence
-        if (confidence < 60 && risk !== 'at risk') {
-          risk = 'at risk'
-          riskReason = 'There is limited or highly variable historical data for this workflow stage.'
-        }
-
-        return {
-          ...order,
-          currentStatus,
-          estimatedReadyDate,
-          confidence,
-          risk,
-          riskReason,
-          currentStageAge,
-          expectedRemainingDays: remainingDays,
-          stageStatistics: currentStageStatistics,
-        }
-      })
+      // Each order's estimate: the time left in each step, waiting on its
+      // slowest supplier (services/predictionService.js, the same as the
+      // order progress tracker).
+      const predictions = await predictOrders(activeOrders || [])
 
       // Sort at-risk orders first
       predictions.sort((a, b) => {
@@ -711,7 +358,7 @@ export default function ExecutiveDashboard() {
           return 1
         }
 
-        return (new Date(a.estimatedReadyDate || 0) - new Date(b.estimatedReadyDate || 0))
+        return (new Date(a.estimatedShipDate || 0) - new Date(b.estimatedShipDate || 0))
       })
 
       setShipmentPredictions(predictions)
@@ -757,6 +404,14 @@ export default function ExecutiveDashboard() {
         <p className="mt-1 text-gray-500">
           Overview of order activity and operational performance.
         </p>
+      </div>
+
+
+      {/* =============================================
+          PREDICTION NUMBERS (Predictive Analytics)
+      ============================================= */}
+      <div className="mb-6">
+        <PredictionNumbersPanel />
       </div>
 
 
@@ -873,6 +528,11 @@ function PredictiveShipmentCard({ predictions, loading }) {
   const formatDate = (date) => {
     if (!date) return '—'
     return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(date))
+  }
+
+  const formatShortDate = (date) => {
+    if (!date) return '—'
+    return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(date))
   }
 
   const formatStatus = (status) => {
@@ -1002,6 +662,8 @@ function PredictiveShipmentCard({ predictions, loading }) {
                         <p className="mt-0.5 text-xs text-gray-400">
                           {formatStatus( prediction.currentStatus )}
                         </p>
+
+                        <OrderStepsBar status={prediction.currentStatus}/>
                       </div>
 
                       {/* RISK */}
@@ -1011,14 +673,30 @@ function PredictiveShipmentCard({ predictions, loading }) {
                     </div>
 
                     {/* PREDICTION DETAILS */}
-                    <div className="mt-3 grid grid-cols-2 gap-3">
+                    <div className="mt-3 grid grid-cols-3 gap-3">
                       <div>
                         <p className="text-[11px] text-gray-400">
-                          Estimated Ready
+                          {prediction.ifPaidToday ? 'Ships If Paid Today' : 'Estimated Ship Date'}
                         </p>
 
                         <p className="mt-0.5 text-sm font-medium text-gray-700">
-                          {formatDate( prediction.estimatedReadyDate )}
+                          {formatDate( prediction.estimatedShipDate )}
+                        </p>
+
+                        {prediction.shipDateRange && (
+                          <p className="text-[11px] text-gray-400">
+                            Likely {formatShortDate(prediction.shipDateRange.quick)} to {formatShortDate(prediction.shipDateRange.slow)}
+                          </p>
+                        )}
+                      </div>
+
+                      <div>
+                        <p className="text-[11px] text-gray-400">
+                          Requested
+                        </p>
+
+                        <p className="mt-0.5 text-sm font-medium text-gray-700">
+                          {formatDate( prediction.requestedShipDate )}
                         </p>
                       </div>
 
@@ -1039,10 +717,18 @@ function PredictiveShipmentCard({ predictions, loading }) {
                       </div>
                     </div>
 
-                    {/* RISK REASON */}
-                    {prediction.risk === 'at risk' && (
-                      <p className="mt-3 text-xs leading-5 text-red-500">
-                        {prediction.riskReason}
+                    {/* RISK REASONS */}
+                    {prediction.riskReasons?.length > 0 && (
+                      <ul className="mt-3 space-y-0.5 text-xs leading-5 text-red-500">
+                        {prediction.riskReasons.map((reason) => (
+                          <li key={reason}>{reason}</li>
+                        ))}
+                      </ul>
+                    )}
+
+                    {prediction.roughEstimate && (
+                      <p className="mt-2 text-[11px] text-gray-400">
+                        Rough estimate: few finished orders to learn from yet.
                       </p>
                     )}
                   </div>
@@ -1075,25 +761,14 @@ function SupplierPerformanceCard({ performance, loading }) {
   // =====================================================
   // HELPERS
   // =====================================================
-  const formatRating = (rating) => {
-    if (rating === null || rating === undefined) { return '—' }
-    return Number(rating).toFixed(1)
-  }
+  const BAR_COLORS = { good: 'bg-[#2D5A42]', warning: 'bg-amber-500', bad: 'bg-red-500' }
+  const LABEL_COLORS = { good: 'text-[#2D5A42]', warning: 'text-amber-700', bad: 'text-red-600' }
 
-  const getRatingPercentage = (rating) => {
-    if (rating === null || rating === undefined) { return 0 }
-    return Math.min(Math.max((Number(rating) / 5) * 100, 0), 100)
-  }
+  const formatPercent = (value) => (value === null || value === undefined ? '—' : `${Math.round(value * 100)}%`)
 
-  const getRatingLabel = (rating) => {
-    if (rating === null || rating === undefined) { return 'No rating' }
-
-    const value = Number(rating)
-
-    if (value >= 4.5) { return 'Excellent' }
-    if (value >= 3.5) { return 'Good' }
-    if (value >= 2.5) { return 'Fair' }
-    return 'Poor'
+  const formatDays = (value) => {
+    if (value === null || value === undefined) { return '—' }
+    return `${Number.isInteger(value) ? value : value.toFixed(1)} days`
   }
 
 
@@ -1101,8 +776,9 @@ function SupplierPerformanceCard({ performance, loading }) {
   // SUMMARY
   // =====================================================
   const totalSuppliers = performance.length
-  const suppliersWithData = performance.filter((item) => item.performance !== null).length
-  const suppliersWithoutData = totalSuppliers - suppliersWithData
+  const scoredSuppliers = performance.filter((item) => item.score?.score !== null && item.score?.score !== undefined).length
+  const unscoredSuppliers = totalSuppliers - scoredSuppliers
+  const simulated = performance.some((item) => item.score?.deliveries?.some((delivery) => isSimulated(delivery.poNumber)))
 
 
   // =====================================================
@@ -1122,7 +798,7 @@ function SupplierPerformanceCard({ performance, loading }) {
             </h2>
 
             <p className="text-xs text-gray-400">
-              Supplier performance
+              Scores from actual deliveries
             </p>
           </div>
         </div>
@@ -1154,7 +830,7 @@ function SupplierPerformanceCard({ performance, loading }) {
             </h2>
 
             <p className="text-xs text-gray-400">
-              Supplier performance
+              Scores from actual deliveries
             </p>
           </div>
         </div>
@@ -1191,10 +867,12 @@ function SupplierPerformanceCard({ performance, loading }) {
             </h2>
 
             <p className="text-xs text-gray-400">
-              Latest supplier performance
+              Scores from actual deliveries, lowest first
             </p>
           </div>
         </div>
+
+        {simulated && <SimulatedBadge label="Simulated deliveries" title="These scores come partly from made-up demo deliveries (POs numbered SIM-PO-…), not the suppliers' real performance." />}
       </div>
 
 
@@ -1214,21 +892,21 @@ function SupplierPerformanceCard({ performance, loading }) {
 
         <div className="border-l border-gray-100 px-5 py-4">
           <p className="text-xs text-gray-400">
-            Rated
+            Scored
           </p>
 
           <p className="mt-1 text-2xl font-bold text-[#2D5A42]">
-            {suppliersWithData}
+            {scoredSuppliers}
           </p>
         </div>
 
         <div className="border-l border-gray-100 px-5 py-4">
           <p className="text-xs text-gray-400">
-            Unrated
+            Not Enough Deliveries
           </p>
 
           <p className="mt-1 text-2xl font-bold text-gray-500">
-            {suppliersWithoutData}
+            {unscoredSuppliers}
           </p>
         </div>
       </div>
@@ -1239,13 +917,8 @@ function SupplierPerformanceCard({ performance, loading }) {
       ============================================= */}
       <div className="divide-y divide-gray-100">
 
-        {performance.map((item) => {
-
-          const supplier = item.supplier
-          const supplierRecord = item.performance
-
-          const rating = supplierRecord?.reliability_rating
-          const hasPerformance = supplierRecord !== null && rating !== null && rating !== undefined
+        {performance.map(({ supplier, score }) => {
+          const scored = score?.score !== null && score?.score !== undefined
 
           return (
             <div key={supplier.id} className="px-5 py-4">
@@ -1259,10 +932,10 @@ function SupplierPerformanceCard({ performance, loading }) {
                     {supplier.supplier_name || 'Unnamed Supplier'}
                   </p>
 
-                  {hasPerformance ? (
+                  {scored ? (
 
-                    <p className="mt-0.5 text-xs text-gray-400">
-                      {getRatingLabel(rating)}
+                    <p className={`mt-0.5 text-xs font-medium ${LABEL_COLORS[score.band.tone]}`}>
+                      {score.band.label}
                     </p>
 
                   ) : (
@@ -1271,7 +944,7 @@ function SupplierPerformanceCard({ performance, loading }) {
                       <FontAwesomeIcon icon={faCircleExclamation} className="h-3 w-3 text-gray-400"/>
 
                       <p className="text-xs text-gray-400">
-                        No performance data
+                        Not enough deliveries yet ({score?.count ?? 0} of {MIN_DELIVERIES})
                       </p>
                     </div>
 
@@ -1281,23 +954,19 @@ function SupplierPerformanceCard({ performance, loading }) {
                 {/* =================================
                     SCORE
                 ================================= */}
-                {hasPerformance ? (
+                {scored ? (
 
-                  <div className="flex shrink-0 items-center gap-2">
-                    <div className="text-right">
-                      <p className="text-sm font-bold text-gray-800">
-                        {formatRating(rating)}
-                        <span className="ml-0.5 text-xs font-normal text-gray-400">
-                          / 5
-                        </span>
-                      </p>
-                    </div>
-                  </div>
+                  <p className="shrink-0 text-sm font-bold text-gray-800">
+                    {score.score}
+                    <span className="ml-0.5 text-xs font-normal text-gray-400">
+                      / 100
+                    </span>
+                  </p>
 
                 ) : (
 
                   <span className="shrink-0 rounded-full bg-gray-50 px-2.5 py-1 text-[11px] font-medium text-gray-400">
-                    Unrated
+                    No score
                   </span>
 
                 )}
@@ -1307,31 +976,25 @@ function SupplierPerformanceCard({ performance, loading }) {
               {/* =================================
                   SCORE BAR
               ================================= */}
-              {hasPerformance && (
-                <div className="mt-3 flex items-center gap-3">
-                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-100">
-                    <div className="h-full rounded-full bg-[#2D5A42]" style={{ width: `${getRatingPercentage(rating)}%` }}/>
-                  </div>
-
-                  <span className="text-[11px] text-gray-400">
-                    {getRatingLabel(rating)}
-                  </span>
+              {scored && (
+                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-gray-100">
+                  <div className={`h-full rounded-full ${BAR_COLORS[score.band.tone]}`} style={{ width: `${score.score}%` }}/>
                 </div>
               )}
 
 
               {/* =================================
-                  PERFORMANCE DETAILS
+                  DELIVERY DETAILS
               ================================= */}
-              {hasPerformance && (
+              {score?.count > 0 && (
                 <div className="mt-3 grid grid-cols-3 gap-3">
                   <div>
                     <p className="text-[10px] text-gray-400">
-                      Total Orders
+                      Deliveries
                     </p>
 
                     <p className="mt-0.5 text-xs font-medium text-gray-700">
-                      {supplierRecord.total_orders ?? 0}
+                      {score.count}
                     </p>
                   </div>
 
@@ -1341,17 +1004,17 @@ function SupplierPerformanceCard({ performance, loading }) {
                     </p>
 
                     <p className="mt-0.5 text-xs font-medium text-gray-700">
-                      {supplierRecord.on_time_deliveries ?? 0}
+                      {formatPercent(score.onTimeRate)}
                     </p>
                   </div>
 
                   <div>
                     <p className="text-[10px] text-gray-400">
-                      Avg. Lead Time
+                      Usual Lead Time
                     </p>
 
                     <p className="mt-0.5 text-xs font-medium text-gray-700">
-                      {supplierRecord.average_lead_time_days !== null && supplierRecord.average_lead_time_days !== undefined ? `${supplierRecord.average_lead_time_days} days` : '—'}
+                      {formatDays(score.usualLeadDays)}
                     </p>
                   </div>
                 </div>

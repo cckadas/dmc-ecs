@@ -7,6 +7,10 @@ import customersRouter from './routes/users.js'
 import staffsRouter from './routes/staffs.js'
 import purchaseOrderEmailRouter from './routes/emails.js'
 import paymentProofRouter from './routes/payment.js'
+import chatRouter from './routes/chat.js'
+import estimatesRouter from './routes/estimates.js'
+import { requireRole } from './auth.js'
+import { startPredictionAlerts } from './alerts.js'
 
 const app = express()
 
@@ -29,11 +33,16 @@ app.use(express.json())
 
 // =============================================
 // ROUTES
+//
+// Each lists who can call it. These roles match the pages that use each route
+// (client/src/components/layout/navigation.js).
 // =============================================
-app.use('/api/users', customersRouter)
-app.use('/api/staffs', staffsRouter)
-app.use('/api/send-email', purchaseOrderEmailRouter)
-app.use('/api/send-payment-proof', paymentProofRouter)
+app.use('/api/users', requireRole('admin', 'sales'), customersRouter)
+app.use('/api/staffs', requireRole('admin'), staffsRouter)
+app.use('/api/send-email', requireRole('admin', 'procurement'), purchaseOrderEmailRouter)
+app.use('/api/send-payment-proof', requireRole('admin', 'procurement'), paymentProofRouter)
+app.use('/api/customer/chat', requireRole('customer'), chatRouter)
+app.use('/api/customer/estimates', requireRole('customer'), estimatesRouter)
 
 
 // =============================================
@@ -52,4 +61,7 @@ app.get('/api/health', (req, res) => {
 // =============================================
 app.listen(PORT, () => {
   console.log(`DMC ECS server running on http://localhost:${PORT}`)
+
+  // Hourly staff alerts about late orders and overdue deliveries (alerts.js).
+  startPredictionAlerts()
 })

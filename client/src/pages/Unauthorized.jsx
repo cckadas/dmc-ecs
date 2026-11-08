@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import { useAuth } from '../context/AuthContext'
+import { homePath } from '../components/layout/navigation'
+
 import logo from '../assets/logo.png'
 import bg1 from '../assets/bg_1.jpg'
 import bg2 from '../assets/bg_2.jpg'
@@ -9,6 +12,10 @@ import bg3 from '../assets/bg_3.jpg'
 
 export default function UnauthorizedPage() {
   const navigate = useNavigate()
+  const { profile } = useAuth()
+
+  // A signed-in user is sent back to their own dashboard, not the login page.
+  const home = profile ? homePath(profile.role) : null
 
   const backgrounds = [bg1, bg2, bg3]
   const [currentBg] = useState(0)
@@ -61,18 +68,24 @@ export default function UnauthorizedPage() {
           <p className="mt-5 text-sm leading-7 text-gray-600">
             You don't have permission to access this page.
             <br />
-            Please sign in using an authorized account to continue using the
-            <span className="font-semibold text-green-700">
-              {" "}DMC Export Consolidation System
-            </span>.
+            {home ? (
+              <>Your account can only open the pages in its own menu.</>
+            ) : (
+              <>
+                Please sign in using an authorized account to continue using the
+                <span className="font-semibold text-green-700">
+                  {" "}DMC Export Consolidation System
+                </span>.
+              </>
+            )}
           </p>
         </div>
 
         <button
-          onClick={() => navigate(`/`)}
+          onClick={() => navigate(home || '/')}
           className="w-full rounded-lg bg-green-700 py-3 font-semibold text-white transition hover:bg-green-800 disabled:cursor-not-allowed disabled:bg-gray-400"
         >
-          Return to Login Page
+          {home ? 'Back to My Dashboard' : 'Return to Login Page'}
         </button>
 
       </div>

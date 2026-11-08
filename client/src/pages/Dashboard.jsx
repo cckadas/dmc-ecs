@@ -71,7 +71,7 @@ export default function DashboardPage() {
   // LOAD CUSTOMER ORDER SUMMARY
   // =====================================================
   async function loadCustomerOrderSummary() {
-    if (!profile?.id || role !== 'customer' || role !== 'sales') {
+    if (!profile?.id || (role !== 'customer' && role !== 'sales')) {
       setCustomerOrderLoading(false)
       return
     }
@@ -276,9 +276,11 @@ export default function DashboardPage() {
   // =====================================================
   // INITIAL LOAD
   // =====================================================
+  // Each card loads only for the roles that see it. One decision per card, so a
+  // later check can't switch a card's loading state off while it's still loading.
   useEffect(() => {
 
-    if (role === 'customer') {
+    if (role === 'customer' || role === 'sales') {
       loadCustomerOrderSummary()
     } else {
       setCustomerOrderLoading(false)
@@ -290,20 +292,6 @@ export default function DashboardPage() {
     } else {
       setPurchaseOrderLoading(false)
       setComplianceLabelLoading(false)
-    }
-
-    if (role === 'sales') {
-      loadCustomerOrderSummary()
-      loadComplianceLabelSummary()
-    } else {
-      setCustomerOrderLoading(false)
-      setComplianceLabelLoading(false)
-    }
-
-    if (role === 'procurement') {
-      loadPurchaseOrderSummary()
-    } else {
-      setPurchaseOrderLoading(false)
     }
 
   }, [role, profile?.id ])
@@ -389,14 +377,14 @@ export default function DashboardPage() {
         },
         {
           label: 'Compliance Labels',
-          path: 'compliance-labels',
+          path: 'compliance-label-warehouse',
           icon: faTags,
           description: 'Manage product compliance labels.',
           roles: ['admin', 'warehouse'],
         },
         {
           label: 'Staging',
-          path: 'staging',
+          path: 'staging-tracker',
           icon: faBoxesStacked,
           description: 'Manage products prepared for shipment.',
           roles: ['admin', 'warehouse'],
@@ -494,7 +482,7 @@ export default function DashboardPage() {
       items: [
         {
           label: 'Compliance Labels',
-          path: 'compliance-labels',
+          path: 'compliance-label-customer',
           icon: faTags,
           description: 'View and manage your compliance labels.',
           roles: ['customer'],

@@ -9,6 +9,7 @@ import { faTrash, faPen, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from '../context/ToastContext'
 
 import IconButton from '../components/IconButton'
+import TableScroll from '../components/TableScroll'
 
 
 export default function CustomersPage() {
@@ -281,7 +282,7 @@ export default function CustomersPage() {
 
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+      <TableScroll className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
 
           <thead className="bg-[#F4F8F5]">
@@ -357,7 +358,7 @@ export default function CustomersPage() {
             )}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
 
       {/* ADD CUSTOMER MODAL */}
@@ -429,7 +430,7 @@ function AddCustomerModal({ onClose, onSubmit }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-xl">
 
         {/* HEADER */}
         <div className="flex items-center justify-between border-b bg-[#F4F8F5] px-6 py-4">
@@ -632,7 +633,7 @@ function EditCustomerModal({ customer, onClose, onSubmit }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-xl">
 
         {/* Header */}
         <div className="flex items-center justify-between border-b bg-[#F4F8F5] px-6 py-4">

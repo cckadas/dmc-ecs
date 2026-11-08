@@ -7,6 +7,7 @@ import { faFileInvoice } from '@fortawesome/free-solid-svg-icons'
 
 import StatusBadge from '../components/StatusBadge'
 import IconButton from '../components/IconButton'
+import TableScroll from '../components/TableScroll'
 
 
 export default function BillingsPage() {
@@ -126,14 +127,15 @@ export default function BillingsPage() {
   function getPaymentStatus(order) {
 
     const total = Number(order.total_amount || 0)
-    const downPayment = Number(order.down_payment_amount || 0)
     const settled = Number(order.settled_amount || 0)
 
     if (total > 0 && settled >= total) {
       return 'fully paid'
     }
 
-    if (downPayment > 0 || settled > 0) {
+    // down_payment_amount is what is required, not what was paid, so only
+    // the settled amount says whether a down payment came in.
+    if (settled > 0) {
       return 'down payment received'
     }
 
@@ -213,8 +215,8 @@ export default function BillingsPage() {
       {/* =================================================
           TABLE
       ================================================= */}
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-        <div className="overflow-x-auto">
+      <div className="overflow-clip rounded-xl border border-gray-200 bg-white shadow-sm">
+        <TableScroll>
           <table className="min-w-full">
 
             <thead className="bg-[#F4F8F5]">
@@ -365,7 +367,7 @@ export default function BillingsPage() {
             </tbody>
 
           </table>
-        </div>
+        </TableScroll>
       </div>
     </div>
   )

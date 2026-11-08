@@ -5,11 +5,72 @@ import { supabase } from '../supabase'
 import { useToast } from '../context/ToastContext'
 import { createNotification } from '../services/notificationService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBoxOpen, faPaperPlane } from '@fortawesome/free-solid-svg-icons'
+import { faBoxOpen, faPaperPlane, faTruckRampBox } from '@fortawesome/free-solid-svg-icons'
 import { generatePackingList } from '../services/packingListService'
 import { generateCertificateOfShipment, generateCertificateOfClearance } from '../services/certificateService'
 
 import StatusBadge from '../components/StatusBadge'
+import TableScroll from '../components/TableScroll'
+
+
+const formatLoadedAt = (value) =>
+  new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+
+
+// The racks holding each order's goods, by order and product:
+// { 'orderId:productId': ['RACK-001', ...] }. Staff see where to load from,
+// and which racks loading frees.
+async function loadRacksByProduct(customerOrderIds) {
+  const { data: purchaseOrders, error: poError } = await supabase
+    .from('purchase_orders')
+    .select('id, customer_order_id')
+    .in('customer_order_id', customerOrderIds)
+
+  if (poError) {
+    throw poError
+  }
+
+  const orderOfPo = Object.fromEntries((purchaseOrders || []).map((po) => [po.id, po.customer_order_id]))
+  const poIds = Object.keys(orderOfPo)
+  if (!poIds.length) return {}
+
+  const { data: lines, error: linesError } = await supabase
+    .from('purchase_order_items')
+    .select('id, purchase_order_id, product_id, warehouse_rack_id')
+    .in('purchase_order_id', poIds)
+
+  if (linesError) {
+    throw linesError
+  }
+
+  const lineIds = (lines || []).map((line) => line.id)
+  const [links, racks] = await Promise.all([
+    lineIds.length
+      ? supabase.from('purchase_order_item_racks').select('purchase_order_item_id, warehouse_rack_id').in('purchase_order_item_id', lineIds)
+      : Promise.resolve({ data: [] }),
+    supabase.from('warehouse_racks').select('id, rack_id'),
+  ])
+
+  if (links.error) throw links.error
+  if (racks.error) throw racks.error
+
+  const rackName = Object.fromEntries((racks.data || []).map((rack) => [rack.id, rack.rack_id]))
+  const lineById = Object.fromEntries((lines || []).map((line) => [line.id, line]))
+  const byProduct = {}
+  const add = (line, rackId) => {
+    const key = `${orderOfPo[line.purchase_order_id]}:${line.product_id}`
+    byProduct[key] = [...new Set([...(byProduct[key] || []), rackName[rackId] || 'a rack'])]
+  }
+
+  for (const link of links.data || []) {
+    if (lineById[link.purchase_order_item_id]) add(lineById[link.purchase_order_item_id], link.warehouse_rack_id)
+  }
+  for (const line of lines || []) {
+    if (line.warehouse_rack_id) add(line, line.warehouse_rack_id)
+  }
+
+  return byProduct
+}
 
 
 export default function StagingTrackerPage() {
@@ -75,6 +136,7 @@ export default function StagingTrackerPage() {
           quantity,
           unit_price,
           subtotal,
+          loaded_at,
 
           products (
             id,
@@ -136,6 +198,12 @@ export default function StagingTrackerPage() {
             {}
           )
       }
+
+
+      // =================================================
+      // WHERE EACH PRODUCT'S GOODS ARE
+      // =================================================
+      const racksByProduct = await loadRacksByProduct(customerOrderIds)
 
 
       // =================================================
@@ -272,7 +340,8 @@ export default function StagingTrackerPage() {
         // =================================================
         groupedOrders[customerOrder.id].items.push({
           ...item,
-          compliance_label_exchange: exchange
+          compliance_label_exchange: exchange,
+          racks: racksByProduct[`${item.customer_order_id}:${item.product_id}`] || [],
         })
       })
 
@@ -320,6 +389,50 @@ export default function StagingTrackerPage() {
   // =====================================================
   // MARK CUSTOMER ORDER AS SHIPPED
   // =====================================================
+  // =====================================================
+  // MARK GOODS AS LOADED INTO THE CONTAINER
+  // =====================================================
+  // Loading frees the racks those goods were in, for the next delivery,
+  // without waiting for the order to ship. It only frees space: shipping
+  // works as before (db/migrations/022).
+  async function loadItems(order, items) {
+    const toLoad = items.filter((item) => !item.loaded_at)
+    if (!order?.id || !toLoad.length) return
+
+    const racks = [...new Set(toLoad.flatMap((item) => item.racks || []))]
+    const what = toLoad.length === 1 ? (toLoad[0].products?.product_name || 'this product') : `${toLoad.length} products`
+    const freeing = racks.length ? ` This frees ${racks.join(', ')} for new deliveries.` : ''
+
+    if (!window.confirm(`Mark ${what} as loaded into the container?${freeing}`)) return
+
+    setLoading(true)
+
+    try {
+      const { data, error } = await supabase.rpc('load_order_items', {
+        p_customer_order_id: order.id,
+        p_item_ids: toLoad.map((item) => item.id),
+      })
+
+      if (error) {
+        throw error
+      }
+
+      const freed = data?.[0]?.racks_freed ?? 0
+      toast.success(`Marked as loaded.${freed ? ` ${freed} ${freed === 1 ? 'rack' : 'racks'} freed.` : ''}`)
+      await loadCustomerOrders()
+    }
+
+    catch (error) {
+      console.error('Failed to mark goods as loaded:', error)
+      toast.error(error.message || 'Failed to mark goods as loaded.')
+    }
+
+    finally {
+      setLoading(false)
+    }
+  }
+
+
   async function markOrderAsShipped(order) {
 
     if (!order?.id) {
@@ -330,6 +443,21 @@ export default function StagingTrackerPage() {
     setLoading(true)
 
     try {
+
+      // =================================================
+      // CHECK IT CAN SHIP, BEFORE MAKING ITS DOCUMENTS
+      // =================================================
+      // Every item's labels applied, and not shipped already, checked now
+      // rather than when the page loaded (db/migrations/021).
+      const { error: checkError } = await supabase.rpc('ship_customer_order', {
+        p_customer_order_id: order.id,
+        p_check_only: true,
+      })
+
+      if (checkError) {
+        throw checkError
+      }
+
 
       // =================================================
       // GET PURCHASE ORDERS FOR CUSTOMER ORDER
@@ -356,9 +484,8 @@ export default function StagingTrackerPage() {
 
 
       // =================================================
-      // GET PURCHASE ORDER ITEMS + THEIR RACKS
+      // GET PURCHASE ORDER ITEMS
       // =================================================
-      let rackIds = []
       let purchaseOrderItems = []
 
       if (purchaseOrderIds.length > 0) {
@@ -383,14 +510,6 @@ export default function StagingTrackerPage() {
         }
 
         purchaseOrderItems = items || []
-
-        rackIds = [
-          ...new Set(
-            purchaseOrderItems
-              .map((item) => item.warehouse_rack_id)
-              .filter(Boolean)
-          )
-        ]
       }
 
 
@@ -401,10 +520,10 @@ export default function StagingTrackerPage() {
         throw new Error('No purchase order items found for packing list.')
       }
 
-      // Get customer order number
+      // Get customer order number and current status
       const { data: packingOrder, error: packingOrderError } = await supabase
         .from('customer_orders')
-        .select('id, order_number')
+        .select('id, order_number, status')
         .eq('id', order.id)
         .single()
 
@@ -535,126 +654,43 @@ export default function StagingTrackerPage() {
       }
 
       // =================================================
-      // REMOVE ITEMS FROM WAREHOUSE RACKS
+      // SHIP IT, IN ONE STEP
       // =================================================
-      if (purchaseOrderIds.length > 0) {
-
-        const { error: rackItemError } = await supabase
-          .from('purchase_order_items')
-          .update({
-            warehouse_rack_id: null,
-            updated_at: new Date().toISOString()
-          })
-          .in('purchase_order_id', purchaseOrderIds)
-
-        if (rackItemError) {
-          throw rackItemError
-        }
-      }
-
-
-      // =================================================
-      // MARK RACKS AS AVAILABLE
-      // =================================================
-      if (rackIds.length > 0) {
-        const { error: rackError } = await supabase
-          .from('warehouse_racks')
-          .update({
-            is_occupied: false,
-            updated_at: new Date().toISOString()
-          })
-          .in('id', rackIds)
-
-        if (rackError) {
-          throw rackError
-        }
-      }
-
-
-      // =================================================
-      // UPDATE CUSTOMER ORDER
-      // =================================================
-      const estimatedShipDate = new Date()
-      estimatedShipDate.setDate(estimatedShipDate.getDate() + 14 )
-
-      // Format as YYYY-MM-DD for PostgreSQL `date`
-      const formattedShipDate = estimatedShipDate
-        .toISOString()
-        .split('T')[0]
-
-      const { error: customerOrderError } =
-        await supabase
-          .from('customer_orders')
-          .update({
-            status: 'shipped',
-            estimated_ship_date: formattedShipDate,
-          })
-          .eq('id', order.id)
-
-      if (customerOrderError) {
-        throw customerOrderError
-      }
-
-      const { error: historyError } = await supabase
-        .from('customer_order_status_history')
-        .insert({
-          customer_order_id: order.id,
-          previous_status: 'warehouse preparation',
-          new_status: 'shipped',
-          changed_at: new Date().toISOString()
-        })
-
-      if (historyError) {
-        throw historyError
-      }
-
-
-
-
-
-
-
-
-
-
-
-
-      // =============================================
-      // GET CUSTOMER ID
-      // =============================================
-      const { data: customerOrder, error: customerError } = await supabase
-        .from('customer_orders')
-        .select('customer_id, order_number')
-        .eq('id', order.id)
-        .single()
-
-      if (customerError) {
-        throw customerError
-      }
-
-      if (!customerOrder?.customer_id) {
-        throw new Error('Customer ID not found for this order.')
-      }
-
-
-      // =============================================
-      // CREATE NOTIFICATION
-      // =============================================
-      await createNotification({
-        userId: customerOrder.customer_id,
-        role: 'customer',
-        title: `${customerOrder.order_number} is shipped`,
-        message: `Your order ${customerOrder.order_number} status is now "Shipped". Please check your order details for more information.`,
-        type: 'info',
-        relatedCustomerOrderId: order.id,
-        link: '/my-orders',
+      // The database checks again, then frees the racks, marks the order
+      // shipped today (its real ship date, which the estimates learn from) and
+      // records it, all or nothing. A second click is refused, so nothing is
+      // done twice (db/migrations/021).
+      const { data: shippedRows, error: shipError } = await supabase.rpc('ship_customer_order', {
+        p_customer_order_id: order.id,
       })
 
+      if (shipError) {
+        throw shipError
+      }
 
-      // =================================================
-      // SUCCESS
-      // =================================================
+      const shipped = shippedRows?.[0] || {}
       toast.success('Customer order marked as shipped successfully.')
+
+
+      // =============================================
+      // TELL THE CUSTOMER
+      // =============================================
+      // It's shipped either way: a failed notification is reported, not retried.
+      try {
+        await createNotification({
+          userId: shipped.customer_id,
+          role: 'customer',
+          title: `${shipped.order_number} is shipped`,
+          message: `Your order ${shipped.order_number} status is now "Shipped". Please check your order details for more information.`,
+          type: 'info',
+          relatedCustomerOrderId: order.id,
+          link: '/my-orders',
+        })
+      } catch (notifyError) {
+        console.error('Failed to notify the customer:', notifyError)
+        toast.error('Shipped, but the customer could not be notified.')
+      }
+
       await loadCustomerOrders()
     }
 
@@ -732,7 +768,7 @@ export default function StagingTrackerPage() {
               const items = orderGroup.items || []
 
               return (
-                <div key={customerOrder.id} className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+                <div key={customerOrder.id} className="overflow-clip rounded-xl border border-gray-200 bg-white shadow-sm">
 
                   {/* =================================================
                       CUSTOMER ORDER HEADER
@@ -787,7 +823,7 @@ export default function StagingTrackerPage() {
 
 
                       {/* ---------------------------------------------
-                          SUMMARY + READY FOR SHIPMENT
+                          SUMMARY + MARK AS SHIPPED
                       --------------------------------------------- */}
                       <div className="flex items-center gap-8">
 
@@ -806,16 +842,29 @@ export default function StagingTrackerPage() {
                         </div>
 
 
-                        {/* READY FOR SHIPMENT BUTTON */}
+                        {/* LOAD ALL BUTTON */}
                         <button
                           type="button"
-                          disabled={items.length < Number(orderGroup.total_items)}
+                          disabled={loading || items.every((item) => item.loaded_at)}
+                          onClick={() => loadItems(customerOrder, items)}
+                          className="inline-flex items-center gap-2 rounded-lg border border-[#2D5A42] bg-white px-4 py-2 text-sm font-medium text-[#2D5A42] transition hover:bg-[#F4F8F5] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <FontAwesomeIcon icon={faTruckRampBox} className="h-4 w-4"/>
+
+                          {items.every((item) => item.loaded_at) ? 'All loaded' : 'Load all'}
+                        </button>
+
+
+                        {/* MARK AS SHIPPED BUTTON */}
+                        <button
+                          type="button"
+                          disabled={loading || items.length < Number(orderGroup.total_items)}
                           onClick={() => markOrderAsShipped(customerOrder)}
                           className="inline-flex items-center gap-2 rounded-lg bg-[#2D5A42] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#234A35] disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           <FontAwesomeIcon icon={faPaperPlane} className="h-4 w-4"/>
 
-                          Ready for Shipment
+                          Mark as Shipped
                         </button>
 
                       </div>
@@ -826,7 +875,7 @@ export default function StagingTrackerPage() {
                   {/* =================================================
                       ITEMS TABLE
                   ================================================= */}
-                  <div className="overflow-x-auto">
+                  <TableScroll>
                     <table className="min-w-full">
 
                       <thead className="bg-white">
@@ -845,6 +894,14 @@ export default function StagingTrackerPage() {
 
                           <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                             Compliance Status
+                          </th>
+
+                          <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                            Racks
+                          </th>
+
+                          <th className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                            Container
                           </th>
                         </tr>
                       </thead>
@@ -892,6 +949,33 @@ export default function StagingTrackerPage() {
                                 <td className="px-6 py-4">
                                   <StatusBadge status={exchange?.status}/>
                                 </td>
+
+                                {/* RACKS: where to load from, until loading frees them */}
+                                <td className="px-6 py-4 text-sm text-gray-700">
+                                  {item.loaded_at
+                                    ? <span className="text-gray-400">Freed</span>
+                                    : item.racks?.length
+                                      ? item.racks.join(', ')
+                                      : <span className="text-gray-400">-</span>}
+                                </td>
+
+                                {/* CONTAINER */}
+                                <td className="px-6 py-4">
+                                  {item.loaded_at ? (
+                                    <span className="text-sm font-medium text-green-700">
+                                      Loaded {formatLoadedAt(item.loaded_at)}
+                                    </span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      disabled={loading}
+                                      onClick={() => loadItems(customerOrder, [item])}
+                                      className="rounded-md border border-[#2D5A42] px-3 py-1 text-xs font-medium text-[#2D5A42] transition hover:bg-[#F4F8F5] disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                      Mark loaded
+                                    </button>
+                                  )}
+                                </td>
                               </tr>
                             )
                           }
@@ -899,7 +983,7 @@ export default function StagingTrackerPage() {
                       </tbody>
 
                     </table>
-                  </div>
+                  </TableScroll>
                 </div>
               )
             }
