@@ -11,7 +11,7 @@ import RoleActivityBadge from '../components/RoleActivityBadge'
 import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
 import { getMinimumOrderQuantities, getProductManufacturers } from '../services/pricingService'
-import { groupByFamily } from '../utils/productGroups'
+import { bySize, groupByFamily, sizeNames } from '../utils/productGroups'
 
 
 // =============================================
@@ -77,6 +77,29 @@ export default function ProductCatalogPage() {
   const [brands, setBrands] = useState([])
   const [availabilities, setAvailabilities] = useState([])
   const [minimums, setMinimums] = useState({})
+  const [sizeNameOf, setSizeNameOf] = useState({})
+
+
+  // =============================================
+  // SIZE NAMES
+  // =============================================
+  // Small / Medium / Large for each size of a family, worked out from all of
+  // the family's sizes, so a search or filter that hides one size doesn't
+  // change what the others are called.
+  async function loadSizeNames(shownProducts) {
+    const filtered = Boolean(search || category || brand || availability)
+    let everySize = shownProducts
+
+    if (filtered) {
+      const { data, error } = await supabase
+        .from('products')
+        .select('id, product_name, sku, family, pack_size, cbm, gross_weight_kg')
+
+      if (!error && data) everySize = data
+    }
+
+    setSizeNameOf(sizeNames(everySize))
+  }
 
 
   // =============================================
@@ -147,6 +170,8 @@ export default function ProductCatalogPage() {
 
       return nameA.localeCompare(nameB)
     })
+
+    await loadSizeNames(sortedProducts)
 
     // Customers can't read the suppliers table, so their catalog gets
     // manufacturer names separately.
@@ -555,7 +580,7 @@ export default function ProductCatalogPage() {
           <tbody>
             {products.length > 0 ? (
               groupByFamily(products).flatMap((group) =>
-                group.items.map((product, index) => {
+                [...group.items].sort(bySize).map((product, index) => {
 
                 const imageUrl = getImageUrl(group.items[0].image_path)
                 const first = index === 0
@@ -581,37 +606,36 @@ export default function ProductCatalogPage() {
                     )}
 
 
-                    {/* SKU — with its own name when the family has more than one size */}
+                    {/* SKU */}
                     <td className="px-5 py-3">
-                      <p>{product.sku}</p>
-                      {span > 1 && product.product_name && (
-                        <p className="mt-0.5 max-w-[16rem] text-xs text-gray-500">
-                          {product.product_name}
-                        </p>
-                      )}
+                      {product.sku}
                     </td>
 
 
-                    {/* PRODUCT */}
-                    {first && (
-                      <td rowSpan={span} className="px-5 py-3 align-top">
-                        <p className="font-medium text-gray-800">
-                          {group.family}
-                        </p>
-
-                        {product.brand && (
-                          <p className="text-sm text-gray-500">
-                            {product.brand}
+                    {/* PRODUCT — the family's name on its first size, and a
+                        size name (Small, Medium, Large) on every size of a
+                        family with more than one, so no size row is blank */}
+                    <td className="px-5 py-3">
+                      {first && (
+                        <>
+                          <p className="font-medium text-gray-800">
+                            {group.family}
                           </p>
-                        )}
 
-                        {span > 1 && (
-                          <p className="mt-1 text-xs text-gray-400">
-                            {span} sizes
-                          </p>
-                        )}
-                      </td>
-                    )}
+                          {(product.brand || span > 1) && (
+                            <p className="text-sm text-gray-500">
+                              {[product.brand, span > 1 && `${span} sizes`].filter(Boolean).join(' · ')}
+                            </p>
+                          )}
+                        </>
+                      )}
+
+                      {sizeNameOf[product.id] && (
+                        <span className={`inline-block rounded-full border border-gray-300 bg-white px-2.5 py-0.5 text-xs font-medium text-gray-700 ${first ? 'mt-1.5' : ''}`}>
+                          {sizeNameOf[product.id]}
+                        </span>
+                      )}
+                    </td>
 
                     {/* MANUFACTURER / SUPPLIER — every one the family's sizes come from */}
                     {first && (
