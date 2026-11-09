@@ -581,9 +581,14 @@ export default function ProductCatalogPage() {
                     )}
 
 
-                    {/* SKU */}
+                    {/* SKU — with its own name when the family has more than one size */}
                     <td className="px-5 py-3">
-                      {product.sku}
+                      <p>{product.sku}</p>
+                      {span > 1 && product.product_name && (
+                        <p className="mt-0.5 max-w-[16rem] text-xs text-gray-500">
+                          {product.product_name}
+                        </p>
+                      )}
                     </td>
 
 
