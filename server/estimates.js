@@ -4,8 +4,8 @@ import { supabaseAdmin } from './supabaseAdmin.js'
 // =============================================================================
 // Customer estimates
 //
-// A customer can't read DMC's starting values, purchase orders or supplier
-// deliveries, so their estimates are worked out here, with the same loader and
+// A customer can't read purchase orders or supplier deliveries, so their
+// estimates are worked out here, with the same loader and
 // maths as the staff pages (client/src/utils/estimateLoader.js), and only the
 // dates and plain words go back (forCustomer). Used by routes/estimates.js and
 // the chatbot. The prediction alerts (alerts.js) use the same.

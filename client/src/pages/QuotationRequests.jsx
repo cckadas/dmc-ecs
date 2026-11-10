@@ -620,7 +620,7 @@ function ShipEstimateNote({ estimate, lead, preferredDate }) {
       )}
 
       <p className="mt-1 text-xs text-gray-500">
-        An estimate from past orders and DMC's usual times, not a guaranteed date.
+        An estimate from past orders, not a guaranteed date.
       </p>
     </div>
   )

@@ -10,13 +10,13 @@
 // =============================================================================
 
 import { buildStageStatistics, lateChanceOf, predictOrder, supplierArrivals } from './predictions.js'
-import { estimateContext, startingDaysFrom, supplierHistories } from './estimateInputs.js'
+import { estimateContext, supplierHistories, supplierPool } from './estimateInputs.js'
 import { buildDeliveries, manilaDate } from './supplierScores.js'
 import { MODEL_KEYS, isOutdatedModel, modelPredictor } from './predictionModel.js'
 import { labelingKindOf, labelingKinds, productsOrderedBy } from './labelingKind.js'
 import { planContainer } from './containers.js'
 
-// Rows, or none when the table can't be read (no access, or 017 not run yet).
+// Rows, or none when the table can't be read (no access, or its script not run yet).
 const rowsOf = (result) => (result?.error ? [] : result?.data || [])
 
 
@@ -63,24 +63,6 @@ export async function loadAllDeliveries(client, supplierId) {
 }
 
 
-// DMC's starting values, entered on Prediction settings (db/migrations/017).
-export async function loadStartingValues(client) {
-  const [settings, suppliers, countries, busyMonths] = await Promise.all([
-    client.from('prediction_settings').select('key, days, is_placeholder'),
-    client.from('prediction_suppliers').select('supplier_id, usual_lead_days, late_frequency, usual_late_days'),
-    client.from('prediction_countries').select('country, sailing_days, is_placeholder'),
-    client.from('prediction_busy_months').select('month, extra_days'),
-  ])
-
-  return {
-    settings: rowsOf(settings),
-    startingSuppliers: Object.fromEntries(rowsOf(suppliers).map((row) => [row.supplier_id, row])),
-    countries: rowsOf(countries),
-    busyMonths: rowsOf(busyMonths),
-  }
-}
-
-
 // Every supplier delivery not in yet (one supplier's part of one PO), with when
 // it should arrive: its promised date moved by how late that supplier usually
 // is, as in the estimates (with the model where it's in use). Also the cases
@@ -88,8 +70,7 @@ export async function loadStartingValues(client) {
 // at least half the time).
 // Soonest first. For Receiving, the Purchase Orders list and the overdue alerts.
 export async function loadOpenDeliveries(client, { now = Date.now() } = {}) {
-  const [starting, lines, suppliers, models] = await Promise.all([
-    loadStartingValues(client),
+  const [lines, suppliers, models] = await Promise.all([
     allRows(() => client
       .from('purchase_order_items')
       .select('purchase_order_id, supplier_id, ordered_quantity, received_quantity, fully_received_at, products ( cbm ), purchase_orders ( id, po_number, customer_order_id, created_at, expected_delivery_date )')
@@ -98,9 +79,11 @@ export async function loadOpenDeliveries(client, { now = Date.now() } = {}) {
     loadModels(client),
   ])
 
-  // The same lines give each supplier's finished deliveries, for its lateness.
-  const histories = supplierHistories(buildDeliveries(lines))
-  const startingDays = startingDaysFrom(starting.settings)
+  // The same lines give each supplier's finished deliveries, for its lateness,
+  // and every supplier's together, which one with few deliveries leans on.
+  const finished = buildDeliveries(lines)
+  const histories = supplierHistories(finished)
+  const pool = supplierPool(finished)
   const names = Object.fromEntries(rowsOf(suppliers).map((supplier) => [supplier.id, supplier.supplier_name]))
   const fromNow = { typical: now, quick: now, slow: now }
 
@@ -129,7 +112,6 @@ export async function loadOpenDeliveries(client, { now = Date.now() } = {}) {
   }
 
   return [...open.values()].map(({ order, supplierId, cases, volume }) => {
-    const theirs = starting.startingSuppliers[supplierId]
     const whole = asked.get(`${order.id}:${supplierId}`) || { cases, products: 1 }
     const supplier = {
       supplierId,
@@ -139,9 +121,8 @@ export async function loadOpenDeliveries(client, { now = Date.now() } = {}) {
       cases: whole.cases,
       products: whole.products,
       history: histories[supplierId] || { leadDays: [], lateness: [] },
-      starting: theirs ? { usualLeadDays: theirs.usual_lead_days, lateFrequency: theirs.late_frequency, usualLateDays: theirs.usual_late_days } : null,
     }
-    const { ends, overdue, usedModel } = supplierArrivals([supplier], fromNow, now, startingDays, () => 0, models.supplier)
+    const { ends, overdue, usedModel } = supplierArrivals([supplier], fromNow, now, pool, null, models.supplier)
     const expectedDay = manilaDate(ends.typical)
     const promisedDay = String(order.expected_delivery_date).slice(0, 10)
 
@@ -156,8 +137,8 @@ export async function loadOpenDeliveries(client, { now = Date.now() } = {}) {
       expectedDay,
       overdueDays: overdue[0]?.days ?? 0,
       // Not overdue yet, but late at least half the time: by the model's middle
-      // case where it's in use, else by how often this supplier is late.
-      likelyLate: !overdue.length && (usedModel ? expectedDay > promisedDay : lateChanceOf(supplier, startingDays) >= 0.5),
+      // case where it's in use, else by how often this supplier was late.
+      likelyLate: !overdue.length && (usedModel ? expectedDay > promisedDay : lateChanceOf(supplier, pool) >= 0.5),
       cases,
       volume,
     }
@@ -224,7 +205,8 @@ async function plannedContainer(client, items, products) {
 }
 
 
-// The supplier names and every supplier's past deliveries.
+// The supplier names and every supplier's past deliveries: each supplier's own,
+// and all of them together.
 async function loadSupplierRecords(client) {
   const [suppliers, deliveries] = await Promise.all([
     client.from('suppliers').select('id, supplier_name'),
@@ -234,6 +216,7 @@ async function loadSupplierRecords(client) {
   return {
     names: Object.fromEntries(rowsOf(suppliers).map((supplier) => [supplier.id, supplier.supplier_name])),
     histories: supplierHistories(deliveries),
+    pool: supplierPool(deliveries),
   }
 }
 
@@ -267,8 +250,7 @@ async function loadOrderDetails(client, orders) {
 // customer's date and country. history = every status change: the browser reads
 // it through status_history_for_estimates, the server straight from the table.
 export async function estimateOrders(client, orders, history) {
-  const [starting, records, details, models, labeling] = await Promise.all([
-    loadStartingValues(client),
+  const [records, details, models, labeling] = await Promise.all([
     loadSupplierRecords(client),
     loadOrderDetails(client, orders),
     loadModels(client),
@@ -283,11 +265,8 @@ export async function estimateOrders(client, orders, history) {
     purchaseOrders: details.purchaseOrders.filter((purchaseOrder) => purchaseOrder.customer_order_id === order.id),
     poLines: details.poLines,
     histories: records.histories,
-    startingSuppliers: starting.startingSuppliers,
+    pool: records.pool,
     supplierNames: records.names,
-    settings: starting.settings,
-    countries: starting.countries,
-    busyMonths: starting.busyMonths,
     country: details.locations.find((location) => location.id === order.delivery_location_id)?.country,
     models,
     labelingKind: labeling.kinds.get(order.id) || null,
@@ -306,8 +285,7 @@ export async function estimateOrders(client, orders, history) {
 export async function estimateDraft(client, { items = [], deliveryLocationId, requestedShipDate, history = [], customerId = null, containerSize = null }) {
   const productIds = [...new Set(items.map((item) => item.product_id).filter(Boolean))]
 
-  const [starting, records, products, location, models, labeling] = await Promise.all([
-    loadStartingValues(client),
+  const [records, products, location, models, labeling] = await Promise.all([
     loadSupplierRecords(client),
     productIds.length
       ? client.from('products').select('id, supplier_id, cbm, gross_weight_kg').in('id', productIds)
@@ -337,11 +315,8 @@ export async function estimateDraft(client, { items = [], deliveryLocationId, re
     purchaseOrders: [],
     poLines: [],
     histories: records.histories,
-    startingSuppliers: starting.startingSuppliers,
+    pool: records.pool,
     supplierNames: records.names,
-    settings: starting.settings,
-    countries: starting.countries,
-    busyMonths: starting.busyMonths,
     country: location?.data?.country,
     models,
     labelingKind,
@@ -367,6 +342,7 @@ export function forCustomer(prediction) {
     estimatedShipDate: prediction.estimatedShipDate || null,
     shipDateRange: prediction.shipDateRange || null,
     estimatedArrivalDate: prediction.estimatedArrivalDate || null,
+    arrivalRange: prediction.arrivalRange || null,
     requestedShipDate: prediction.requestedShipDate || null,
     daysPastRequested: prediction.daysPastRequested ?? null,
     customerNote: prediction.customerNote || null,

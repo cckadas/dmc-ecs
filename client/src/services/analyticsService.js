@@ -1,11 +1,11 @@
 import { supabase } from '../supabase'
 import { loadStatusHistory } from './predictionService'
-import { allRows, estimateOrders, loadAllDeliveries, loadLabelingKinds, loadModels, loadStartingValues } from '../utils/estimateLoader'
+import { allRows, estimateOrders, loadAllDeliveries, loadLabelingKinds, loadModels } from '../utils/estimateLoader'
 import { buildStageStatistics, normalizeStatus } from '../utils/predictions'
-import { startingDaysFrom } from '../utils/estimateInputs'
 import {
   MIN_ACCURACY_ORDERS,
   accuracyCheck,
+  busyMonths,
   comingUpByWeek,
   finishedForAccuracy,
   headlineNumbers,
@@ -54,9 +54,8 @@ export async function loadAnalytics(parts = ALL_PARTS) {
   const want = (part) => parts.includes(part)
   const needOrders = ['numbers', 'steps', 'months', 'weeks', 'accuracy'].some(want)
 
-  const [history, starting, deliveries, suppliers, orders, models] = await Promise.all([
+  const [history, deliveries, suppliers, orders, models] = await Promise.all([
     needOrders ? loadStatusHistory() : [],
-    loadStartingValues(supabase),
     loadAllDeliveries(supabase).catch(() => []),
     supabase.from('suppliers').select('id, supplier_name').order('supplier_name'),
     needOrders
@@ -71,7 +70,6 @@ export async function loadAnalytics(parts = ALL_PARTS) {
   const allOrders = orders
   const supplierList = suppliers.data || []
   const names = Object.fromEntries(supplierList.map((supplier) => [supplier.id, supplier.supplier_name]))
-  const startingDays = startingDaysFrom(starting.settings)
   const { stageStatistics, historyByOrder, finishedOrders } = buildStageStatistics(history)
 
   // The estimates of the orders not shipped yet: chart 5 and "orders on track".
@@ -93,7 +91,7 @@ export async function loadAnalytics(parts = ALL_PARTS) {
         rowsByIds('delivery_locations', 'id, country', 'id', [...new Set(finished.map(({ order }) => order.delivery_location_id).filter(Boolean))]),
         loadLabelingKinds(supabase),
       ])
-      accuracy = accuracyCheck({ orders: allOrders, history, items, locations, deliveries, starting, names, models, kinds: labeling.kinds })
+      accuracy = accuracyCheck({ orders: allOrders, history, items, locations, deliveries, names, models, kinds: labeling.kinds })
     } else {
       accuracy = { enough: false, finished: finished.length, needed: MIN_ACCURACY_ORDERS }
     }
@@ -101,9 +99,11 @@ export async function loadAnalytics(parts = ALL_PARTS) {
 
   return {
     numbers: want('numbers') ? headlineNumbers({ predictions, orders: allOrders, historyByOrder, deliveries, accuracy }) : null,
-    steps: want('steps') ? stepTimes(stageStatistics, startingDays) : null,
+    steps: want('steps') ? stepTimes(stageStatistics) : null,
     onTime: want('suppliers') ? supplierOnTime(deliveries, supplierList) : null,
-    leadTimes: want('suppliers') ? supplierLeadTimes(deliveries, supplierList, starting.startingSuppliers, startingDays) : null,
+    leadTimes: want('suppliers') ? supplierLeadTimes(deliveries, supplierList) : null,
+    // The busy months the deliveries show, which the estimates add for suppliers not ordered from yet.
+    busyMonths: want('suppliers') ? busyMonths(deliveries) : null,
     months: want('months') ? shippingOnTimeByMonth(allOrders, historyByOrder) : null,
     weeks: want('weeks') ? comingUpByWeek(predictions) : null,
     accuracy: want('accuracy') ? accuracy : null,
@@ -112,8 +112,5 @@ export async function loadAnalytics(parts = ALL_PARTS) {
     models: { available: models.available, rows: models.rows },
     // The made-up demo history is in (db/demo/), so the figures aren't DMC's own.
     simulated: allOrders.some((order) => isSimulated(order.order_number)) || deliveries.some((delivery) => isSimulated(delivery.poNumber)),
-    // The starting values are still the stand-ins until DMC's numbers are saved
-    // on Prediction Settings.
-    placeholders: !starting.settings.length || starting.settings.some((row) => row.is_placeholder),
   }
 }

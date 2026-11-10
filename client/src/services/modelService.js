@@ -1,6 +1,6 @@
 import { supabase } from '../supabase'
 import { loadStatusHistory } from './predictionService'
-import { allRows, loadStartingValues } from '../utils/estimateLoader'
+import { allRows } from '../utils/estimateLoader'
 import { trainModels } from '../utils/modelTrainer'
 import { MODEL_MAX_AGE_DAYS } from '../utils/predictionModel'
 import { isSimulated } from '../utils/simulated'
@@ -41,10 +41,9 @@ export function modelIsStale(rows = []) {
 // more (too few records) is deleted, so it isn't used without them. Returns,
 // for each, how it did, or why it couldn't be trained yet.
 export async function retrainModels(trainedBy, onProgress) {
-  const [libs, history, starting, lines, orders, items, locations] = await Promise.all([
+  const [libs, history, lines, orders, items, locations] = await Promise.all([
     loadTensorflow(),
     loadStatusHistory(),
-    loadStartingValues(supabase),
     allRows(() => supabase
       .from('purchase_order_items')
       .select('supplier_id, ordered_quantity, fully_received_at, purchase_orders ( id, po_number, customer_order_id, created_at, expected_delivery_date )')
@@ -54,7 +53,7 @@ export async function retrainModels(trainedBy, onProgress) {
     allRows(() => supabase.from('delivery_locations').select('id, country').order('id')),
   ])
 
-  const results = await trainModels(libs, { lines, history, orders, items, locations, starting }, { onProgress })
+  const results = await trainModels(libs, { lines, history, orders, items, locations }, { onProgress })
 
   // Learned partly from the made-up demo history (db/demo/), so the page says so.
   const simulated = orders.some((order) => isSimulated(order.order_number))

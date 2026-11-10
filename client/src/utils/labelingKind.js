@@ -1,23 +1,19 @@
 // =============================================================================
-// Labeling kinds — DMC's three labeling times
+// Labeling kinds — three kinds of order that label at different speeds
 //
-// DMC's warehouse (Nov 2026): labeling an order takes about a week when the
-// customer has ordered all its products before, two weeks when it fills a
-// 40-ft container, and three weeks when the customer or one of its products is
-// new, since those labels have to be made first. So each order is one of:
+// Labeling takes longer when an order fills a 40-ft container, and longer
+// still when the customer or one of its products is new, since those labels
+// have to be made first. So each order is one of:
 //   regular  every product ordered before by this customer, in a 20-ft
 //   big      every product ordered before, in a 40-ft or a 40-ft high cube
 //   new      the customer's first order, or a product they hadn't ordered before
-// Each kind has its own starting days on Prediction Settings, and the records
-// of each kind are kept apart (utils/predictions.js).
+// The kind comes from the system's own orders, and each kind's labeling times
+// are learned from finished orders of that kind (utils/predictions.js).
 //
 // Imports carry their .js extension so the server (Node) can load this too.
 // =============================================================================
 
 export const LABELING_KINDS = ['regular', 'big', 'new']
-
-// Each kind's starting days, by prediction_settings key.
-export const LABELING_SETTING = { regular: 'labeling', big: 'labeling_big_container', new: 'labeling_new' }
 
 // container_sizes codes: '20-ft', '40-ft', '40-ft HC'.
 export const isBigContainer = (code) => /^\s*40/.test(String(code || ''))

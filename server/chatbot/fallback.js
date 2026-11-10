@@ -223,7 +223,7 @@ export function getFallbackReply(message, context) {
   if (intent === 'readiness') {
     const active = named ? orders : orders.filter((order) => !order.shippedOn)
     if (!active.length) return 'All your orders have already shipped.'
-    return `${orderLines(active, readinessLine)}\n\nThese are estimates based on past orders and DMC's usual times, not guaranteed dates.`
+    return `${orderLines(active, readinessLine)}\n\nThese are estimates based on past orders, not guaranteed dates.`
   }
 
   if (intent === 'labels') {

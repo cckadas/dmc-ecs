@@ -2090,8 +2090,9 @@ function AddPurchaseOrderModal({ customerOrders, suppliers, warehouseRacks, load
     return () => { active = false }
   }, [supplierKey])
 
+  // A supplier with no deliveries to go by yet gives no suggestion.
   const slowest = supplierIds
-    .filter((id) => timings[id])
+    .filter((id) => timings[id] && timings[id].usualLeadDays !== null)
     .map((id) => ({ id, name: supplierName(id), days: Math.ceil(timings[id].usualLeadDays) }))
     .sort((a, b) => b.days - a.days)[0]
   const suggestedDate = slowest ? localDateString(Math.max(slowest.days, MIN_PO_DELIVERY_DAYS)) : null

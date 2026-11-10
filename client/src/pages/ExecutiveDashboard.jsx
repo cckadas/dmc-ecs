@@ -666,9 +666,9 @@ function PredictiveShipmentCard({ predictions, loading }) {
                         <OrderStepsBar status={prediction.currentStatus}/>
                       </div>
 
-                      {/* RISK */}
-                      <div className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${ prediction.risk === 'at risk' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-[#2D5A42]' }`}>
-                        {prediction.risk === 'at risk' ? 'At Risk' : 'On Track'}
+                      {/* RISK — or still learning: too few finished orders to estimate it yet */}
+                      <div className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${ prediction.risk === 'at risk' ? 'bg-red-50 text-red-600' : prediction.learning ? 'bg-gray-100 text-gray-600' : 'bg-green-50 text-[#2D5A42]' }`}>
+                        {prediction.risk === 'at risk' ? 'At Risk' : prediction.learning ? 'Still Learning' : 'On Track'}
                       </div>
                     </div>
 

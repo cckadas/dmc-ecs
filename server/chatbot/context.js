@@ -288,7 +288,7 @@ export async function buildCustomerContext(customerId, message) {
         requestedShipDate: formatDateOnly(view.requestedShipDate),
         comparedWithRequestedDate: view.customerNote,
         roughEstimate: view.roughEstimate,
-        note: 'An estimate based on past orders and DMC\'s usual times, not a confirmed or guaranteed date.',
+        note: 'An estimate based on past orders, not a confirmed or guaranteed date.',
       }
     }
 

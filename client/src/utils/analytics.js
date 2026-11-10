@@ -1,17 +1,17 @@
 // =============================================================================
 // Predictive analytics — the numbers behind the charts
 //
-// Worked out from the system's own records (status history, purchase orders,
-// deliveries), blended with DMC staff's starting values, with the same rules as
-// the estimates (utils/predictions.js) and supplier scores (utils/supplierScores.js),
-// so the charts agree with every other screen. services/analyticsService.js
-// loads the rows; pages/PredictiveAnalytics.jsx draws them.
+// Worked out only from the system's own records (status history, purchase
+// orders, deliveries), with the same rules as the estimates (utils/predictions.js)
+// and supplier scores (utils/supplierScores.js), so the charts agree with every
+// other screen. services/analyticsService.js loads the rows;
+// pages/PredictiveAnalytics.jsx draws them.
 //
 // Imports carry their .js extension so the maths can be tested in Node.
 // =============================================================================
 
-import { ESTIMATE_STEPS, blendStep, buildStageStatistics, normalizeStatus, predictOrder } from './predictions.js'
-import { estimateContext, supplierHistories } from './estimateInputs.js'
+import { ESTIMATE_STEPS, MIN_RECORDS, blendStep, buildStageStatistics, monthEffects, normalizeStatus, predictOrder, recordShare } from './predictions.js'
+import { estimateContext, supplierHistories, supplierPool } from './estimateInputs.js'
 import { SCORE_WINDOW_DAYS, manilaDate, scoreSuppliers } from './supplierScores.js'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -23,6 +23,20 @@ export const TEST_SHARE = 0.2           // accuracy is tested on the newest 20% 
 export const WEEKS_AHEAD = 8            // "coming up" covers this week and the next 7
 
 const average = (values) => (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null)
+const median = (values) => {
+  if (!values.length) return null
+  const sorted = [...values].sort((a, b) => a - b)
+  const middle = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle]
+}
+const percentile = (values, fraction) => {
+  if (!values.length) return null
+  const sorted = [...values].sort((a, b) => a - b)
+  const index = (sorted.length - 1) * fraction
+  const lower = Math.floor(index)
+  const upper = Math.ceil(index)
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower)
+}
 const byTime = (a, b) => Date.parse(a.changed_at) - Date.parse(b.changed_at)
 const timeOf = (value) => new Date(value).getTime()
 const daysBetween = (fromDay, toDay) => Math.round((Date.parse(toDay) - Date.parse(fromDay)) / DAY)
@@ -43,21 +57,23 @@ export function weekOf(value) {
 
 
 // 1. Where the time goes ---------------------------------------------------------
-// Each step's usual days, with its quick and slow cases: finished orders blended
-// with DMC's starting values, the same numbers the estimates use. The down
-// payment isn't a step here: it waits on the customer.
-export function stepTimes(stageStatistics, startingDays) {
-  const startingFor = {
-    payment_check: startingDays.payment_check,
-    ordering: startingDays.ordering,
-    suppliers: startingDays.supplier_lead,
-    labeling: startingDays.labeling,
-    shipping: startingDays.shipping,
-  }
-
+// Each step's usual days, with its quick and slow cases, from finished orders:
+// the same numbers the estimates use. A step with fewer than MIN_RECORDS
+// finished orders has no numbers yet. The down payment isn't a step here: it
+// waits on the customer.
+export function stepTimes(stageStatistics) {
   return ESTIMATE_STEPS.map((step) => {
-    const span = blendStep(stageStatistics?.[step.key]?.durations || [], startingFor[step.key])
-    return { key: step.key, label: step.label, typical: span.typical, quick: span.quick, slow: span.slow, records: span.count }
+    const durations = stageStatistics?.[step.key]?.durations || []
+    const span = blendStep(durations)
+    return {
+      key: step.key,
+      label: step.label,
+      typical: span?.typical ?? null,
+      quick: span?.quick ?? null,
+      slow: span?.slow ?? null,
+      records: durations.length,
+      needed: MIN_RECORDS,
+    }
   })
 }
 
@@ -90,44 +106,59 @@ export function supplierOnTime(deliveries, suppliers, { today = new Date() } = {
 
 
 // 3. Lead time by supplier ---------------------------------------------------------
-// Days from PO to delivery as the estimates use them: the supplier's deliveries
-// blended with DMC's number. The line runs from the quick case to the slow case;
-// a long one is an unpredictable supplier. Suppliers with neither deliveries nor
-// a DMC number use the default, and are only counted. Slowest first.
-export function supplierLeadTimes(deliveries, suppliers, startingSuppliers = {}, startingDays, { today = new Date() } = {}) {
+// Days from PO to delivery as the estimates use them: the supplier's own
+// deliveries, leaning on every supplier's while it has few. The line runs from
+// the quick case to the slow case; a long one is an unpredictable supplier.
+// Suppliers with no deliveries yet are only counted: they'd go by every
+// supplier's (allDays). Slowest first.
+export function supplierLeadTimes(deliveries, suppliers, { today = new Date() } = {}) {
   const histories = supplierHistories(deliveries, new Date(today))
+  const everyone = supplierPool(deliveries, new Date(today)).leadDays
   const rows = []
-  let onDefault = 0
+  let noDeliveries = 0
 
   for (const supplier of suppliers) {
     const leads = histories[supplier.id]?.leadDays || []
-    const theirs = startingSuppliers[supplier.id]
-    const dmcDays = Number(theirs?.usual_lead_days) || null
+    const span = leads.length ? blendStep(leads, everyone) : null
 
-    if (!leads.length && !dmcDays) {
-      onDefault++
+    if (!span) {
+      noDeliveries++
       continue
     }
-
-    const startingLead = dmcDays || startingDays.supplier_lead
-    const span = blendStep(leads, startingLead)
 
     rows.push({
       id: supplier.id,
       name: supplier.supplier_name,
       usual: span.typical,
       quick: span.quick,
-      // As in the estimates: while there are no deliveries, DMC's "usually late
-      // by" widens the slow case.
-      slow: leads.length ? span.slow : Math.max(span.slow, startingLead + (Number(theirs?.usual_late_days) || 0)),
+      slow: span.slow,
       deliveries: leads.length,
-      fromDmc: Boolean(dmcDays),
+      // Few deliveries of its own: it leans on every supplier's.
+      leansOnEveryone: span.share < 0.5,
     })
   }
 
   rows.sort((a, b) => b.usual - a.usual || a.name.localeCompare(b.name))
 
-  return { rows, onDefault, defaultDays: startingDays.supplier_lead }
+  return { rows, noDeliveries, allDays: blendStep(everyone)?.typical ?? null, allDeliveries: everyone.length }
+}
+
+
+// 3b. Busy months, found in the deliveries ------------------------------------------
+// For POs sent in each month, how many days longer (or shorter) their deliveries
+// took than usual: each month's middle value against all months', counting for
+// n ÷ (n + 5) of the difference so a month with few deliveries barely moves. The
+// estimates add these days to a supplier not ordered from yet. Twelve months,
+// January first; a month with no deliveries has none.
+export function busyMonths(deliveries, { today = new Date() } = {}) {
+  const { leadByMonth } = supplierPool(deliveries, new Date(today))
+  const effects = monthEffects(leadByMonth)
+
+  return Array.from({ length: 12 }, (_, index) => {
+    const month = index + 1
+    const count = leadByMonth.filter((record) => record.month === month).length
+    return { month, deliveries: count, extraDays: count ? effects[month] ?? 0 : null, share: recordShare(count) }
+  })
 }
 
 
@@ -219,16 +250,19 @@ export function finishedForAccuracy(orders, historyByOrder) {
 // Finished orders the method didn't learn from are predicted as of the day each
 // one's payment was verified, and compared with the day it really shipped:
 //   - split by time: learn from the older 80% of finished orders, test the newest 20%
-//   - methods: starting values only (DMC's numbers with no records, the baseline
-//     to beat), statistics, and, once it's trained, the statistics with the
+//   - methods: the same for every order (the usual days from payment to
+//     shipping of the orders learned from, the baseline to beat), the
+//     statistics step by step, and, once it's trained, the statistics with the
 //     model (the saved one, which learned only from orders before these)
-//   - reported: the average days off, and the share within 3 days
+//   - reported: the share that shipped within the likely range shown (the quick
+//     to slow case; the baseline's is past orders' quick and slow quarters), the
+//     share within 3 days of the single date, and the average days off
 // items: [{ customer_order_id, quantity, products: { supplier_id } }] of the
 // finished orders; locations: [{ id, country }]; deliveries: buildDeliveries';
-// starting: loadStartingValues'; names: { supplier_id: name }; models: the
-// saved models (estimateLoader's loadModels with inUseOnly false); kinds: each
-// order's labeling kind (utils/labelingKind.js), as a Map
-export function accuracyCheck({ orders = [], history = [], items = [], locations = [], deliveries = [], starting = {}, names = {}, models = null, kinds = null }) {
+// names: { supplier_id: name }; models: the saved models (estimateLoader's
+// loadModels with inUseOnly false); kinds: each order's labeling kind
+// (utils/labelingKind.js), as a Map
+export function accuracyCheck({ orders = [], history = [], items = [], locations = [], deliveries = [], names = {}, models = null, kinds = null }) {
   const { historyByOrder } = buildStageStatistics(history)
   const finished = finishedForAccuracy(orders, historyByOrder)
 
@@ -243,9 +277,16 @@ export function accuracyCheck({ orders = [], history = [], items = [], locations
   const learnIds = new Set(learnFrom.map(({ order }) => order.id))
   const kindOf = kinds?.size ? (orderId) => kinds.get(orderId) : null
   const learned = buildStageStatistics(history.filter((entry) => learnIds.has(entry.customer_order_id)), kindOf).stageStatistics
-  const nothing = buildStageStatistics([]).stageStatistics
 
-  const daysOff = { starting: [], statistics: [], model: [] }
+  // The baseline: every order gets the usual days from payment to shipping, and
+  // the quick and slow quarters of past orders as its range.
+  const totals = learnFrom.map(({ verifiedAt, shippedAt }) => (shippedAt - verifiedAt) / DAY)
+  const usualDays = median(totals)
+  const usualRange = { quick: percentile(totals, 0.25), slow: percentile(totals, 0.75) }
+
+  const daysOff = { average: [], statistics: [], model: [] }
+  const inRange = { average: [], statistics: [], model: [] }
+  const between = (quickTime, shippedOn, slowTime) => manilaDate(quickTime) <= shippedOn && shippedOn <= manilaDate(slowTime)
   // As the estimates use them: each model only once it beat the statistics. With
   // neither in use yet, the row shows how the saved ones would do.
   const inUse = { supplier: models?.supplier?.inUse ? models.supplier : null, labeling: models?.labeling?.inUse ? models.labeling : null }
@@ -258,34 +299,40 @@ export function accuracyCheck({ orders = [], history = [], items = [], locations
     // What was known about the suppliers then: deliveries received before that day.
     const knownThen = deliveries.filter((delivery) => delivery.receivedOn < manilaDate(verifiedAt))
     const shippedOn = manilaDate(shippedAt)
+    const sameForAll = manilaDate(verifiedAt + usualDays * DAY)
 
-    for (const method of ['starting', 'statistics', ...(withModel ? ['model'] : [])]) {
-      const withRecords = method !== 'starting'
+    daysOff.average.push(Math.abs(daysBetween(sameForAll, shippedOn)))
+    const baselineInRange = between(verifiedAt + usualRange.quick * DAY, shippedOn, verifiedAt + usualRange.slow * DAY)
+    inRange.average.push(baselineInRange)
 
-      const prediction = predictOrder(asOf, withRecords ? learned : nothing, ownHistory, estimateContext({
+    for (const method of ['statistics', ...(withModel ? ['model'] : [])]) {
+      const prediction = predictOrder(asOf, learned, ownHistory, estimateContext({
         order: asOf,
         items: items.filter((item) => item.customer_order_id === order.id),
         purchaseOrders: [],
         poLines: [],
-        histories: withRecords ? supplierHistories(knownThen, new Date(verifiedAt)) : {},
-        startingSuppliers: starting.startingSuppliers || {},
+        histories: supplierHistories(knownThen, new Date(verifiedAt)),
+        pool: supplierPool(knownThen, new Date(verifiedAt)),
         supplierNames: names,
-        settings: starting.settings,
-        countries: starting.countries,
-        busyMonths: starting.busyMonths,
         country: locations.find((location) => location.id === order.delivery_location_id)?.country,
         now: verifiedAt,
         models: method === 'model' ? withModel : null,
         labelingKind: kinds?.get(order.id) || null,
       }))
 
-      daysOff[method].push(Math.abs(daysBetween(manilaDate(prediction.estimatedShipDate), shippedOn)))
+      // Too few records then to estimate a step: the baseline's day and range.
+      const predictedOn = prediction.estimatedShipDate ? manilaDate(prediction.estimatedShipDate) : sameForAll
+      daysOff[method].push(Math.abs(daysBetween(predictedOn, shippedOn)))
+      inRange[method].push(prediction.shipDateRange
+        ? between(prediction.shipDateRange.quick.getTime(), shippedOn, prediction.shipDateRange.slow.getTime())
+        : baselineInRange)
     }
   }
 
-  const summary = (days) => ({
-    averageDaysOff: average(days),
-    withinShare: days.filter((value) => value <= WITHIN_DAYS).length / days.length,
+  const summary = (key) => ({
+    averageDaysOff: average(daysOff[key]),
+    withinShare: daysOff[key].filter((value) => value <= WITHIN_DAYS).length / daysOff[key].length,
+    withinRangeShare: inRange[key].filter(Boolean).length / inRange[key].length,
   })
 
   return {
@@ -293,10 +340,11 @@ export function accuracyCheck({ orders = [], history = [], items = [], locations
     finished: finished.length,
     learnedFrom: learnFrom.length,
     tested: testOn.length,
+    usualDays,
     methods: [
-      { key: 'starting', label: 'Starting values only', ...summary(daysOff.starting) },
-      { key: 'statistics', label: 'Statistics', inUse: !modelInUse, ...summary(daysOff.statistics) },
-      ...(withModel ? [{ key: 'model', label: 'Statistics + model', inUse: modelInUse, ...summary(daysOff.model) }] : []),
+      { key: 'average', label: 'Same for every order', ...summary('average') },
+      { key: 'statistics', label: 'Statistics', inUse: !modelInUse, ...summary('statistics') },
+      ...(withModel ? [{ key: 'model', label: 'Statistics + model', inUse: modelInUse, ...summary('model') }] : []),
     ],
   }
 }
@@ -308,8 +356,8 @@ export function accuracyCheck({ orders = [], history = [], items = [], locations
 //   payment to shipping  average days from the payment check to shipped, for
 //                        orders shipped in the last 12 months
 //   supplier on time     deliveries by the promised date, last 12 months
-//   accuracy             the share within 3 days of the method in use, once there
-//                        are enough orders
+//   accuracy             the share that shipped within the likely range, by the
+//                        method in use, once there are enough orders
 export function headlineNumbers({ predictions = [], orders = [], historyByOrder = {}, deliveries = [], accuracy = null, today = new Date() }) {
   const underWay = predictions.filter((prediction) => !prediction.shipped && !prediction.ifPaidToday && prediction.estimatedShipDate)
   const since = timeOf(today) - SCORE_WINDOW_DAYS * DAY
@@ -337,7 +385,7 @@ export function headlineNumbers({ predictions = [], orders = [], historyByOrder 
     paymentToShip: { days: average(spans), orders: spans.length },
     supplierOnTime: { rate: judged.length ? judged.filter((delivery) => delivery.onTime).length / judged.length : null, deliveries: judged.length },
     accuracy: statistics
-      ? { withinShare: statistics.withinShare, averageDaysOff: statistics.averageDaysOff, tested: accuracy.tested }
+      ? { withinRangeShare: statistics.withinRangeShare, withinShare: statistics.withinShare, averageDaysOff: statistics.averageDaysOff, tested: accuracy.tested }
       : { withinShare: null, finished: accuracy?.finished ?? 0, needed: MIN_ACCURACY_ORDERS },
   }
 }

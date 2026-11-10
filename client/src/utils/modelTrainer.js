@@ -65,10 +65,10 @@ export async function trainNetwork({ tf, tfl }, inputs, targets, { epochs = 800,
 }
 
 
-// Trains both models. data: { lines, history, orders, items, locations, starting }
+// Trains both models. data: { lines, history, orders, items, locations }
 // (see predictionModel.js for each). onProgress(share done, 0 to 1). Returns,
 // for each, what to save or why it couldn't be trained.
-export async function trainModels(libs, { lines = [], history = [], orders = [], items = [], locations = [], starting = {} }, { epochs, onProgress } = {}) {
+export async function trainModels(libs, { lines = [], history = [], orders = [], items = [], locations = [] }, { epochs, onProgress } = {}) {
   const { historyByOrder } = buildStageStatistics(history)
   const finished = finishedForAccuracy(orders, historyByOrder)
   const tested = Math.max(1, Math.round(finished.length * TEST_SHARE))
@@ -100,7 +100,7 @@ export async function trainModels(libs, { lines = [], history = [], orders = [],
     const model = { weights, spec }
     const actual = test.map((record) => record.value)
     const byModel = test.map((record) => predictValue(model, record))
-    const byStatistics = statisticsFor(kind, train, test, starting)
+    const byStatistics = statisticsFor(kind, train, test)
     const modelScore = scoreOf(byModel, actual)
     const statisticsScore = scoreOf(byStatistics, actual)
     const residuals = test.map((record, index) => actual[index] - byModel[index])

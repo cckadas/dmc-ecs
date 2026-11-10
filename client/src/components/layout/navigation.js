@@ -20,7 +20,6 @@ import {
   faCircleUser,
   faPesoSign,
   faScaleBalanced,
-  faSliders,
   faChartColumn
 } from '@fortawesome/free-solid-svg-icons'
 
@@ -86,12 +85,6 @@ export const NAV_SECTIONS = [
         label: 'Markups & Credit',
         path: 'pricing-credit',
         icon: faScaleBalanced,
-        roles: ['admin', 'management'],
-      },
-      {
-        label: 'Prediction Settings',
-        path: 'prediction-settings',
-        icon: faSliders,
         roles: ['admin', 'management'],
       },
     ],

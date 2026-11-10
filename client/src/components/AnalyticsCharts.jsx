@@ -224,13 +224,14 @@ function HorizontalBar({ x, y, width, height, background, isActive, fill, label,
 
 
 // The likely range as a line, with a dot at the usual time: filled when it
-// comes from the supplier's deliveries, a ring when it's DMC's estimate.
+// comes mostly from the supplier's own deliveries, a ring when it has few and
+// leans on every supplier's.
 function RangeLine({ x, y, width, height, background, payload, isActive, name }) {
   const left = Math.min(x, x + width)
   const span = Math.abs(width)
   const middle = y + height / 2
   const share = payload.slow > payload.quick ? (payload.usual - payload.quick) / (payload.slow - payload.quick) : 0
-  const measured = payload.deliveries > 0
+  const measured = !payload.leansOnEveryone
 
   return (
     <g opacity={isActive ? 0.85 : 1}>
@@ -275,9 +276,16 @@ function SignedBar({ x, y, width, height, payload, isActive }) {
 
 // 1. Where the time goes -----------------------------------------------------------------
 
+// A step with too few finished orders has no numbers yet.
+const notYet = (step) => `Needs ${step.needed} finished orders; ${step.records} so far`
+
 function StepTooltip({ active, payload }) {
   const step = active && payload?.[0]?.payload
   if (!step) return null
+
+  if (step.typical === null) {
+    return <TooltipBox value="Not enough orders yet" name={step.label} lines={[notYet(step)]} />
+  }
 
   return (
     <TooltipBox
@@ -285,9 +293,7 @@ function StepTooltip({ active, payload }) {
       name={step.label}
       lines={[
         `Likely ${formatDays(step.quick)} to ${formatDays(step.slow)}`,
-        step.records
-          ? `From ${count(step.records, 'finished order')}, blended with DMC's starting value`
-          : "DMC's starting value, until there are finished orders",
+        `From ${count(step.records, 'finished order')}`,
       ]}
     />
   )
@@ -295,24 +301,25 @@ function StepTooltip({ active, payload }) {
 
 export function StepTimesChart({ steps }) {
   const [ref, compact] = useCompact()
-  const longest = Math.max(...steps.map((step) => step.typical))
+  const data = steps.map((step) => ({ ...step, days: step.typical ?? 0 }))
+  const longest = Math.max(...data.map((step) => step.days))
   const shape = (props) => (
     <HorizontalBar
       {...props}
-      fill={props.payload.typical === longest ? CHART.series : CHART.muted}
-      label={formatDays(props.payload.typical)}
+      fill={props.payload.days === longest ? CHART.series : CHART.muted}
+      label={props.payload.typical === null ? 'Not enough orders yet' : formatDays(props.payload.typical)}
       name={compact ? props.payload.label : null}
     />
   )
 
   return (
     <div ref={ref}>
-      <ResponsiveContainer width="100%" height={steps.length * (compact ? 52 : 40) + 8}>
-        <BarChart data={steps} layout="vertical" margin={{ top: compact ? 12 : 4, right: 76, bottom: 4, left: 0 }} barCategoryGap={compact ? 22 : 12}>
+      <ResponsiveContainer width="100%" height={data.length * (compact ? 52 : 40) + 8}>
+        <BarChart data={data} layout="vertical" margin={{ top: compact ? 12 : 4, right: 76, bottom: 4, left: 0 }} barCategoryGap={compact ? 22 : 12}>
           <XAxis type="number" hide domain={[0, 'dataMax']} />
           <YAxis type="category" dataKey="label" hide={compact} width={156} axisLine={false} tickLine={false} tick={CATEGORY_TICK} />
           <Tooltip cursor={{ fill: CHART.hover }} content={<StepTooltip />} />
-          <Bar dataKey="typical" barSize={16} isAnimationActive={false} shape={shape} activeBar={shape} />
+          <Bar dataKey="days" barSize={16} isAnimationActive={false} shape={shape} activeBar={shape} />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -326,9 +333,9 @@ export function StepTimesTable({ steps }) {
       rowKey={(step) => step.key}
       columns={[
         { label: 'Step', value: (step) => step.label },
-        { label: 'Usual', value: (step) => formatDays(step.typical), numeric: true },
-        { label: 'Likely range', value: (step) => `${formatDays(step.quick)} to ${formatDays(step.slow)}`, numeric: true },
-        { label: 'Finished orders', value: (step) => step.records || "None yet (DMC's value)", numeric: true },
+        { label: 'Usual', value: (step) => (step.typical === null ? 'Not enough orders yet' : formatDays(step.typical)), numeric: true },
+        { label: 'Likely range', value: (step) => (step.typical === null ? '—' : `${formatDays(step.quick)} to ${formatDays(step.slow)}`), numeric: true },
+        { label: 'Finished orders', value: (step) => step.records || 'None yet', numeric: true },
       ]}
     />
   )
@@ -414,9 +421,7 @@ function LeadTooltip({ active, payload }) {
       name={row.name}
       lines={[
         `Likely ${formatDays(row.quick)} to ${formatDays(row.slow)} from PO to delivery`,
-        row.deliveries
-          ? `From ${count(row.deliveries, 'delivery', 'deliveries')}${row.fromDmc ? ", blended with DMC's estimate" : ''}`
-          : "DMC's estimate: no deliveries yet",
+        `From ${count(row.deliveries, 'delivery', 'deliveries')}${row.leansOnEveryone ? ", leaning on every supplier's" : ''}`,
       ]}
     />
   )
@@ -431,8 +436,8 @@ export function LeadTimeChart({ rows }) {
   const shape = (props) => <RangeLine {...props} name={compact ? props.payload.name : null} />
 
   const legend = [{ label: 'Likely range', mark: 'line', color: CHART.series }]
-  if (data.some((row) => row.deliveries)) legend.push({ label: 'Usual, from its deliveries', mark: 'dot', color: CHART.series })
-  if (data.some((row) => !row.deliveries)) legend.push({ label: "Usual, DMC's estimate (no deliveries yet)", mark: 'ring', color: CHART.series })
+  if (data.some((row) => !row.leansOnEveryone)) legend.push({ label: 'Usual, from its deliveries', mark: 'dot', color: CHART.series })
+  if (data.some((row) => row.leansOnEveryone)) legend.push({ label: "Usual, few deliveries: leaning on every supplier's", mark: 'ring', color: CHART.series })
 
   return (
     <div ref={ref}>
@@ -446,7 +451,7 @@ export function LeadTimeChart({ rows }) {
             x={MIN_PO_DELIVERY_DAYS}
             stroke={CHART.inkSecondary}
             strokeDasharray="4 4"
-            label={{ value: `${MIN_PO_DELIVERY_DAYS}-day minimum`, position: 'top', fill: CHART.inkSecondary, fontSize: 11 }}
+            label={{ value: `${MIN_PO_DELIVERY_DAYS}-day PO minimum`, position: 'top', fill: CHART.inkSecondary, fontSize: 11 }}
           />
           <Bar dataKey="span" barSize={12} isAnimationActive={false} shape={shape} activeBar={shape} />
         </BarChart>
@@ -466,7 +471,110 @@ export function LeadTimeTable({ rows }) {
         { label: 'Supplier', value: (row) => row.name },
         { label: 'Usual', value: (row) => formatDays(row.usual), numeric: true },
         { label: 'Likely range', value: (row) => `${formatDays(row.quick)} to ${formatDays(row.slow)}`, numeric: true },
-        { label: 'From', value: (row) => (row.deliveries ? count(row.deliveries, 'delivery', 'deliveries') : "DMC's estimate") },
+        { label: 'From', value: (row) => `${count(row.deliveries, 'delivery', 'deliveries')}${row.leansOnEveryone ? " + every supplier's" : ''}` },
+      ]}
+    />
+  )
+}
+
+
+// 3b. Busy months -------------------------------------------------------------------------
+
+const MONTH_NAMES = Array.from({ length: 12 }, (_, index) =>
+  new Date(Date.UTC(2026, index, 1)).toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' }))
+const FULL_MONTH_NAMES = Array.from({ length: 12 }, (_, index) =>
+  new Date(Date.UTC(2026, index, 1)).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' }))
+
+const extraText = (days) => {
+  if (days === null) return 'No deliveries'
+  const rounded = Math.round(days * 10) / 10
+  if (Math.abs(rounded) < 0.5) return 'As usual'
+  return rounded > 0 ? `+${formatDays(rounded)}` : `−${formatDays(-rounded)}`
+}
+
+function BusyMonthTooltip({ active, payload }) {
+  const month = active && payload?.[0]?.payload
+  if (!month) return null
+
+  return (
+    <TooltipBox
+      value={extraText(month.extraDays)}
+      name={`POs sent in ${FULL_MONTH_NAMES[month.month - 1]}`}
+      lines={[month.deliveries ? `From ${count(month.deliveries, 'delivery', 'deliveries')}` : 'No deliveries yet']}
+    />
+  )
+}
+
+// A column above the line when deliveries took longer than usual, below when
+// quicker; its days on top.
+function MonthBar({ x, y, width, height, payload, isActive }) {
+  const days = payload.extraDays
+  const breadth = Math.max(Number(width) || 0, 0)
+  if (days === null || Math.abs(days) < 0.05) return null
+
+  const top = Math.min(y, y + height)
+  const size = Math.abs(height)
+  const corner = Math.min(4, breadth / 2, size)
+  const path = days > 0
+    ? `M${x},${top + size} V${top + corner} Q${x},${top} ${x + corner},${top} H${x + breadth - corner} Q${x + breadth},${top} ${x + breadth},${top + corner} V${top + size} Z`
+    : `M${x},${top} H${x + breadth} V${top + size - corner} Q${x + breadth},${top + size} ${x + breadth - corner},${top + size} H${x + corner} Q${x},${top + size} ${x},${top + size - corner} Z`
+
+  return (
+    <g opacity={isActive ? 0.85 : 1}>
+      <path d={path} fill={days > 0 ? CHART.series : CHART.muted} />
+      {Math.abs(days) >= 0.5 && (
+        <text x={x + breadth / 2} y={days > 0 ? top - 5 : top + size + 13} textAnchor="middle" fontSize={11} fill={CHART.ink} {...HALO}>
+          {days > 0 ? `+${Math.round(days)}` : `−${Math.round(-days)}`}
+        </text>
+      )}
+    </g>
+  )
+}
+
+export function BusyMonthsChart({ months }) {
+  const data = months.map((month) => ({ ...month, label: MONTH_NAMES[month.month - 1], value: month.extraDays ?? 0 }))
+  const step = Math.max(2, Math.ceil(Math.max(...data.map((month) => Math.abs(month.value))) / 2))
+  const extent = step * 2
+  const shape = (props) => <MonthBar {...props} />
+
+  return (
+    <>
+      <ResponsiveContainer width="100%" height={220}>
+        <BarChart data={data} margin={{ top: 18, right: 8, bottom: 0, left: 0 }} barCategoryGap="20%">
+          <CartesianGrid vertical={false} stroke={CHART.grid} />
+          <XAxis dataKey="label" tickLine={false} axisLine={false} tick={TICK} interval={0} />
+          <YAxis
+            domain={[-extent, extent]}
+            ticks={[-extent, -step, 0, step, extent]}
+            width={36}
+            axisLine={false}
+            tickLine={false}
+            tick={TICK}
+            tickFormatter={(days) => (days > 0 ? `+${days}` : days)}
+          />
+          <ReferenceLine y={0} stroke={CHART.axis} />
+          <Tooltip cursor={{ fill: CHART.hover }} content={<BusyMonthTooltip />} />
+          <Bar dataKey="value" maxBarSize={28} isAnimationActive={false} shape={shape} activeBar={shape} />
+        </BarChart>
+      </ResponsiveContainer>
+
+      <Legend items={[
+        { label: 'Longer than usual (days)', mark: 'bar', color: CHART.series },
+        { label: 'Quicker than usual', mark: 'bar', color: CHART.muted },
+      ]} />
+    </>
+  )
+}
+
+export function BusyMonthsTable({ months }) {
+  return (
+    <DataTable
+      rows={months}
+      rowKey={(month) => month.month}
+      columns={[
+        { label: 'POs sent in', value: (month) => FULL_MONTH_NAMES[month.month - 1] },
+        { label: 'Against usual', value: (month) => extraText(month.extraDays), numeric: true },
+        { label: 'Deliveries', value: (month) => month.deliveries || 'None', numeric: true },
       ]}
     />
   )
@@ -600,7 +708,10 @@ export function ComingUpTable({ weeks }) {
 function MethodTooltip({ active, payload }) {
   const row = active && payload?.[0]?.payload
   if (!row) return null
-  return <TooltipBox value={row.text} name={row.label} lines={[row.inUse ? 'The method in use' : 'The baseline: no records, starting values only']} />
+  const what = row.inUse ? 'The method in use'
+    : row.key === 'average' ? 'The baseline: the same estimate for every order'
+      : 'Not in use: the method in use did better'
+  return <TooltipBox value={row.text} name={row.label} lines={[what]} />
 }
 
 function MethodBars({ title, note, rows, max }) {
@@ -628,13 +739,15 @@ function MethodBars({ title, note, rows, max }) {
 
 export function AccuracyChart({ accuracy }) {
   const methods = accuracy.methods.map((method) => ({ ...method, name: method.inUse ? `${method.label} (in use)` : method.label }))
-  const daysOff = methods.map((method) => ({ ...method, value: method.averageDaysOff, text: formatDays(method.averageDaysOff) }))
+  const inRange = methods.map((method) => ({ ...method, value: method.withinRangeShare * 100, text: formatPercent(method.withinRangeShare) }))
   const within = methods.map((method) => ({ ...method, value: method.withinShare * 100, text: formatPercent(method.withinShare) }))
+  const daysOff = methods.map((method) => ({ ...method, value: method.averageDaysOff, text: formatDays(method.averageDaysOff) }))
 
   return (
     <div className="grid gap-6 sm:grid-cols-2">
-      <MethodBars title="Average days off" note="Lower is better" rows={daysOff} max={Math.max(1, ...daysOff.map((row) => row.value))} />
-      <MethodBars title={`Within ${WITHIN_DAYS} days`} note="Higher is better" rows={within} max={100} />
+      <MethodBars title="Shipped within the likely range" note="Higher is better" rows={inRange} max={100} />
+      <MethodBars title={`Within ${WITHIN_DAYS} days of the date`} note="Higher is better" rows={within} max={100} />
+      <MethodBars title="Average days off the date" note="Lower is better" rows={daysOff} max={Math.max(1, ...daysOff.map((row) => row.value))} />
     </div>
   )
 }
@@ -646,8 +759,9 @@ export function AccuracyTable({ accuracy }) {
       rowKey={(method) => method.key}
       columns={[
         { label: 'Method', value: (method) => (method.inUse ? `${method.label} (in use)` : method.label) },
-        { label: 'Average days off', value: (method) => formatDays(method.averageDaysOff), numeric: true },
+        { label: 'Within the likely range', value: (method) => formatPercent(method.withinRangeShare), numeric: true },
         { label: `Within ${WITHIN_DAYS} days`, value: (method) => formatPercent(method.withinShare), numeric: true },
+        { label: 'Average days off', value: (method) => formatDays(method.averageDaysOff), numeric: true },
       ]}
     />
   )

@@ -5,16 +5,23 @@
 //
 //   payment check → ordering from suppliers → supplier deliveries → labeling → shipping
 //
-// Each step's time is learned from finished orders' status history
-// (customer_order_status_history), blended with DMC's starting values while the
-// records are few: the records count for n ÷ (n + 5) of the time, n being the
-// finished orders behind that step. The supplier step waits on the order's
-// slowest supplier, from each supplier's own deliveries against the date its PO
-// promised. The quick and slow cases use the faster and slower quarters of past
-// orders, which gives the likely range.
+// Every number is learned from the system's own records, and nothing else:
+//   - each step's time, from finished orders' status history
+//     (customer_order_status_history): the middle value, with the quicker and
+//     slower quarters of past orders as the likely range
+//   - each supplier's deliveries against the date its PO promised. A supplier
+//     with few deliveries leans on every supplier's deliveries: its own n
+//     deliveries count for n ÷ (n + 5), everyone's for the rest
+//   - labeling by the kind of order (utils/labelingKind.js), leaning the same
+//     way on every order's labeling while a kind has few
+//   - busy months, found in the deliveries: a PO sent in a month whose
+//     deliveries took longer than usual gets those extra days
+//   - the sailing time to the customer's country, from recorded arrivals
+// With fewer than MIN_RECORDS records for a step there's no estimate: the
+// system says it's still learning instead of guessing.
 //
-// Out of it come the ready date (all labels applied), the ship date and, when
-// the sailing time to the customer's country is set, the arrival date.
+// Out of it come the ready date (all labels applied), the ship date and, once
+// arrivals to that part of the world are recorded, the arrival date.
 //
 // The website (services/predictionService.js) and DMC's server (estimates and
 // the customer assistant) both use this file, so every screen and the chatbot
@@ -22,7 +29,6 @@
 // =============================================================================
 
 import { MIN_PO_DELIVERY_DAYS } from './dates.js'
-import { LABELING_SETTING } from './labelingKind.js'
 
 export const ORDER_STATUS_FLOW = [
   'pending payment',
@@ -42,32 +48,9 @@ export const ESTIMATE_STEPS = [
   { key: 'shipping', status: 'ready for shipment', label: 'Shipping' },
 ]
 
-// Placeholders, in days, until admin enters DMC's own numbers (Prediction
-// settings, db/migrations/017). For suppliers DMC gave no numbers of their own:
-// supplier_lead, and supplier_late_days, how late they are when they're late.
-// Labeling has one per kind of order (utils/labelingKind.js).
-export const DEFAULT_STARTING_DAYS = {
-  payment_check: 1,
-  ordering: 2,
-  supplier_lead: 14,
-  supplier_late_days: 0,
-  labeling: 5,
-  labeling_big_container: 5,
-  labeling_new: 5,
-  shipping: 4,
-}
-
-// How often a supplier is late, as DMC staff put it, as a share of deliveries.
-// DMC: suppliers are "sometimes" late, about 20% of deliveries.
-export const LATE_SHARES = { rarely: 0.1, sometimes: 0.2, often: 0.5 }
-
-// How often a supplier DMC gave no numbers of its own is late.
-export const USUAL_LATE_FREQUENCY = 'sometimes'
-
-export const RECORD_WEIGHT = 5          // records count for n ÷ (n + 5)
-const MIN_PO_DAYS = MIN_PO_DELIVERY_DAYS // DMC's minimum for a PO's promised date
-const QUICK_SHARE = 0.8                 // a starting value's likely range:
-const SLOW_SHARE = 1.3                  //   20% quicker to 30% slower
+export const RECORD_WEIGHT = 5          // a group's own records count for n ÷ (n + 5)
+export const MIN_RECORDS = 3            // records a step needs before it's estimated
+const MIN_PO_DAYS = MIN_PO_DELIVERY_DAYS // the shortest delivery a PO may ask for
 const MIN_FINISHED_DAYS = 1             // quicker "finished" orders are test runs
 const MAX_STEP_DAYS = 180               // longer is a mistake in the records
 
@@ -100,13 +83,19 @@ const standardDeviation = (values) => {
   return Math.sqrt(values.reduce((sum, value) => sum + Math.pow(value - avg, 2), 0) / values.length)
 }
 
+const isDays = (value) => value !== null && value !== undefined && Number.isFinite(Number(value))
+
 const byTime = (a, b) => new Date(a.changed_at).getTime() - new Date(b.changed_at).getTime()
 
 // A YYYY-MM-DD date as a moment: midday in the Philippines, so adding days
 // never lands on the wrong date.
 const dateToTime = (date) => Date.parse(`${date}T12:00:00+08:00`)
 
-// The share of a step's time that comes from records rather than starting values.
+// The month (1-12) a moment falls in, in the Philippines.
+const manilaMonth = (time) => new Date(time + 8 * 60 * 60 * 1000).getUTCMonth() + 1
+
+// The share of a group's days that comes from its own records rather than the
+// wider group's.
 export const recordShare = (count) => count / (count + RECORD_WEIGHT)
 
 // More records and steadier times = more confidence, from 40% to 95%.
@@ -118,43 +107,68 @@ function confidenceFor(values) {
   return Math.max(40, Math.min(Math.round(45 + 50 * sampleFactor * consistencyFactor), 95))
 }
 
-// A step's typical, quick and slow days: the records' middle value and
-// quarters, blended with a starting value. With no records, the starting value.
-export function blendStep(durations, startingDays) {
-  const share = recordShare(durations.length)
-  const start = { typical: startingDays, quick: startingDays * QUICK_SHARE, slow: startingDays * SLOW_SHARE }
-
-  if (!durations.length) return { ...start, count: 0, share: 0, confidence: 40 }
+// Days from records: the middle value, with the quicker and slower quarters as
+// the likely range. Null with fewer than MIN_RECORDS records.
+export function spanOf(values = []) {
+  if (values.length < MIN_RECORDS) return null
 
   return {
-    typical: share * median(durations) + (1 - share) * start.typical,
-    quick: share * percentile(durations, 0.25) + (1 - share) * start.quick,
-    slow: share * percentile(durations, 0.75) + (1 - share) * start.slow,
-    count: durations.length,
-    share,
-    confidence: confidenceFor(durations),
+    typical: median(values),
+    quick: percentile(values, 0.25),
+    slow: percentile(values, 0.75),
+    count: values.length,
+    share: 1,
+    confidence: confidenceFor(values),
   }
 }
 
-// What's left of a step the order is already in. Past orders that had been in
-// it at least as long show how much longer it takes; with none, 1 more day.
-function remainingOfStep(span, durations, startingDays, elapsed) {
-  const longer = durations.filter((days) => days > elapsed).map((days) => days - elapsed)
-  const fromRecords = longer.length
-    ? { typical: median(longer), quick: percentile(longer, 0.25), slow: percentile(longer, 0.75) }
-    : { typical: 1, quick: 1, slow: 2 }
-  const fromStart = {
-    typical: Math.max(startingDays - elapsed, 1),
-    quick: Math.max(startingDays * QUICK_SHARE - elapsed, 0.5),
-    slow: Math.max(startingDays * SLOW_SHARE - elapsed, 2),
-  }
-  const share = span.share
+// A group's days from its own records, leaning on a wider group's records while
+// its own are few: its n records count for n ÷ (n + 5), the wider group's for
+// the rest. E.g. one supplier's deliveries and every supplier's, or one kind of
+// order's labeling and every order's. Without a wider group, its own records
+// alone. Null when there aren't MIN_RECORDS records to go by.
+export function blendStep(own = [], wider = null) {
+  const widerSpan = wider ? spanOf(wider) : null
+  if (!widerSpan) return spanOf(own)
+  if (!own.length) return { ...widerSpan, count: 0, share: 0 }
+
+  const share = recordShare(own.length)
+  const mix = (ownValue, widerValue) => share * ownValue + (1 - share) * widerValue
 
   return {
-    typical: share * fromRecords.typical + (1 - share) * fromStart.typical,
-    quick: share * fromRecords.quick + (1 - share) * fromStart.quick,
-    slow: share * fromRecords.slow + (1 - share) * fromStart.slow,
+    typical: mix(median(own), widerSpan.typical),
+    quick: mix(percentile(own, 0.25), widerSpan.quick),
+    slow: mix(percentile(own, 0.75), widerSpan.slow),
+    count: own.length,
+    share,
+    confidence: Math.round(mix(confidenceFor(own), widerSpan.confidence)),
   }
+}
+
+// How many days longer (or shorter) than usual things took in each month, found
+// in the records: each month's middle value against all months', counting for
+// n ÷ (n + 5) of the difference, so a month with few records barely moves.
+// records: [{ month: 1-12, days }]. Returns { 1-12: days }.
+export function monthEffects(records = []) {
+  const effects = {}
+  if (records.length < MIN_RECORDS) return effects
+
+  const overall = median(records.map((record) => record.days))
+
+  for (let month = 1; month <= 12; month++) {
+    const values = records.filter((record) => record.month === month).map((record) => record.days)
+    if (values.length) effects[month] = recordShare(values.length) * (median(values) - overall)
+  }
+
+  return effects
+}
+
+// What's left of a step the order is already in: how much longer past orders
+// took once they'd been in it this long. Slower than all of them: a day more.
+function remainingOfStep(durations, elapsed) {
+  const longer = durations.filter((days) => days > elapsed).map((days) => days - elapsed)
+  if (!longer.length) return { typical: 1, quick: 1, slow: 2 }
+  return { typical: median(longer), quick: percentile(longer, 0.25), slow: percentile(longer, 0.75) }
 }
 
 
@@ -224,55 +238,118 @@ export function buildStageStatistics(allHistory, labelingKindOf = null) {
 // Suppliers
 // =============================================================================
 
-// How often a supplier is late and by how much, as DMC staff put it: its own
-// numbers, else DMC's for every supplier, which DMC said are sometimes late.
-// starting: the starting days (supplier_late_days).
-function lateNumbers(supplier, starting) {
-  const theirs = supplier.starting || {}
-  const ownLateDays = theirs.usualLateDays === null || theirs.usualLateDays === undefined || theirs.usualLateDays === ''
-    ? null
-    : Number(theirs.usualLateDays)
-  const usualLate = ownLateDays ?? (Number(starting?.supplier_late_days) || 0)
-  const lateFrequency = theirs.lateFrequency || (usualLate > 0 ? USUAL_LATE_FREQUENCY : null)
-  return { usualLate, lateFrequency }
-}
-
 // The chance a supplier's delivery comes late: the share of its own deliveries
-// that came late, blended with how often DMC says it's late. A supplier late
-// 1 time in 5 by 3 weeks pushes the typical date out, but isn't likely late.
-export function lateChanceOf(supplier, starting) {
-  const { lateFrequency } = lateNumbers(supplier, starting)
-  const fromDmc = LATE_SHARES[lateFrequency] || 0
-  const lateness = (supplier.history?.lateness || []).filter((days) => days !== null && days !== undefined)
-  if (!lateness.length) return fromDmc
-  const share = recordShare(lateness.length)
-  return share * (lateness.filter((days) => days > 0).length / lateness.length) + (1 - share) * fromDmc
+// that came late, leaning on every supplier's share while it has few.
+// pool: every supplier's deliveries (utils/estimateInputs.js's supplierPool).
+export function lateChanceOf(supplier, pool = {}) {
+  const lateShare = (values) => values.filter((days) => days > 0).length / values.length
+  const own = (supplier.history?.lateness || []).filter(isDays)
+  const all = (pool.lateness || []).filter(isDays)
+
+  if (!own.length) return all.length ? lateShare(all) : 0
+  if (!all.length) return lateShare(own)
+
+  const share = recordShare(own.length)
+  return share * lateShare(own) + (1 - share) * lateShare(all)
 }
 
-// When each supplier the order still waits on should deliver, in the typical,
-// quick and slow cases, and which deliveries are already overdue.
+// A supplier's past days (to deliver, or late) as weighted samples: its own
+// records for n ÷ (n + 5), every supplier's for the rest, as blendStep weighs
+// them. Null when there aren't enough to go by.
+function weightedSamples(own = [], wider = []) {
+  const widerOk = wider.length >= MIN_RECORDS
+  if (!widerOk) return own.length >= MIN_RECORDS ? own.map((days) => ({ days, weight: 1 / own.length })) : null
+  if (!own.length) return wider.map((days) => ({ days, weight: 1 / wider.length }))
+
+  const share = recordShare(own.length)
+  return [
+    ...own.map((days) => ({ days, weight: share / own.length })),
+    ...wider.map((days) => ({ days, weight: (1 - share) / wider.length })),
+  ]
+}
+
+// The day by which a share q of the weighted samples is in.
+function weightedQuantile(samples, q) {
+  const sorted = [...samples].sort((a, b) => a.days - b.days)
+  let total = 0
+  for (const sample of sorted) {
+    total += sample.weight
+    if (total >= q - 1e-9) return sample.days
+  }
+  return sorted.at(-1).days
+}
+
+// The same samples moved so their middle value is `middle` (the model's).
+const recenter = (samples, middle) => {
+  const shift = middle - weightedQuantile(samples, 0.5)
+  return samples.map((sample) => ({ ...sample, days: sample.days + shift }))
+}
+
+// When every one of several deliveries is in: the day by which they've all
+// arrived with chance q. Each delivery is weighted samples of days. The chance
+// all are in by a day is each one's chance multiplied, so the more suppliers
+// an order waits on, the likelier one of them is late: three suppliers each on
+// time 4 times in 5 are all on time only about half the time (0.8 × 0.8 × 0.8).
+export function quantileOfLatest(deliveries, q) {
+  const prepared = deliveries.map((samples) => {
+    const sorted = [...samples].sort((a, b) => a.days - b.days)
+    let total = 0
+    return sorted.map((sample) => ({ days: sample.days, upTo: (total += sample.weight) }))
+  })
+  const chanceBy = (rows, day) => {
+    let chance = 0
+    for (const row of rows) {
+      if (row.days > day) break
+      chance = row.upTo
+    }
+    return chance
+  }
+  const days = [...new Set(prepared.flatMap((rows) => rows.map((row) => row.days)))].sort((a, b) => a - b)
+
+  for (const day of days) {
+    if (prepared.reduce((chance, rows) => chance * chanceBy(rows, day), 1) >= q - 1e-9) return day
+  }
+  return days.at(-1)
+}
+
+// When the order's suppliers should all have delivered, in the typical, quick
+// and slow cases, and which deliveries are already overdue. The order waits
+// for all of them, so its date is when every delivery is likely in, worked out
+// from each supplier's past deliveries (quantileOfLatest).
 //
 // suppliers: [{ supplierId, name, promised, receivedOn, orderedOn, cases, products,
-//               history: { leadDays, lateness },
-//               starting: { usualLeadDays, lateFrequency, usualLateDays } }]
+//               history: { leadDays, lateness } }]
 // A supplier with a promised date has its PO; one without is still to be ordered,
 // starting when ordering from suppliers is done (laneStarts).
+// pool:          every supplier's deliveries (estimateInputs' supplierPool): what
+//                a supplier with few of its own leans on, and the busy months
+// stepDurations: the supplier step's days from the status history, for
+//                suppliers not ordered from yet when no supplier has deliveries
 // model (optional): the saved supplier model, used only when it beat the
-// statistics (utils/predictionModel.js): days early or late, from the supplier,
-// the cases and products ordered from it, the month and the days it's given.
-export function supplierArrivals(suppliers, laneStarts, now, starting, busyExtraFor, model = null) {
-  const ends = { ...laneStarts }
+//   statistics (utils/predictionModel.js): days early or late, from the supplier,
+//   the cases and products ordered from it, the month and the days it's given.
+//   It moves the middle of a supplier's days; its past deliveries keep the spread.
+// unknown: true when a supplier not ordered from yet has nothing to go by.
+export function supplierArrivals(suppliers, laneStarts, now, pool = {}, stepDurations = [], model = null) {
   const overdue = []
   const confidences = []
+  const effects = monthEffects(pool.leadByMonth || [])
+  const start = laneStarts.typical
+  const busyExtra = effects[manilaMonth(start)] || 0
+  const allLateness = (pool.lateness || []).filter(isDays)
+  const allLeads = pool.leadDays || []
+  // Each delivery still to come, as weighted samples of days from the start.
+  const waitingOn = []
   let usedModel = false
+  let unknown = false
+  let usedStepRecords = false
 
   for (const supplier of suppliers) {
     if (supplier.receivedOn) continue
 
     const history = supplier.history || { leadDays: [], lateness: [] }
-    const theirs = supplier.starting || {}
-    const { usualLate, lateFrequency } = lateNumbers(supplier, starting)
-    let arrival
+    const lateness = (history.lateness || []).filter(isDays)
+    const fromStart = (time) => (time - start) / DAY
 
     // The model's days early or late, for a PO sent at a time with so many days given.
     const byModel = (daysGiven, sentAt) => model.predict({
@@ -280,23 +357,10 @@ export function supplierArrivals(suppliers, laneStarts, now, starting, busyExtra
       cases: supplier.cases,
       products: supplier.products,
       daysGiven,
-      month: new Date(sentAt + 8 * 60 * 60 * 1000).getUTCMonth() + 1,
+      month: manilaMonth(sentAt),
     })
 
     if (supplier.promised) {
-      // Ordered: the promised date, moved by how early or late this supplier
-      // usually is. DMC's numbers: late on a share of deliveries, by so many days.
-      const lateness = (history.lateness || []).filter((days) => days !== null && days !== undefined)
-      const share = recordShare(lateness.length)
-      const start = { typical: (LATE_SHARES[lateFrequency] || 0) * usualLate, quick: 0, slow: usualLate }
-      const late = lateness.length
-        ? {
-            typical: share * median(lateness) + (1 - share) * start.typical,
-            quick: share * percentile(lateness, 0.25) + (1 - share) * start.quick,
-            slow: share * percentile(lateness, 0.75) + (1 - share) * start.slow,
-          }
-        : start
-
       const promisedAt = dateToTime(supplier.promised)
       const overdueDays = (now - promisedAt) / DAY
       // Days overdue by the calendar in the Philippines: promised Nov 2, on
@@ -305,66 +369,74 @@ export function supplierArrivals(suppliers, laneStarts, now, starting, busyExtra
       const daysPastPromise = Math.round((Date.parse(today) - Date.parse(supplier.promised)) / DAY)
 
       if (daysPastPromise >= 1) {
-        // Already late: what that supplier's late deliveries usually took, at least 1 more day.
-        const lateOnes = lateness.filter((days) => days > 0)
-        const usualWhenLate = lateOnes.length
-          ? share * median(lateOnes) + (1 - share) * (usualLate || 3)
-          : usualLate || 3
-        const more = Math.max(usualWhenLate - overdueDays, 1)
-        arrival = { typical: now + more * DAY, quick: now + DAY, slow: now + (more + 3) * DAY }
+        // Already late: how much longer deliveries that came at least this late
+        // took. None that late on record: at least 1 more day.
+        const remaining = (values) => values.filter((days) => days > overdueDays).map((days) => Math.max(days - overdueDays, 1))
+        const samples = weightedSamples(remaining(lateness), remaining(allLateness)) || [{ days: 1, weight: 1 }]
+        waitingOn.push(samples.map((sample) => ({ days: fromStart(now) + sample.days, weight: sample.weight })))
         overdue.push({ name: supplier.name, days: daysPastPromise })
-      } else {
-        const modelled = model && supplier.orderedOn
-          ? byModel(Math.round((Date.parse(supplier.promised) - Date.parse(supplier.orderedOn)) / DAY), dateToTime(supplier.orderedOn))
-          : null
-        const days = modelled || late
-        arrival = {
-          typical: promisedAt + days.typical * DAY,
-          quick: promisedAt + days.quick * DAY,
-          slow: promisedAt + days.slow * DAY,
-        }
-        if (modelled) usedModel = true
+        confidences.push(blendStep(lateness, allLateness)?.confidence ?? 40)
+        continue
       }
 
-      confidences.push(model && supplier.orderedOn ? model.confidence : confidenceFor(lateness))
-    } else if (model) {
-      // Not ordered yet, with the model: given what Add PO will suggest (its
-      // usual time, at least DMC's PO minimum), how early or late it should come.
-      const startingLead = (Number(theirs.usualLeadDays) || starting.supplier_lead) + busyExtraFor(laneStarts.typical)
-      const daysGiven = Math.max(MIN_PO_DAYS, Math.ceil(blendStep(history.leadDays || [], startingLead).typical))
-      const days = byModel(daysGiven, laneStarts.typical)
-      arrival = {
-        typical: laneStarts.typical + (daysGiven + days.typical) * DAY,
-        quick: laneStarts.quick + (daysGiven + days.quick) * DAY,
-        slow: laneStarts.slow + (daysGiven + days.slow) * DAY,
+      // Ordered: its promised day, moved by how early or late it has been. With
+      // no deliveries anywhere yet: the promised day.
+      let samples = weightedSamples(lateness, allLateness) || [{ days: 0, weight: 1 }]
+      if (model && supplier.orderedOn) {
+        const modelled = byModel(Math.round((Date.parse(supplier.promised) - Date.parse(supplier.orderedOn)) / DAY), dateToTime(supplier.orderedOn))
+        samples = recenter(samples, modelled.typical)
+        usedModel = true
       }
+
+      waitingOn.push(samples.map((sample) => ({ days: fromStart(promisedAt) + sample.days, weight: sample.weight })))
+      confidences.push(model && supplier.orderedOn ? model.confidence : blendStep(lateness, allLateness)?.confidence ?? 40)
+      continue
+    }
+
+    // Not ordered yet: its days from PO to delivery, plus the busy-month days
+    // found in the deliveries for the month its PO goes out.
+    let samples = weightedSamples(history.leadDays || [], allLeads)
+
+    if (!samples) {
+      // No supplier deliveries on record: the supplier step's own days from
+      // finished orders, which already wait for each order's slowest supplier.
+      if ((stepDurations || []).length < MIN_RECORDS) {
+        unknown = true
+        continue
+      }
+      if (!usedStepRecords) {
+        waitingOn.push(stepDurations.map((days) => ({ days, weight: 1 / stepDurations.length })))
+        confidences.push(confidenceFor(stepDurations))
+        usedStepRecords = true
+      }
+      continue
+    }
+
+    samples = samples.map((sample) => ({ ...sample, days: Math.max(sample.days + busyExtra, 0) }))
+
+    if (model) {
+      // With the model: given what Add PO will suggest (its usual days, at
+      // least the PO minimum), how early or late it should come.
+      const daysGiven = Math.max(MIN_PO_DAYS, Math.ceil(weightedQuantile(samples, 0.5)))
+      samples = recenter(samples, daysGiven + byModel(daysGiven, start).typical)
       usedModel = true
       confidences.push(model.confidence)
     } else {
-      // Not ordered yet: its usual time from PO to delivery, plus DMC's extra
-      // days if that falls in a busy month.
-      const startingLead = (Number(theirs.usualLeadDays) || starting.supplier_lead) + busyExtraFor(laneStarts.typical)
-      const span = blendStep(history.leadDays || [], startingLead)
-      // DMC's "usually late by" widens the slow case of its starting value.
-      const slow = history.leadDays?.length
-        ? span.slow
-        : Math.max(span.slow, startingLead + usualLate)
-
-      arrival = {
-        typical: laneStarts.typical + span.typical * DAY,
-        quick: laneStarts.quick + span.quick * DAY,
-        slow: laneStarts.slow + slow * DAY,
-      }
-      confidences.push(span.confidence)
+      confidences.push(blendStep(history.leadDays || [], allLeads)?.confidence ?? 40)
     }
 
-    // Nothing arrives before now.
-    ends.typical = Math.max(ends.typical, arrival.typical, now)
-    ends.quick = Math.max(ends.quick, arrival.quick, now)
-    ends.slow = Math.max(ends.slow, arrival.slow, now)
+    waitingOn.push(samples)
   }
 
-  return { ends, overdue, confidence: confidences.length ? Math.round(average(confidences)) : null, usedModel }
+  // Nothing arrives before now, and the step can't end before it starts.
+  const ends = { ...laneStarts }
+  if (waitingOn.length) {
+    ends.quick = Math.max(laneStarts.quick + Math.max(quantileOfLatest(waitingOn, 0.25), 0) * DAY, now)
+    ends.typical = Math.max(laneStarts.typical + Math.max(quantileOfLatest(waitingOn, 0.5), 0) * DAY, now)
+    ends.slow = Math.max(laneStarts.slow + Math.max(quantileOfLatest(waitingOn, 0.75), 0) * DAY, now)
+  }
+
+  return { ends, overdue, confidence: confidences.length ? Math.round(average(confidences)) : null, usedModel, unknown }
 }
 
 
@@ -373,22 +445,19 @@ export function supplierArrivals(suppliers, laneStarts, now, starting, busyExtra
 // =============================================================================
 
 // order:   id, status, created_at, requested_ship_date (or preferred_ship_date)
-// context: everything optional; without it the steps use the records and the
-//          default starting values only.
-//   startingDays  DMC's starting values (DEFAULT_STARTING_DAYS's keys)
-//   suppliers     see supplierArrivals; without them the supplier step uses
-//                 the records of the whole step
-//   cases         cases ordered, for the labeling model
-//   country       { sailingDays } for the customer's country (estimateInputs' countryFrom)
+// context: everything optional; without it the steps use the status history only.
+//   suppliers     see supplierArrivals; without them the supplier step uses the
+//                 records of the whole step
+//   supplierPool  every supplier's deliveries (estimateInputs' supplierPool)
+//   sailing       { typical, quick, slow, count, nearest } days at sea to the
+//                 customer's country, from recorded arrivals; none, no arrival date
 //   labelingKind  regular, big or new (utils/labelingKind.js); bigContainer: a 40-ft
-//   busyMonths    { 1-12: extra days } for suppliers ordered from in that month
-//   products      order lines, and countryName, for the labeling model
+//   cases, products, countryName  the order's size and country, for the labeling model
 //   models        { supplier, labeling }: the saved models in use, if any
 //   now           the moment to estimate from (default: now)
 export function predictOrder(order, stageStatistics, historyByOrder, context = {}) {
   const now = context.now ? new Date(context.now).getTime() : Date.now()
   const currentStatus = normalizeStatus(order.status)
-  const starting = { ...DEFAULT_STARTING_DAYS, ...(context.startingDays || {}) }
   const orderHistory = [...(historyByOrder[order.id] || [])].sort(byTime)
   const requestedShipDate = order.requested_ship_date || order.preferred_ship_date || null
 
@@ -412,24 +481,24 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
     }
   }
 
-  // Labeling learns only from orders of the same kind, when the kinds are known.
-  const statsFor = (key) => {
-    const byKind = key === 'labeling' && labelingKind ? stageStatistics?.labeling?.byKind : null
-    return byKind ? byKind[labelingKind] || [] : stageStatistics?.[key]?.durations || []
-  }
-  const country = context.country || {}
-  const busyMonths = context.busyMonths || {}
-  const busyExtraFor = (time) => Number(busyMonths[new Date(time + 8 * 60 * 60 * 1000).getUTCMonth() + 1]) || 0
-
-  // DMC's starting values. Labeling's depends on the kind of order: repeat
-  // products in a 20-ft or in a 40-ft, or a new customer or product.
+  // The records each step goes by. Labeling: orders of the same kind, leaning
+  // on every order's labeling while that kind has few.
   const labelingKind = context.labelingKind || null
-  const startingFor = {
-    payment_check: starting.payment_check,
-    ordering: starting.ordering,
-    suppliers: starting.supplier_lead,
-    labeling: Number(starting[LABELING_SETTING[labelingKind || 'regular']] ?? starting.labeling),
-    shipping: starting.shipping,
+  const allDurations = (key) => stageStatistics?.[key]?.durations || []
+  const kindDurations = (key) => (key === 'labeling' && labelingKind ? stageStatistics?.labeling?.byKind?.[labelingKind] || null : null)
+  const spanFor = (key) => (kindDurations(key) ? blendStep(kindDurations(key), allDurations(key)) : blendStep(allDurations(key)))
+
+  // What's left of the step an order is in, leaning the same way: its own
+  // kind's records for n ÷ (n + 5), every order's for the rest.
+  const remainingFor = (key, elapsed) => {
+    const fromAll = remainingOfStep(allDurations(key), elapsed)
+    const own = kindDurations(key)
+    if (!own?.length) return fromAll
+
+    const fromOwn = remainingOfStep(own, elapsed)
+    const share = recordShare(own.length)
+    const mix = (field) => share * fromOwn[field] + (1 - share) * fromAll[field]
+    return { typical: mix('typical'), quick: mix('quick'), slow: mix('slow') }
   }
 
   // When the order entered its current status (else when it was created).
@@ -444,6 +513,7 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
   let readyLanes = null
   let overdueSuppliers = []
   let stuckStep = null
+  let learning = null
   // Which way each step was worked out, for staff.
   const methods = { suppliers: 'statistics', labeling: 'statistics' }
   const labelingModel = context.models?.labeling || null
@@ -452,10 +522,15 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
 
   for (const step of ESTIMATE_STEPS.slice(firstStep)) {
     const isCurrent = step === currentStep
-    const full = blendStep(statsFor(step.key), startingFor[step.key])
+    const full = spanFor(step.key)
 
     if (step.key === 'suppliers' && context.suppliers?.length) {
-      const { ends, overdue, confidence, usedModel } = supplierArrivals(context.suppliers, lanes, now, starting, busyExtraFor, context.models?.supplier || null)
+      const { ends, overdue, confidence, usedModel, unknown } = supplierArrivals(context.suppliers, lanes, now, context.supplierPool || {}, allDurations(step.key), context.models?.supplier || null)
+      if (unknown) {
+        learning = { step: step.key, label: step.label, records: allDurations(step.key).length, needed: MIN_RECORDS }
+        break
+      }
+
       if (usedModel) methods.suppliers = 'model'
       lanes.typical = ends.typical
       lanes.quick = ends.quick
@@ -474,7 +549,7 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
           cases: Number(context.cases) || 0,
           products: Number(context.products) || 1,
           country: context.countryName,
-          month: new Date(lanes.typical + 8 * 60 * 60 * 1000).getUTCMonth() + 1,
+          month: manilaMonth(lanes.typical),
           newLabels: labelingKind === 'new' ? 1 : 0,
           bigContainer: context.bigContainer ? 1 : 0,
         })
@@ -483,8 +558,14 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
         methods.labeling = 'model'
       }
 
+      // Too few finished orders with this step: no estimate yet.
+      if (!whole) {
+        learning = { step: step.key, label: step.label, records: allDurations(step.key).length, needed: MIN_RECORDS }
+        break
+      }
+
       const span = !isCurrent ? whole
-        : whole === full ? remainingOfStep(full, statsFor(step.key), startingFor[step.key], currentStageAge)
+        : whole === full ? remainingFor(step.key, currentStageAge)
           : { typical: Math.max(whole.typical - currentStageAge, 1), quick: Math.max(whole.quick - currentStageAge, 0.5), slow: Math.max(whole.slow - currentStageAge, 2) }
 
       if (isCurrent && currentStageAge > whole.slow) {
@@ -502,6 +583,36 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
     if (step.key === 'labeling') readyLanes = { ...lanes }
   }
 
+  // Still learning: too few records for one of the steps ahead, so no dates.
+  if (learning) {
+    const text = `Still learning: ${learning.label.toLowerCase()} needs ${learning.needed} finished orders to estimate; there ${learning.records === 1 ? 'is' : 'are'} ${learning.records}.`
+    return {
+      ...order,
+      currentStatus,
+      ifPaidToday,
+      estimatedReadyDate: null,
+      estimatedShipDate: null,
+      shipDateRange: null,
+      estimatedArrivalDate: null,
+      arrivalRange: null,
+      requestedShipDate,
+      daysPastRequested: null,
+      confidence: 0,
+      roughEstimate: true,
+      risk: null,
+      riskReason: text,
+      riskReasons: [],
+      learning: { ...learning, text },
+      stuckStep: null,
+      overdueSuppliers: [],
+      methods,
+      customerNote: null,
+      stepsAhead: [],
+      currentStageAge,
+      expectedRemainingDays: null,
+    }
+  }
+
   // An order already ready for shipment was ready when it got there.
   const estimatedReadyDate = currentStatus === 'ready for shipment'
     ? enteredAt
@@ -510,8 +621,12 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
   const estimatedShipDate = new Date(lanes.typical)
   const shipDateRange = { quick: new Date(lanes.quick), slow: new Date(lanes.slow) }
 
-  const sailingDays = Number(country.sailingDays)
-  const estimatedArrivalDate = sailingDays > 0 ? new Date(lanes.typical + sailingDays * DAY) : null
+  // At sea: the days recorded arrivals took to this part of the world.
+  const sailing = context.sailing || null
+  const estimatedArrivalDate = sailing?.typical > 0 ? new Date(lanes.typical + sailing.typical * DAY) : null
+  const arrivalRange = estimatedArrivalDate
+    ? { quick: new Date(lanes.quick + sailing.quick * DAY), slow: new Date(lanes.slow + sailing.slow * DAY) }
+    : null
 
   const confidence = confidences.length ? Math.round(average(confidences)) : 40
 
@@ -528,7 +643,6 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
   const risk = reasons.length ? 'at risk' : 'on track'
   const roughEstimate = confidence < 60
 
-  // What the customer is told: never a supplier's name.
   // What a customer is told: only how the estimate compares with the date they
   // asked for. Never why (a supplier, a slow step): that's for staff.
   let customerNote = null
@@ -543,6 +657,8 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
     estimatedShipDate,
     shipDateRange,
     estimatedArrivalDate,
+    arrivalRange,
+    arrivalNearest: estimatedArrivalDate ? sailing.nearest || null : null,
     requestedShipDate,
     daysPastRequested,
     confidence,
@@ -552,6 +668,7 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
       ? 'A rough estimate: there are few finished orders to learn from yet.'
       : 'Order is progressing within expectations.'),
     riskReasons: reasons,
+    learning: null,
     // The same, as data, for the staff alerts (server/alerts.js).
     stuckStep,
     overdueSuppliers,

@@ -1,69 +1,26 @@
 // =============================================================================
 // Estimate inputs — shaping database rows for utils/predictions.js
 //
-// Turns the rows an estimate needs (DMC's starting values, the order's items
-// and purchase orders, each supplier's past deliveries) into the context that
-// predictOrder takes. The website's staff pages and DMC's server both use it,
-// so an order gets the same estimate everywhere. The callers load the rows.
+// Turns the rows an estimate needs (the order's items and purchase orders, and
+// every supplier's past deliveries) into the context that predictOrder takes.
+// Everything comes from the system's own records. The website's staff pages
+// and DMC's server both use it, so an order gets the same estimate everywhere.
+// The callers load the rows.
 //
 // Imports carry their .js extension so the server (Node) can load this too.
 // =============================================================================
 
-import { DEFAULT_STARTING_DAYS, normalizeStatus } from './predictions.js'
+import { normalizeStatus } from './predictions.js'
 import { manilaDate, SCORE_WINDOW_DAYS } from './supplierScores.js'
-import { countryName, nearestCountry } from './countryPlaces.js'
 import { isBigContainer } from './labelingKind.js'
 
 const DAY = 1000 * 60 * 60 * 24
 
-
-// prediction_settings rows ({ key, days }) over the built-in placeholders.
-export function startingDaysFrom(rows = []) {
-  const starting = { ...DEFAULT_STARTING_DAYS }
-  for (const row of rows) {
-    if (row.key in starting && row.days !== null && row.days !== undefined) starting[row.key] = Number(row.days)
-  }
-  return starting
-}
-
-
-// prediction_busy_months rows ({ month, extra_days }) as { 11: 7, ... }.
-export function busyMonthsFrom(rows = []) {
-  return Object.fromEntries(
-    rows.filter((row) => Number(row.extra_days) > 0).map((row) => [Number(row.month), Number(row.extra_days)])
-  )
-}
-
-
-// The customer's country from prediction_countries rows. A country without its
-// own row goes by the nearest country DMC already ships to, as DMC said; one
-// whose place isn't known (utils/countryPlaces.js) uses the Default row.
-// Returns { sailingDays, isPlaceholder, nearest: the country it went by, if any }.
-export function countryFrom(rows = [], country) {
-  const name = countryName(country)
-  const isDefault = (entry) => countryName(entry.country) === 'default'
-  const shipsTo = rows.filter((entry) => !isDefault(entry) && Number(entry.sailing_days) > 0)
-
-  let row = name ? rows.find((entry) => !isDefault(entry) && countryName(entry.country) === name) : null
-  let nearest = null
-
-  if (!row && name) {
-    const near = nearestCountry(name, shipsTo.map((entry) => entry.country))
-    if (near) {
-      row = shipsTo.find((entry) => entry.country === near.country)
-      nearest = near.country
-    }
-  }
-
-  row = row || rows.find(isDefault)
-  if (!row) return {}
-
-  return {
-    sailingDays: row.sailing_days === null || row.sailing_days === undefined ? null : Number(row.sailing_days),
-    isPlaceholder: Boolean(row.is_placeholder),
-    nearest,
-  }
-}
+// Busy months are found from POs sent at least this long ago: for newer ones,
+// only the quick deliveries are in yet, which would make the month look quick.
+export const SETTLED_PO_DAYS = 60
+// ...and over the last two years, so a month has last year's deliveries too.
+const BUSY_MONTH_WINDOW_DAYS = 730
 
 
 // Each supplier's deliveries from the last 12 months (utils/supplierScores.js's
@@ -83,13 +40,37 @@ export function supplierHistories(deliveries = [], today = new Date()) {
 }
 
 
+// Every supplier's deliveries from the last 12 months together: what a supplier
+// with few deliveries of its own leans on. And, by the month each PO went out,
+// what the busy months are found from: POs of the last two years, sent at
+// least SETTLED_PO_DAYS ago.
+export function supplierPool(deliveries = [], today = new Date()) {
+  const since = manilaDate(today.getTime() - SCORE_WINDOW_DAYS * DAY)
+  const monthsSince = manilaDate(today.getTime() - BUSY_MONTH_WINDOW_DAYS * DAY)
+  const settledBy = manilaDate(today.getTime() - SETTLED_PO_DAYS * DAY)
+  const pool = { leadDays: [], lateness: [], leadByMonth: [] }
+
+  for (const delivery of deliveries) {
+    const settled = delivery.orderedOn && delivery.orderedOn >= monthsSince && delivery.orderedOn <= settledBy
+    if (delivery.leadDays >= 0 && settled) {
+      pool.leadByMonth.push({ month: Number(String(delivery.orderedOn).slice(5, 7)), days: delivery.leadDays })
+    }
+
+    if (delivery.receivedOn < since) continue
+    if (delivery.leadDays >= 0) pool.leadDays.push(delivery.leadDays)
+    if (delivery.lateness !== null && delivery.lateness !== undefined) pool.lateness.push(delivery.lateness)
+  }
+
+  return pool
+}
+
+
 // One order's suppliers: those of its products, and of its purchase orders.
 //   items          [{ products: { supplier_id } }]
 //   purchaseOrders [{ id, expected_delivery_date }]  this order's POs
 //   poLines        [{ purchase_order_id, supplier_id, fully_received_at }]
-//   starting       { supplier_id: prediction_suppliers row }
 //   names          { supplier_id: name }
-export function orderSuppliers({ items = [], purchaseOrders = [], poLines = [], histories = {}, starting = {}, names = {} }) {
+export function orderSuppliers({ items = [], purchaseOrders = [], poLines = [], histories = {}, names = {} }) {
   const orderIds = new Set(purchaseOrders.map((order) => order.id))
   const lines = poLines.filter((line) => orderIds.has(line.purchase_order_id))
 
@@ -105,7 +86,6 @@ export function orderSuppliers({ items = [], purchaseOrders = [], poLines = [], 
 
     // A supplier on more than one PO for this order delivers by the latest promise.
     const promised = theirOrders.map((order) => order.expected_delivery_date).filter(Boolean).sort().at(-1) || null
-    const row = starting[supplierId]
 
     // What's ordered from it (its PO lines, else the order's products from it),
     // and when its PO went out, for the model.
@@ -128,9 +108,6 @@ export function orderSuppliers({ items = [], purchaseOrders = [], poLines = [], 
         ? manilaDate(Math.max(...theirLines.map((line) => Date.parse(line.fully_received_at))))
         : null,
       history: histories[supplierId] || { leadDays: [], lateness: [] },
-      starting: row
-        ? { usualLeadDays: row.usual_lead_days, lateFrequency: row.late_frequency, usualLateDays: row.usual_late_days }
-        : null,
     }
   })
 }
@@ -141,16 +118,16 @@ export const casesIn = (items = []) => items.reduce((sum, item) => sum + (Number
 
 
 // Everything predictOrder's context needs for one order. Missing pieces just
-// leave that part to the defaults. labelingKind: utils/labelingKind.js's;
-// containerSize: the container code, when it isn't on the order (a draft).
-export function estimateContext({ order, items, purchaseOrders, poLines, histories, startingSuppliers, supplierNames, settings, countries, busyMonths, country, now, models = null, labelingKind = null, containerSize = null }) {
+// leave that part to the status history. labelingKind: utils/labelingKind.js's;
+// containerSize: the container code, when it isn't on the order (a draft);
+// sailing: the days at sea to the order's country, from recorded arrivals.
+export function estimateContext({ order, items, purchaseOrders, poLines, histories, pool = null, supplierNames, sailing = null, country, now, models = null, labelingKind = null, containerSize = null }) {
   const shipped = normalizeStatus(order?.status) === 'shipped'
 
   return {
     now,
-    startingDays: startingDaysFrom(settings),
-    busyMonths: busyMonthsFrom(busyMonths),
-    country: countryFrom(countries, country),
+    supplierPool: pool || {},
+    sailing,
     cases: casesIn(items),
     products: (items || []).length,
     countryName: country || '',
@@ -162,7 +139,6 @@ export function estimateContext({ order, items, purchaseOrders, poLines, histori
       purchaseOrders,
       poLines,
       histories,
-      starting: startingSuppliers,
       names: supplierNames,
     }),
   }

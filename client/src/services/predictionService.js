@@ -1,9 +1,9 @@
 import { supabase } from '../supabase'
 import { authHeaders } from './apiAuth'
-import { allRows, estimateDraft, estimateOrders, forCustomer, loadAllDeliveries, loadOpenDeliveries, loadStartingValues } from '../utils/estimateLoader'
-import { startingDaysFrom, supplierHistories } from '../utils/estimateInputs'
-import { blendStep } from '../utils/predictions'
-import { scoreSuppliers } from '../utils/supplierScores'
+import { allRows, estimateDraft, estimateOrders, forCustomer, loadAllDeliveries, loadOpenDeliveries } from '../utils/estimateLoader'
+import { supplierHistories, supplierPool } from '../utils/estimateInputs'
+import { blendStep, monthEffects } from '../utils/predictions'
+import { manilaDate, scoreSuppliers } from '../utils/supplierScores'
 import { isSimulated } from '../utils/simulated'
 
 export { ORDER_STATUS_FLOW, normalizeStatus, buildStageStatistics, predictOrder } from '../utils/predictions'
@@ -16,10 +16,10 @@ export { ORDER_STATUS_FLOW, normalizeStatus, buildStageStatistics, predictOrder 
 // utils/estimateLoader.js, both shared with DMC's server, so an order gets the
 // same estimate everywhere.
 //
-// Staff estimates are worked out here in the browser: staff can read DMC's
-// starting values, the order's purchase orders and the suppliers' deliveries. A
-// customer can read none of those, so their estimates come from the server
-// (server/routes/estimates.js), which returns only the dates and plain words.
+// Staff estimates are worked out here in the browser: staff can read the
+// order's purchase orders and the suppliers' deliveries. A customer can read
+// neither, so their estimates come from the server (server/routes/estimates.js),
+// which returns only the dates and plain words.
 // =============================================================================
 
 const API = `${import.meta.env.VITE_SERVER_URL}/api`
@@ -54,31 +54,31 @@ export async function previewEstimate({ items, deliveryLocationId, requestedShip
 }
 
 
-// Staff, for Add PO: each supplier's usual days from PO to delivery (its own
-// deliveries blended with DMC's number, as in the estimates), and whether it's
-// often late: by its delivery score, or by DMC staff's word while it has few.
+// Staff, for Add PO: each supplier's usual days from PO to delivery, as in the
+// estimates (its own deliveries, leaning on every supplier's while it has few,
+// plus this month's busy-month days found in the deliveries), and whether it's
+// often late by its delivery score. usualLeadDays is null with no deliveries to
+// go by yet.
 export async function loadSupplierTimings(supplierIds) {
-  const [starting, deliveries] = await Promise.all([
-    loadStartingValues(supabase),
-    loadAllDeliveries(supabase).catch(() => []),
-  ])
+  const deliveries = await loadAllDeliveries(supabase).catch(() => [])
 
   const histories = supplierHistories(deliveries)
+  const pool = supplierPool(deliveries)
+  const thisMonth = Number(manilaDate(Date.now()).slice(5, 7))
+  const busyExtra = monthEffects(pool.leadByMonth)[thisMonth] || 0
   const scores = scoreSuppliers(deliveries, supplierIds)
-  const defaults = startingDaysFrom(starting.settings)
 
   return Object.fromEntries(supplierIds.map((supplierId) => {
-    const theirs = starting.startingSuppliers[supplierId]
-    const startingLead = Number(theirs?.usual_lead_days) || defaults.supplier_lead
+    const lead = blendStep(histories[supplierId]?.leadDays || [], pool.leadDays)
     const score = scores[supplierId]
 
     return [supplierId, {
-      usualLeadDays: blendStep(histories[supplierId]?.leadDays || [], startingLead).typical,
+      usualLeadDays: lead ? Math.max(lead.typical + busyExtra, 0) : null,
       deliveries: score?.count || 0,
       lateCount: score?.lateCount || 0,
       averageDaysLate: score?.averageDaysLate || 0,
       scored: Boolean(score?.enough),
-      often: score?.enough ? score.band?.tone !== 'good' : theirs?.late_frequency === 'often',
+      often: Boolean(score?.enough && score.band?.tone !== 'good'),
       // Its record includes made-up demo deliveries.
       simulated: Boolean(score?.deliveries?.some((delivery) => isSimulated(delivery.poNumber))),
     }]

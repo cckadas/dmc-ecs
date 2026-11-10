@@ -7,7 +7,7 @@ import { loadAllDeliveries } from '../utils/estimateLoader'
 // Supplier scores — loading the data
 //
 // The maths lives in utils/supplierScores.js. Used by Supplier Performance, the
-// Executive Dashboard and Prediction Settings, so all show the same score.
+// Executive Dashboard and the estimates, so all show the same score.
 // Staff only: customers can't read purchase orders (db/migrations/013).
 // =============================================================================
 

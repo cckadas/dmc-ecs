@@ -134,6 +134,9 @@ export default function OrderProgress({ order, forStaff = false }) {
           <p className="text-gray-700">Estimating the ship date...</p>
         ) : prediction?.estimatedShipDate ? (
           <EstimateLines prediction={prediction} forStaff={forStaff} />
+        ) : forStaff && prediction?.learning ? (
+          // Staff: why there's no date yet. The system only estimates from its own records.
+          <p className="text-gray-500">{prediction.learning.text}</p>
         ) : (
           <p className="text-gray-500">Estimated ship date not available yet.</p>
         )}
@@ -311,7 +314,7 @@ function EstimateLines({ prediction, forStaff }) {
         <>
           {note && <p className={`font-medium ${late ? 'text-amber-700' : 'text-green-700'}`}>{note}</p>}
           <p className="text-xs text-gray-500">
-            An estimate from past orders and DMC's usual times, not a guaranteed date{prediction.roughEstimate ? ' (a rough one for now)' : ''}.
+            An estimate from past orders, not a guaranteed date{prediction.roughEstimate ? ' (a rough one for now)' : ''}.
           </p>
         </>
       )}

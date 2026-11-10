@@ -8,7 +8,8 @@ import SimulatedBadge from './SimulatedBadge'
 
 // =============================================================================
 // The four numbers: orders on track, days from payment to shipping, supplier
-// on-time rate and prediction accuracy (utils/analytics.js headlineNumbers). On
+// on-time rate and prediction accuracy (the share of orders that shipped within
+// the likely range shown) (utils/analytics.js headlineNumbers). On
 // the Predictive Analytics page, and on the Executive Dashboard, which loads its
 // own (PredictionNumbersPanel).
 // =============================================================================
@@ -56,10 +57,10 @@ export function PredictionNumbers({ numbers, simulated = false }) {
     },
     {
       label: LABELS[3],
-      value: formatPercent(accuracy.withinShare),
-      note: accuracy.withinShare === null
+      value: formatPercent(accuracy.withinRangeShare ?? null),
+      note: accuracy.withinShare === null || accuracy.withinShare === undefined
         ? `Needs ${accuracy.needed} finished orders; ${accuracy.finished} so far`
-        : `of estimates within ${WITHIN_DAYS} days, tested on ${count(accuracy.tested, 'order')}`,
+        : `shipped within the likely range, tested on ${count(accuracy.tested, 'order')}; ${formatPercent(accuracy.withinShare)} within ${WITHIN_DAYS} days of the date`,
     },
   ]
 

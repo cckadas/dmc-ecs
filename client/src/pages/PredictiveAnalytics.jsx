@@ -1,6 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faTriangleExclamation } from '@fortawesome/free-solid-svg-icons'
 
 import { useAuth } from '../context/AuthContext'
 import { ALL_PARTS, loadAnalytics } from '../services/analyticsService'
@@ -11,6 +9,8 @@ import SimulatedBadge from '../components/SimulatedBadge'
 import {
   AccuracyChart,
   AccuracyTable,
+  BusyMonthsChart,
+  BusyMonthsTable,
   ChartCard,
   ChartEmpty,
   ComingUpChart,
@@ -109,7 +109,7 @@ export default function PredictiveAnalytics() {
     retrain(data.models.rows.length ? 'stale' : 'first')
   }, [data, canTrain])
 
-  const cards = ['steps', 'suppliers', 'suppliers', 'months', 'weeks', 'accuracy'].filter(has).length
+  const cards = ['steps', 'suppliers', 'suppliers', 'suppliers', 'months', 'weeks', 'accuracy'].filter(has).length
 
   return (
     <div>
@@ -157,6 +157,7 @@ export default function PredictiveAnalytics() {
             {has('steps') && <StepsCard steps={data.steps} simulated={data.simulated} />}
             {has('suppliers') && <OnTimeCard onTime={data.onTime} simulated={data.simulated} />}
             {has('suppliers') && <LeadTimeCard leadTimes={data.leadTimes} simulated={data.simulated} />}
+            {has('suppliers') && <BusyMonthsCard months={data.busyMonths} simulated={data.simulated} />}
             {has('months') && <MonthsCard months={data.months} simulated={data.simulated} />}
             {has('weeks') && <WeeksCard weeks={data.weeks} simulated={data.simulated} />}
             {has('accuracy') && <AccuracyCard accuracy={data.accuracy} simulated={data.simulated} />}
@@ -169,7 +170,7 @@ export default function PredictiveAnalytics() {
 
 
 // How each step is estimated (statistics, or the model where it did better),
-// whether DMC's numbers are in yet, and Retrain.
+// and Retrain.
 function MethodNote({ data, canTrain, training, onRetrain }) {
   const rows = data.models?.rows || []
   const available = Boolean(data.models?.available)
@@ -181,9 +182,11 @@ function MethodNote({ data, canTrain, training, onRetrain }) {
     <div className="mb-6 rounded-xl border border-gray-200 bg-white px-5 py-4 text-sm text-gray-600 shadow-sm">
       <p className="font-semibold text-gray-800">How the estimates are made</p>
       <p className="mt-1">
-        Each estimate adds up the time each step usually takes: the system's own records
-        ({count(data.learnedFrom, 'finished order')} so far) blended with DMC staff's starting values. Where the
-        TensorFlow.js model predicted past orders better, it's used for that step instead.
+        Each estimate adds up the time each step usually takes, learned only from the system's own records
+        ({count(data.learnedFrom, 'finished order')} so far), with no numbers typed in by hand. A supplier with few
+        deliveries leans on every supplier's, and busy months are found in the deliveries. A step with too few
+        finished orders has no estimate yet. Where the TensorFlow.js model predicted past orders better, it's used
+        for that step instead.
       </p>
 
       <ul className="mt-3 space-y-2">
@@ -216,13 +219,6 @@ function MethodNote({ data, canTrain, training, onRetrain }) {
 
       {!available && canTrain && (
         <p className="mt-2 text-xs text-gray-500">To train the model, run db/migrations/019 in Supabase first.</p>
-      )}
-
-      {data.placeholders && (
-        <p className="mt-2 flex items-start gap-2 text-amber-700">
-          <FontAwesomeIcon icon={faTriangleExclamation} className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span>The starting values are still placeholders. Enter DMC's own numbers on Prediction Settings.</span>
-        </p>
       )}
     </div>
   )
@@ -267,7 +263,7 @@ function StepsCard({ steps, simulated }) {
       title="Where the time goes"
       question="Which step holds orders up the longest?"
       table={<StepTimesTable steps={steps} />}
-      footnote="The longest bar is the step to work on first. The down payment isn't included, since it waits on the customer."
+      footnote={`From finished orders only. The longest bar is the step to work on first. A step needs ${steps[0]?.needed ?? 3} finished orders before it has numbers. The down payment isn't included, since it waits on the customer.`}
     >
       <StepTimesChart steps={steps} />
     </ChartCard>
@@ -301,7 +297,7 @@ function OnTimeCard({ onTime, simulated }) {
 
 
 function LeadTimeCard({ leadTimes, simulated }) {
-  const { rows, onDefault, defaultDays } = leadTimes
+  const { rows, noDeliveries, allDays } = leadTimes
 
   return (
     <ChartCard
@@ -311,16 +307,36 @@ function LeadTimeCard({ leadTimes, simulated }) {
       table={rows.length ? <LeadTimeTable rows={rows} /> : null}
       footnote={
         <>
-          Days from PO to delivery. The dot is the usual time and the line the likely range: a long line means an
-          unpredictable supplier, even if its usual time looks fine. The dashed line is DMC's {MIN_PO_DELIVERY_DAYS}-day
-          minimum for a PO's promised date.
-          {rows.length > 0 && onDefault > 0 && ` ${count(onDefault, 'supplier')} with no deliveries or usual time from DMC yet ${onDefault === 1 ? 'uses' : 'use'} the default ${defaultDays} days.`}
+          Days from PO to delivery, from each supplier's deliveries. The dot is the usual time and the line the likely
+          range: a long line means an unpredictable supplier, even if its usual time looks fine. A supplier with few
+          deliveries leans on every supplier's (hollow dot). The dashed line is the shortest delivery a PO may ask
+          for ({MIN_PO_DELIVERY_DAYS} days).
+          {rows.length > 0 && noDeliveries > 0 && allDays !== null && ` ${count(noDeliveries, 'supplier')} with no deliveries yet ${noDeliveries === 1 ? 'goes' : 'go'} by every supplier's usual ${formatDays(allDays)}.`}
         </>
       }
     >
       {rows.length
         ? <LeadTimeChart rows={rows} />
-        : <ChartEmpty>No supplier has deliveries or a usual time from DMC yet. Until then, the estimates use the default {defaultDays} days.</ChartEmpty>}
+        : <ChartEmpty>No supplier has finished deliveries yet. Supplier estimates start once deliveries are recorded.</ChartEmpty>}
+    </ChartCard>
+  )
+}
+
+
+function BusyMonthsCard({ months, simulated }) {
+  const found = months.filter((month) => month.deliveries > 0)
+
+  return (
+    <ChartCard
+      simulated={simulated}
+      title="Busy months, found in the deliveries"
+      question="In which months do suppliers take longer?"
+      table={found.length ? <BusyMonthsTable months={months} /> : null}
+      footnote="For POs sent in each month: how many days longer (above the line) or shorter than usual their deliveries took. A month with few deliveries counts for less. The estimates add these days for a supplier not ordered from yet, so nobody has to say which months are busy."
+    >
+      {found.length
+        ? <BusyMonthsChart months={months} />
+        : <ChartEmpty>No supplier deliveries are recorded yet, so no busy months can be found.</ChartEmpty>}
     </ChartCard>
   )
 }
@@ -376,8 +392,8 @@ function AccuracyCard({ accuracy, simulated }) {
       question="How far off are the estimates, and which method is best?"
       table={accuracy.enough ? <AccuracyTable accuracy={accuracy} /> : null}
       footnote={accuracy.enough
-        ? `Tested on the newest ${accuracy.tested} of ${accuracy.finished} finished orders, each predicted as of the day its payment was verified, learning only from the ${accuracy.learnedFrom} before them. "Starting values only" is the baseline: what DMC would guess with no records.${accuracy.methods.some((method) => method.key === 'model') ? ' "Statistics + model" adds the TensorFlow.js model, which learned only from records before these orders.' : ''}`
-        : '"Starting values only" will be the baseline to beat: what DMC would guess with no records.'}
+        ? `Tested on the newest ${accuracy.tested} of ${accuracy.finished} finished orders, each predicted as of the day its payment was verified, learning only from the ${accuracy.learnedFrom} before them. "Same for every order" is the baseline: every order gets the usual ${formatDays(accuracy.usualDays)} from payment to shipping. "Statistics" works it out step by step for each order. Customers see a likely range, so the first chart is how often the real ship date fell inside it. A single date is often off by days, because no one knows at payment which supplier will be late.${accuracy.methods.some((method) => method.key === 'model') ? ' "Statistics + model" adds the TensorFlow.js model, which learned only from records before these orders.' : ''}`
+        : '"Same for every order" will be the baseline to beat: every order given the usual days from payment to shipping.'}
     >
       {accuracy.enough
         ? <AccuracyChart accuracy={accuracy} />

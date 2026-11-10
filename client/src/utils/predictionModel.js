@@ -19,10 +19,9 @@
 // Imports carry their .js extension so the server (Node) can load this too.
 // =============================================================================
 
-import { LATE_SHARES, USUAL_LATE_FREQUENCY, blendStep, recordShare } from './predictions.js'
-import { startingDaysFrom } from './estimateInputs.js'
+import { blendStep } from './predictions.js'
 import { manilaDate } from './supplierScores.js'
-import { LABELING_SETTING, isBigContainer, labelingKinds } from './labelingKind.js'
+import { isBigContainer, labelingKinds } from './labelingKind.js'
 
 export const MODEL_KEYS = { supplier: 'supplier_lateness', labeling: 'labeling_days' }
 export const MODEL_MIN_RECORDS = 30     // finished records to learn from before it's tried
@@ -246,41 +245,25 @@ export function scoreOf(predicted, actual) {
 }
 
 // What the statistics would have said for each test record, learning from the
-// same training records: the baseline the model has to beat.
-//   supplier: that supplier's usual lateness, blended with DMC's numbers
-//   labeling: the usual labeling days of orders of the same kind, blended with
-//             DMC's starting value for that kind
-export function statisticsFor(kind, train, test, starting = {}) {
-  if (kind === 'supplier') {
-    const bySupplier = new Map()
-    for (const record of train) {
-      if (!bySupplier.has(record.supplierId)) bySupplier.set(record.supplierId, [])
-      bySupplier.get(record.supplierId).push(record.value)
-    }
+// same training records: the baseline the model has to beat. As in the
+// estimates (utils/predictions.js), a group with few records leans on everyone's:
+//   supplier: that supplier's usual lateness, leaning on every supplier's
+//   labeling: the usual labeling days of orders of the same kind, leaning on
+//             every order's
+export function statisticsFor(kind, train, test) {
+  const everyone = train.map((record) => record.value)
+  const groupOf = kind === 'supplier' ? (record) => record.supplierId : (record) => record.kind
+  const groups = new Map()
 
-    const startingDays = startingDaysFrom(starting.settings)
-
-    return test.map((record) => {
-      const lateness = bySupplier.get(record.supplierId) || []
-      const theirs = starting.startingSuppliers?.[record.supplierId]
-      // Its own numbers from DMC, else DMC's for every supplier (predictions.js).
-      const ownLate = theirs?.usual_late_days === null || theirs?.usual_late_days === undefined ? null : Number(theirs.usual_late_days)
-      const lateDays = ownLate ?? (Number(startingDays.supplier_late_days) || 0)
-      const frequency = theirs?.late_frequency || (lateDays > 0 ? USUAL_LATE_FREQUENCY : null)
-      const start = (LATE_SHARES[frequency] || 0) * lateDays
-      if (!lateness.length) return start
-      const share = recordShare(lateness.length)
-      return share * median(lateness) + (1 - share) * start
-    })
+  for (const record of train) {
+    const group = groupOf(record)
+    if (!group) continue
+    if (!groups.has(group)) groups.set(group, [])
+    groups.get(group).push(record.value)
   }
 
-  const startingDays = startingDaysFrom(starting.settings)
-  const durations = train.map((record) => record.value)
-  const byKind = { regular: [], big: [], new: [] }
-  for (const record of train) byKind[record.kind]?.push(record.value)
-
   return test.map((record) => {
-    const startingValue = Number(startingDays[LABELING_SETTING[record.kind || 'regular']] ?? startingDays.labeling)
-    return blendStep(record.kind ? byKind[record.kind] : durations, startingValue).typical
+    const own = groups.get(groupOf(record)) || []
+    return blendStep(own, everyone)?.typical ?? median(everyone) ?? 0
   })
 }
