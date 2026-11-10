@@ -10,9 +10,10 @@
 // Imports carry their .js extension so the server (Node) can load this too.
 // =============================================================================
 
-import { normalizeStatus } from './predictions.js'
+import { MIN_RECORDS, blendStep, normalizeStatus } from './predictions.js'
 import { manilaDate, SCORE_WINDOW_DAYS } from './supplierScores.js'
 import { isBigContainer } from './labelingKind.js'
+import { countryName, nearestCountry } from './countryPlaces.js'
 
 const DAY = 1000 * 60 * 60 * 24
 
@@ -62,6 +63,68 @@ export function supplierPool(deliveries = [], today = new Date()) {
   }
 
   return pool
+}
+
+
+// Days at sea of every container whose arrival was recorded (db/migrations/025):
+// from the day it shipped (its last change to shipped, in the Philippines) to
+// the day it arrived, with the country it went to.
+//   orders:    [{ id, delivery_location_id, arrived_on }]  the arrived ones
+//   locations: [{ id, country }]
+//   history:   status changes
+export function sailingRecords({ orders = [], locations = [], history = [] }) {
+  const countryOf = Object.fromEntries(locations.map((location) => [location.id, location.country]))
+  const shippedAt = {}
+
+  for (const entry of history) {
+    if (normalizeStatus(entry.new_status) !== 'shipped') continue
+    const time = Date.parse(entry.changed_at)
+    if (!(shippedAt[entry.customer_order_id] >= time)) shippedAt[entry.customer_order_id] = time
+  }
+
+  const records = []
+  for (const order of orders) {
+    const country = countryOf[order.delivery_location_id]
+    const shipped = shippedAt[order.id]
+    if (!order.arrived_on || !country || !shipped) continue
+
+    const days = Math.round((Date.parse(String(order.arrived_on).slice(0, 10)) - Date.parse(manilaDate(shipped))) / DAY)
+    if (days >= 0) records.push({ orderId: order.id, country, days })
+  }
+
+  return records
+}
+
+
+// The days at sea to a country, from recorded arrivals: its own once it has
+// MIN_RECORDS of them; until then, leaning on the nearest country that has
+// enough (its own n count for n ÷ (n + 5)). Null with nothing close to go by.
+// nearest: the country it leaned on, if any.
+export function sailingFor(records = [], country) {
+  const name = countryName(country)
+  if (!name) return null
+
+  const byCountry = new Map()
+  for (const record of records) {
+    const key = countryName(record.country)
+    if (!byCountry.has(key)) byCountry.set(key, { country: record.country, days: [] })
+    byCountry.get(key).days.push(record.days)
+  }
+
+  const own = byCountry.get(name)?.days || []
+  if (own.length >= MIN_RECORDS) {
+    const span = blendStep(own)
+    return { typical: span.typical, quick: span.quick, slow: span.slow, count: own.length, nearest: null }
+  }
+
+  const withEnough = [...byCountry.entries()]
+    .filter(([key, entry]) => key !== name && entry.days.length >= MIN_RECORDS)
+    .map(([, entry]) => entry.country)
+  const near = nearestCountry(country, withEnough)
+  if (!near) return null
+
+  const span = blendStep(own, byCountry.get(countryName(near.country)).days)
+  return span ? { typical: span.typical, quick: span.quick, slow: span.slow, count: own.length, nearest: near.country } : null
 }
 
 

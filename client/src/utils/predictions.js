@@ -467,7 +467,25 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
   }
 
   if (currentStatus === 'shipped') {
-    return { ...order, currentStatus, shipped: true, shippedOn: lastChangeInto('shipped'), requestedShipDate }
+    // At sea: arrived once its arrival is recorded (db/migrations/025); until
+    // then, expected by the days at sea recorded arrivals took.
+    const shippedOn = lastChangeInto('shipped')
+    const arrivedOn = order.arrived_on || null
+    const sailing = !arrivedOn && shippedOn && context.sailing?.typical >= 0 ? context.sailing : null
+    const fromShip = (days) => new Date(shippedOn.getTime() + days * DAY)
+
+    return {
+      ...order,
+      currentStatus,
+      shipped: true,
+      shippedOn,
+      requestedShipDate,
+      arrivedOn,
+      arrivalRecordedAt: order.arrival_recorded_at || null,
+      estimatedArrivalDate: sailing ? fromShip(sailing.typical) : null,
+      arrivalRange: sailing ? { quick: fromShip(sailing.quick), slow: fromShip(sailing.slow) } : null,
+      arrivalNearest: sailing?.nearest || null,
+    }
   }
 
   const ifPaidToday = currentStatus === 'pending payment' || currentStatus === 'payment rejected'

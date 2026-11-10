@@ -9,7 +9,12 @@ import SimulatedBadge from '../components/SimulatedBadge'
 import {
   AccuracyChart,
   AccuracyTable,
+  AtSeaChart,
+  AtSeaTable,
   BusyMonthsChart,
+  DemandChart,
+  DemandTable,
+  TopProductsList,
   BusyMonthsTable,
   ChartCard,
   ChartEmpty,
@@ -42,7 +47,7 @@ import { count, formatDays } from '../utils/chartFormat'
 const PARTS_BY_ROLE = {
   admin: ALL_PARTS,
   management: ALL_PARTS,
-  procurement: ['suppliers'],
+  procurement: ['suppliers', 'demand'],
   warehouse: ['weeks'],
 }
 
@@ -109,7 +114,7 @@ export default function PredictiveAnalytics() {
     retrain(data.models.rows.length ? 'stale' : 'first')
   }, [data, canTrain])
 
-  const cards = ['steps', 'suppliers', 'suppliers', 'suppliers', 'months', 'weeks', 'accuracy'].filter(has).length
+  const cards = ['steps', 'steps', 'suppliers', 'suppliers', 'suppliers', 'months', 'weeks', 'accuracy', 'demand'].filter(has).length
 
   return (
     <div>
@@ -155,12 +160,14 @@ export default function PredictiveAnalytics() {
 
           <div className={`grid grid-cols-1 gap-6 ${cards > 1 ? 'lg:grid-cols-2' : ''}`}>
             {has('steps') && <StepsCard steps={data.steps} simulated={data.simulated} />}
+            {has('steps') && <AtSeaCard atSea={data.atSea} simulated={data.simulated} />}
             {has('suppliers') && <OnTimeCard onTime={data.onTime} simulated={data.simulated} />}
             {has('suppliers') && <LeadTimeCard leadTimes={data.leadTimes} simulated={data.simulated} />}
             {has('suppliers') && <BusyMonthsCard months={data.busyMonths} simulated={data.simulated} />}
             {has('months') && <MonthsCard months={data.months} simulated={data.simulated} />}
             {has('weeks') && <WeeksCard weeks={data.weeks} simulated={data.simulated} />}
             {has('accuracy') && <AccuracyCard accuracy={data.accuracy} simulated={data.simulated} />}
+            {has('demand') && <DemandCard demand={data.demand} simulated={data.simulated} wide={cards > 1} />}
           </div>
         </>
       )}
@@ -184,9 +191,9 @@ function MethodNote({ data, canTrain, training, onRetrain }) {
       <p className="mt-1">
         Each estimate adds up the time each step usually takes, learned only from the system's own records
         ({count(data.learnedFrom, 'finished order')} so far), with no numbers typed in by hand. A supplier with few
-        deliveries leans on every supplier's, and busy months are found in the deliveries. A step with too few
-        finished orders has no estimate yet. Where the TensorFlow.js model predicted past orders better, it's used
-        for that step instead.
+        deliveries leans on every supplier's, busy months are found in the deliveries, and arrival dates come from
+        the arrivals staff record. A step with too few finished orders has no estimate yet. Where the TensorFlow.js
+        model predicted past orders better, it's used for that step instead.
       </p>
 
       <ul className="mt-3 space-y-2">
@@ -266,6 +273,32 @@ function StepsCard({ steps, simulated }) {
       footnote={`From finished orders only. The longest bar is the step to work on first. A step needs ${steps[0]?.needed ?? 3} finished orders before it has numbers. The down payment isn't included, since it waits on the customer.`}
     >
       <StepTimesChart steps={steps} />
+    </ChartCard>
+  )
+}
+
+
+function AtSeaCard({ atSea, simulated }) {
+  const { rows, tooFew, needed } = atSea
+
+  return (
+    <ChartCard
+      simulated={simulated}
+      title="Days at sea, by country"
+      question="How long do containers take to reach each country?"
+      table={rows.length ? <AtSeaTable rows={rows} /> : null}
+      footnote={
+        <>
+          From recorded arrivals: the day staff record a container arrived, minus the day it shipped. The arrival
+          estimates come from these. A country needs {needed} arrivals to be shown; until then its estimates go by the
+          nearest country that has them.
+          {tooFew.length > 0 && ` Not enough arrivals yet: ${tooFew.map((country) => `${country.name} (${country.arrivals})`).join(', ')}.`}
+        </>
+      }
+    >
+      {rows.length
+        ? <AtSeaChart rows={rows} />
+        : <ChartEmpty>No arrivals recorded yet. Staff record the day a shipped order's container arrives; the arrival estimates start once there are {needed} for a country.</ChartEmpty>}
     </ChartCard>
   )
 }
@@ -380,6 +413,70 @@ function WeeksCard({ weeks, simulated }) {
         ? <ComingUpChart weeks={weeks.weeks} />
         : <ChartEmpty>No orders are under way.</ChartEmpty>}
     </ChartCard>
+  )
+}
+
+
+function DemandCard({ demand, simulated, wide }) {
+  const [category, setCategory] = useState('all')
+  const percent = (share) => `${Math.round(share * 100)}%`
+
+  if (!demand.enough) {
+    return (
+      <div className={wide ? 'lg:col-span-2' : ''}>
+        <ChartCard simulated={simulated} title="Demand forecast" question="How many cases will customers likely order in the coming months?">
+          <ChartEmpty>
+            The forecast needs {demand.needed} full months of orders; there {demand.months === 1 ? 'is' : 'are'} {demand.months} so far.
+          </ChartEmpty>
+        </ChartCard>
+      </div>
+    )
+  }
+
+  const key = demand.history[category] ? category : 'all'
+  const products = demand.topProducts.filter((product) => key === 'all' || product.category === key).slice(0, 5)
+  const check = demand.check
+
+  return (
+    <div className={wide ? 'lg:col-span-2' : ''}>
+      <ChartCard
+        simulated={simulated}
+        title="Demand forecast"
+        question="How many cases will customers likely order in the coming months?"
+        table={<DemandTable history={demand.history[key]} forecast={demand.forecast[key]} />}
+        footnote={
+          <>
+            From the system's own orders: the cases in orders past their down payment, by the month they were placed.
+            The forecast is the last 6 months' level times each month's season
+            {demand.seasons ? ' (how that month compared with the average month a year before)' : ' (seasons are used once there are 12 months of orders)'},
+            with a likely range from how much months have varied. It helps procurement plan supplier orders and the
+            warehouse its space.
+            {check && ` Checked on the last ${check.tests.length} months, each forecast from the months before it: ${percent(check.forecastOff)} off on average, against ${percent(check.lastMonthOff)} for repeating the month before; ${check.tests.filter((test) => test.inRange).length} of ${check.tests.length} within the likely range.`}
+          </>
+        }
+      >
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <label htmlFor="demand-category" className="text-sm text-gray-600">Show</label>
+          <select
+            id="demand-category"
+            value={key}
+            onChange={(event) => setCategory(event.target.value)}
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+          >
+            <option value="all">All products</option>
+            {demand.categories.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+        </div>
+
+        {demand.forecast[key]
+          ? <DemandChart history={demand.history[key]} forecast={demand.forecast[key]} />
+          : <ChartEmpty>Too few months of orders in this category for a forecast.</ChartEmpty>}
+
+        <TopProductsList products={products} />
+      </ChartCard>
+    </div>
   )
 }
 

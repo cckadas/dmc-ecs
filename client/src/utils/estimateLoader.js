@@ -10,7 +10,7 @@
 // =============================================================================
 
 import { buildStageStatistics, lateChanceOf, predictOrder, supplierArrivals } from './predictions.js'
-import { estimateContext, supplierHistories, supplierPool } from './estimateInputs.js'
+import { estimateContext, sailingFor, sailingRecords, supplierHistories, supplierPool } from './estimateInputs.js'
 import { buildDeliveries, manilaDate } from './supplierScores.js'
 import { MODEL_KEYS, isOutdatedModel, modelPredictor } from './predictionModel.js'
 import { labelingKindOf, labelingKinds, productsOrderedBy } from './labelingKind.js'
@@ -221,6 +221,35 @@ async function loadSupplierRecords(client) {
 }
 
 
+// Every recorded arrival (db/migrations/025): the days at sea by country that
+// the arrival dates are learned from, and each arrived order's arrival, by id.
+// Empty when 025 isn't run yet; a customer's browser sees only their own.
+export async function loadArrivals(client, history) {
+  try {
+    const orders = await allRows(() => client
+      .from('customer_orders')
+      .select('id, delivery_location_id, arrived_on, arrival_recorded_at')
+      .not('arrived_on', 'is', null)
+      .order('id'))
+
+    const locationIds = [...new Set(orders.map((order) => order.delivery_location_id).filter(Boolean))]
+    const locations = []
+    for (let index = 0; index < locationIds.length; index += 100) {
+      const { data, error } = await client.from('delivery_locations').select('id, country').in('id', locationIds.slice(index, index + 100))
+      if (error) throw error
+      locations.push(...(data || []))
+    }
+
+    return {
+      records: sailingRecords({ orders, locations, history }),
+      byOrder: Object.fromEntries(orders.map((order) => [order.id, { arrived_on: order.arrived_on, arrival_recorded_at: order.arrival_recorded_at }])),
+    }
+  } catch {
+    return { records: [], byOrder: {} }
+  }
+}
+
+
 // The orders' items, delivery countries and purchase orders.
 async function loadOrderDetails(client, orders) {
   const orderIds = orders.map((order) => order.id)
@@ -250,28 +279,36 @@ async function loadOrderDetails(client, orders) {
 // customer's date and country. history = every status change: the browser reads
 // it through status_history_for_estimates, the server straight from the table.
 export async function estimateOrders(client, orders, history) {
-  const [records, details, models, labeling] = await Promise.all([
+  const [records, details, models, labeling, arrivals] = await Promise.all([
     loadSupplierRecords(client),
     loadOrderDetails(client, orders),
     loadModels(client),
     loadLabelingKinds(client),
+    loadArrivals(client, history),
   ])
 
   const { stageStatistics, historyByOrder } = buildStageStatistics(history, labeling.kindOf)
 
-  const predictions = orders.map((order) => predictOrder(order, stageStatistics, historyByOrder, estimateContext({
-    order,
-    items: details.items.filter((item) => item.customer_order_id === order.id),
-    purchaseOrders: details.purchaseOrders.filter((purchaseOrder) => purchaseOrder.customer_order_id === order.id),
-    poLines: details.poLines,
-    histories: records.histories,
-    pool: records.pool,
-    supplierNames: records.names,
-    country: details.locations.find((location) => location.id === order.delivery_location_id)?.country,
-    models,
-    labelingKind: labeling.kinds.get(order.id) || null,
-    containerSize: labeling.orders.find((row) => row.id === order.id)?.container_size || null,
-  })))
+  const predictions = orders.map((order) => {
+    const country = details.locations.find((location) => location.id === order.delivery_location_id)?.country
+    // A shipped order's recorded arrival, if any.
+    const withArrival = { ...order, ...(arrivals.byOrder[order.id] || {}) }
+
+    return predictOrder(withArrival, stageStatistics, historyByOrder, estimateContext({
+      order: withArrival,
+      items: details.items.filter((item) => item.customer_order_id === order.id),
+      purchaseOrders: details.purchaseOrders.filter((purchaseOrder) => purchaseOrder.customer_order_id === order.id),
+      poLines: details.poLines,
+      histories: records.histories,
+      pool: records.pool,
+      supplierNames: records.names,
+      sailing: sailingFor(arrivals.records, country),
+      country,
+      models,
+      labelingKind: labeling.kinds.get(order.id) || null,
+      containerSize: labeling.orders.find((row) => row.id === order.id)?.container_size || null,
+    }))
+  })
 
   return { predictions, historyByOrder }
 }
@@ -285,7 +322,7 @@ export async function estimateOrders(client, orders, history) {
 export async function estimateDraft(client, { items = [], deliveryLocationId, requestedShipDate, history = [], customerId = null, containerSize = null }) {
   const productIds = [...new Set(items.map((item) => item.product_id).filter(Boolean))]
 
-  const [records, products, location, models, labeling] = await Promise.all([
+  const [records, products, location, models, labeling, arrivals] = await Promise.all([
     loadSupplierRecords(client),
     productIds.length
       ? client.from('products').select('id, supplier_id, cbm, gross_weight_kg').in('id', productIds)
@@ -295,6 +332,7 @@ export async function estimateDraft(client, { items = [], deliveryLocationId, re
       : Promise.resolve({ data: null }),
     loadModels(client),
     loadLabelingKinds(client),
+    loadArrivals(client, history),
   ])
 
   // Its labeling kind: new unless the customer has ordered every product before.
@@ -317,6 +355,7 @@ export async function estimateDraft(client, { items = [], deliveryLocationId, re
     histories: records.histories,
     pool: records.pool,
     supplierNames: records.names,
+    sailing: sailingFor(arrivals.records, location?.data?.country),
     country: location?.data?.country,
     models,
     labelingKind,
@@ -331,7 +370,15 @@ export function forCustomer(prediction) {
   if (!prediction) return null
 
   if (prediction.shipped) {
-    return { orderId: prediction.id, shipped: true, shippedOn: prediction.shippedOn || null }
+    return {
+      orderId: prediction.id,
+      shipped: true,
+      shippedOn: prediction.shippedOn || null,
+      // The day its container arrived, once recorded; until then, when it should.
+      arrivedOn: prediction.arrivedOn || null,
+      estimatedArrivalDate: prediction.estimatedArrivalDate || null,
+      arrivalRange: prediction.arrivalRange || null,
+    }
   }
 
   return {

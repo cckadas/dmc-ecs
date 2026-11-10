@@ -13,6 +13,7 @@
 import { ESTIMATE_STEPS, MIN_RECORDS, blendStep, buildStageStatistics, monthEffects, normalizeStatus, predictOrder, recordShare } from './predictions.js'
 import { estimateContext, supplierHistories, supplierPool } from './estimateInputs.js'
 import { SCORE_WINDOW_DAYS, manilaDate, scoreSuppliers } from './supplierScores.js'
+import { countryName } from './countryPlaces.js'
 
 const DAY = 24 * 60 * 60 * 1000
 
@@ -75,6 +76,32 @@ export function stepTimes(stageStatistics) {
       needed: MIN_RECORDS,
     }
   })
+}
+
+
+// 1b. Days at sea, by country ------------------------------------------------------
+// From recorded arrivals (db/migrations/025, estimateInputs' sailingRecords):
+// the days from shipping to the container arriving, for each country. A
+// country needs MIN_RECORDS arrivals to be shown; the others are counted, and
+// their estimates go by the nearest country that has enough. Longest first.
+export function daysAtSea(records = []) {
+  const byCountry = new Map()
+  for (const record of records) {
+    const key = countryName(record.country)
+    if (!byCountry.has(key)) byCountry.set(key, { country: record.country, days: [] })
+    byCountry.get(key).days.push(record.days)
+  }
+
+  const rows = []
+  const tooFew = []
+  for (const { country, days } of byCountry.values()) {
+    const span = blendStep(days)
+    if (span) rows.push({ id: country, name: country, usual: span.typical, quick: span.quick, slow: span.slow, arrivals: days.length })
+    else tooFew.push({ name: country, arrivals: days.length })
+  }
+
+  rows.sort((a, b) => b.usual - a.usual || a.name.localeCompare(b.name))
+  return { rows, tooFew, arrivals: records.length, needed: MIN_RECORDS }
 }
 
 

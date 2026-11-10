@@ -1,11 +1,12 @@
 import { supabase } from '../supabase'
 import { loadStatusHistory } from './predictionService'
-import { allRows, estimateOrders, loadAllDeliveries, loadLabelingKinds, loadModels } from '../utils/estimateLoader'
+import { allRows, estimateOrders, loadAllDeliveries, loadArrivals, loadLabelingKinds, loadModels } from '../utils/estimateLoader'
 import { buildStageStatistics, normalizeStatus } from '../utils/predictions'
 import {
   MIN_ACCURACY_ORDERS,
   accuracyCheck,
   busyMonths,
+  daysAtSea,
   comingUpByWeek,
   finishedForAccuracy,
   headlineNumbers,
@@ -15,6 +16,7 @@ import {
   supplierOnTime,
 } from '../utils/analytics'
 import { isSimulated } from '../utils/simulated'
+import { demandForecast } from '../utils/demandForecast'
 
 
 // =============================================================================
@@ -29,9 +31,10 @@ import { isSimulated } from '../utils/simulated'
 //   months     4. shipping on time, by month
 //   weeks      5. coming up, by week
 //   accuracy   6. prediction accuracy
+//   demand     7. the demand forecast: cases customers will likely order
 // =============================================================================
 
-export const ALL_PARTS = ['numbers', 'steps', 'suppliers', 'months', 'weeks', 'accuracy']
+export const ALL_PARTS = ['numbers', 'steps', 'suppliers', 'months', 'weeks', 'accuracy', 'demand']
 
 const CLOSED = ['shipped', 'cancelled']
 
@@ -52,7 +55,7 @@ async function rowsByIds(table, columns, column, ids) {
 
 export async function loadAnalytics(parts = ALL_PARTS) {
   const want = (part) => parts.includes(part)
-  const needOrders = ['numbers', 'steps', 'months', 'weeks', 'accuracy'].some(want)
+  const needOrders = ['numbers', 'steps', 'months', 'weeks', 'accuracy', 'demand'].some(want)
 
   const [history, deliveries, suppliers, orders, models] = await Promise.all([
     needOrders ? loadStatusHistory() : [],
@@ -97,9 +100,21 @@ export async function loadAnalytics(parts = ALL_PARTS) {
     }
   }
 
+  // The demand forecast: every order's lines and each product's category.
+  let demand = null
+  if (want('demand')) {
+    const [items, products] = await Promise.all([
+      allRows(() => supabase.from('customer_order_items').select('id, customer_order_id, product_id, quantity').order('id')),
+      allRows(() => supabase.from('products').select('id, category, product_name').order('id')),
+    ])
+    demand = demandForecast({ orders: allOrders, items, products })
+  }
+
   return {
     numbers: want('numbers') ? headlineNumbers({ predictions, orders: allOrders, historyByOrder, deliveries, accuracy }) : null,
     steps: want('steps') ? stepTimes(stageStatistics) : null,
+    // Days at sea by country, from recorded arrivals (db/migrations/025).
+    atSea: want('steps') ? daysAtSea((await loadArrivals(supabase, history)).records) : null,
     onTime: want('suppliers') ? supplierOnTime(deliveries, supplierList) : null,
     leadTimes: want('suppliers') ? supplierLeadTimes(deliveries, supplierList) : null,
     // The busy months the deliveries show, which the estimates add for suppliers not ordered from yet.
@@ -107,6 +122,7 @@ export async function loadAnalytics(parts = ALL_PARTS) {
     months: want('months') ? shippingOnTimeByMonth(allOrders, historyByOrder) : null,
     weeks: want('weeks') ? comingUpByWeek(predictions) : null,
     accuracy: want('accuracy') ? accuracy : null,
+    demand,
     learnedFrom: finishedOrders,
     // The saved models: how each did, whether it's in use, when it was trained.
     models: { available: models.available, rows: models.rows },

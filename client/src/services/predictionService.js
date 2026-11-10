@@ -151,6 +151,24 @@ export async function loadOrderProgress(order, { forStaff = true } = {}) {
 }
 
 
+// Staff: records (or corrects) the day a shipped order's container arrived
+// (db/migrations/025). Returns { order_number, arrived_on, days_at_sea }.
+export async function recordArrival(customerOrderId, arrivedOn) {
+  const { data, error } = await supabase.rpc('record_order_arrival', {
+    p_customer_order_id: customerOrderId,
+    p_arrived_on: arrivedOn,
+  })
+
+  if (error) {
+    // Script 025 not run yet: say so plainly.
+    if (/record_order_arrival/.test(error.message || '')) throw new Error('Recording arrivals needs db/migrations/025 to be run first.')
+    throw error
+  }
+
+  return data
+}
+
+
 // Records a status change for the tracker's dates and future predictions.
 // A failure here never undoes the change itself.
 export async function recordStatusChange(customerOrderId, previousStatus, newStatus) {

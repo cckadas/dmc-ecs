@@ -1,10 +1,12 @@
 // =============================================================================
 // Order progress
 //
-// The six steps of an order's journey, shown to the customer (My Orders),
+// The seven steps of an order's journey, shown to the customer (My Orders),
 // sales and admin (Customer Orders) and management (Executive Dashboard).
-// Payment has its own line under the steps, because the balance can be paid
-// at any stage, even after shipping.
+// The last, Arrived, isn't an order status: it's the day staff record a
+// shipped order's container arrived (db/migrations/025). Payment has its own
+// line under the steps, because the balance can be paid at any stage, even
+// after shipping.
 // =============================================================================
 
 export const ORDER_STEPS = [
@@ -14,7 +16,10 @@ export const ORDER_STEPS = [
   { label: 'Warehouse preparation', status: 'warehouse preparation' },
   { label: 'Ready for shipment', status: 'ready for shipment' },
   { label: 'Shipped', status: 'shipped' },
+  { label: 'Arrived', status: 'arrived' },
 ]
+
+export const ARRIVED_STEP = ORDER_STEPS.length - 1
 
 // How many steps an order in this status has completed.
 const STEPS_DONE = {
@@ -28,13 +33,20 @@ const STEPS_DONE = {
   shipped: 6,
 }
 
-export const stepsDone = (status) => STEPS_DONE[(status || '').trim().toLowerCase()] ?? 1
+// A shipped order whose arrival is recorded has done all seven.
+export const stepsDone = (status, arrived = false) => {
+  const done = STEPS_DONE[(status || '').trim().toLowerCase()] ?? 1
+  return done === ARRIVED_STEP && arrived ? ORDER_STEPS.length : done
+}
 
 
 // When each step was reached: the latest change into that step's status.
-// The first step falls back to the order's creation date.
-export function stepDates(order, history) {
+// The first step falls back to the order's creation date; Arrived is the
+// recorded arrival day (YYYY-MM-DD), at midday in the Philippines.
+export function stepDates(order, history, arrivedOn = null) {
   return ORDER_STEPS.map((step, index) => {
+    if (index === ARRIVED_STEP) return arrivedOn ? new Date(`${String(arrivedOn).slice(0, 10)}T12:00:00+08:00`) : null
+
     const entry = [...history].reverse().find(
       (item) => (item.new_status || '').trim().toLowerCase() === step.status
     )

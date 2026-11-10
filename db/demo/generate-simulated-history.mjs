@@ -150,6 +150,33 @@ const COUNTRIES = {
   'United States': { shipping: 165000 },
 }
 
+// Made-up days at sea to each country, roughly by distance: the arrivals staff
+// would record on shipped orders (db/migrations/025). The estimates never read
+// these numbers; they learn them back from the recorded arrivals.
+const SAILING = {
+  'Hong Kong': [2, 4],
+  Taiwan: [3, 5],
+  Singapore: [4, 7],
+  Japan: [5, 9],
+  'United Arab Emirates': [15, 22],
+  'United States': [22, 38],
+}
+
+// The arrivals have random numbers of their own, so the rest of the history
+// comes out exactly as it did before arrivals were recorded.
+const arrivalRandom = mulberry32(SEED + 25)
+
+// When a shipped order's container arrived and staff recorded it (the same
+// day to two days later, in office hours). Null while it's still at sea or
+// not recorded yet.
+function arrivalOf(order) {
+  const [low, high] = SAILING[order.customer.country] || [5, 10]
+  const arrivedAt = order.times.shipped + Math.round(low + (high - low) * arrivalRandom()) * DAY
+  const recordDay = addDays(dayOf(arrivedAt), Math.floor(arrivalRandom() * 3))
+  const recordedAt = atHour(recordDay, 9 + arrivalRandom() * 8)
+  return recordedAt <= NOW ? { day: dayOf(arrivedAt), recordedAt } : null
+}
+
 const MADE_UP = [
   { slug: 'bluewharf', company: 'Bluewharf Trading', country: 'Hong Kong', location: 'Kwai Chung warehouse', address: 'Unit 1, Sample Logistics Centre, Kwai Chung, Hong Kong', phone: '+852 0000 0101', finished: 15 },
   { slug: 'lanternstreet', company: 'Lantern Street Provisions', country: 'Hong Kong', location: 'Tsuen Wan store', address: 'Shop 2, Sample Street, Tsuen Wan, Hong Kong', phone: '+852 0000 0202', finished: 11 },
@@ -464,10 +491,21 @@ if (finishedPlan.length !== FINISHED_ORDERS) throw new Error(`Expected ${FINISHE
 
 // When each starts (the last about two months back, so orders ship in every
 // month up to now), then their products in the order each customer placed them,
-// so each order knows whether it's new to its customer.
+// so each order knows whether it's new to its customer. The months since are
+// filled by the orders still under way, below.
+//
+// More orders are placed in the months before Christmas and fewer over the
+// holidays (made up, like everything here), for the demand forecast to find.
+const ORDER_SEASON = { 1: 0.8, 2: 0.85, 3: 0.9, 4: 0.95, 5: 1, 6: 1, 7: 1.1, 8: 1.3, 9: 1.5, 10: 1.5, 11: 1.2, 12: 0.7 }
 const lastStart = NOW - 75 * DAY
+const seasonalStart = () => {
+  for (;;) {
+    const time = between(START, lastStart)
+    if (random() < ORDER_SEASON[monthOf(time)] / 1.5) return time
+  }
+}
 const plans = shuffle(finishedPlan)
-  .map((customer) => ({ customer, createdAt: between(START, lastStart) }))
+  .map((customer) => ({ customer, createdAt: seasonalStart() }))
   .sort((a, b) => a.createdAt - b.createdAt)
 
 const orderedBy = new Map()
@@ -484,9 +522,38 @@ for (const plan of plans) {
   orders.push(finishedOrder(plan))
 }
 
+// Routine orders placed in the last ten weeks and still under way, besides the
+// ones above, so the months up to now have their usual share of orders (the
+// demand forecast learns from them). Each is in the step an order placed that
+// long ago would usually be in, with nothing wrong.
+const ROUTINE_STEPS = [
+  ['pending payment', 0, 2],
+  ['submitted', 2, 3.5],
+  ['payment verified', 3.5, 10.5],
+  ['procurement', 10.5, 38],
+  ['warehouse preparation', 38, 50],
+  ['ready for shipment', 50, 52],
+]
+const ROUTINE = Array.from({ length: 12 }, () => {
+  for (;;) {
+    const placed = between(NOW - 70 * DAY, NOW - 0.5 * DAY)
+    if (random() >= ORDER_SEASON[monthOf(placed)] / 1.5) continue
+
+    const daysAgo = (NOW - placed) / DAY
+    const step = ROUTINE_STEPS.find(([, from, to]) => daysAgo >= from && daysAgo < to)
+    if (!step) continue
+
+    return {
+      status: step[0],
+      age: Math.max(0.2, daysAgo - step[1]),
+      ...(step[0] === 'warehouse preparation' ? { labels: chance(0.5) ? 'original label received' : 'printed & awaiting application' } : {}),
+    }
+  }
+})
+
 // The orders under way belong to made-up customers only, so the system's own
 // customer accounts keep their real balances. The older ones first.
-ACTIVE.map((plan, index) => ({ ...plan, customer: MADE_UP[index % MADE_UP.length] }))
+;[...ACTIVE, ...ROUTINE].map((plan, index) => ({ ...plan, customer: MADE_UP[index % MADE_UP.length] }))
   .sort((a, b) => STEPS.indexOf(b.status) - STEPS.indexOf(a.status) || b.age - a.age)
   .forEach((plan) => {
     Object.assign(plan, planOrder(plan.customer))
@@ -608,6 +675,7 @@ for (const order of orders) {
     createdAt: created,
     requested: order.requested,
     shippedOn: order.status === 'shipped' ? dayOf(order.times.shipped) : null,
+    arrival: order.status === 'shipped' ? arrivalOf(order) : null,
   })
 
   for (const line of order.lines) {
@@ -714,6 +782,7 @@ function valuesInsert(header, columns, list, render, footer = '') {
 
 const finished = orders.filter((order) => order.status === 'shipped').length
 const deliveryCount = rows.pos.reduce((sum, po) => sum + new Set(rows.poLines.filter((line) => line.poId === po.id).map((line) => line.supplierSlot)).size, 0)
+const arrivals = rows.orders.filter((row) => row.arrival).length
 
 const sql = `-- =============================================================================
 -- Simulated history: about a year of made-up orders, for the predictions
@@ -742,11 +811,18 @@ const sql = `-- ================================================================
 begin;
 
 
--- Once only ------------------------------------------------------------------
+-- Once only, and after the scripts it needs ------------------------------------
 do $$
 begin
   if exists (select 1 from public.customer_orders where order_number like 'SIM-ORD-%') then
     raise exception 'The simulated history is already in. To load it again, run db/demo/remove_simulated_history.sql first.';
+  end if;
+
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'customer_orders' and column_name = 'arrived_on'
+  ) then
+    raise exception 'Run db/migrations/025 (recording container arrivals) first.';
   end if;
 end $$;
 
@@ -833,11 +909,11 @@ where not exists (select 1 from sim_customer s where s.key = f.key);
 
 -- Orders -----------------------------------------------------------------------------
 ${valuesInsert(
-  `insert into public.customer_orders (id, customer_id, delivery_location_id, quotation_number, order_number, subtotal, shipping_cost, container_size, container_cost, total_amount, down_payment_amount, settled_amount, pending_payment_amount, status, created_at, requested_ship_date, estimated_ship_date)
-select v.id::uuid, c.id, c.location_id, v.quotation_number, v.order_number, v.subtotal, v.shipping, v.container_size, v.container_cost, v.total, v.down_payment, v.settled, v.pending, v.status, v.created_at::timestamptz, v.requested::date, v.shipped_on::date`,
-  'id, customer_key, quotation_number, order_number, subtotal, shipping, container_size, container_cost, total, down_payment, settled, pending, status, created_at, requested, shipped_on',
+  `insert into public.customer_orders (id, customer_id, delivery_location_id, quotation_number, order_number, subtotal, shipping_cost, container_size, container_cost, total_amount, down_payment_amount, settled_amount, pending_payment_amount, status, created_at, requested_ship_date, estimated_ship_date, arrived_on, arrival_recorded_at)
+select v.id::uuid, c.id, c.location_id, v.quotation_number, v.order_number, v.subtotal, v.shipping, v.container_size, v.container_cost, v.total, v.down_payment, v.settled, v.pending, v.status, v.created_at::timestamptz, v.requested::date, v.shipped_on::date, v.arrived_on::date, v.arrival_recorded_at::timestamptz`,
+  'id, customer_key, quotation_number, order_number, subtotal, shipping, container_size, container_cost, total, down_payment, settled, pending, status, created_at, requested, shipped_on, arrived_on, arrival_recorded_at',
   rows.orders,
-  (row) => [text(row.id), text(row.customerKey), text(row.quotationNumber), text(row.number), amount(row.subtotal), amount(row.shipping), text(row.containerSize), amount(row.containerCost), amount(row.total), amount(row.downPayment), amount(row.settled), amount(row.pending), text(row.status), stamp(row.createdAt), text(row.requested), text(row.shippedOn)],
+  (row) => [text(row.id), text(row.customerKey), text(row.quotationNumber), text(row.number), amount(row.subtotal), amount(row.shipping), text(row.containerSize), amount(row.containerCost), amount(row.total), amount(row.downPayment), amount(row.settled), amount(row.pending), text(row.status), stamp(row.createdAt), text(row.requested), text(row.shippedOn), text(row.arrival?.day ?? null), row.arrival ? stamp(row.arrival.recordedAt) : 'null'],
   'join sim_customer c on c.key = v.customer_key',
 )}
 
@@ -896,6 +972,17 @@ alter table public.purchase_order_items enable trigger purchase_order_items_pric
 alter table public.purchase_orders enable trigger purchase_orders_number;
 
 
+-- The POs' dated history (db/migrations/023): each PO was saved as created when
+-- it went in; this adds when each supplier was paid, each line received, and
+-- each PO fully delivered.
+do $$
+begin
+  if to_regprocedure('public.fill_purchase_order_history()') is not null then
+    perform public.fill_purchase_order_history();
+  end if;
+end $$;
+
+
 -- Everything went in, or nothing does --------------------------------------------------------
 do $$
 declare
@@ -921,7 +1008,7 @@ commit;
 -- Check ------------------------------------------------------------------------------------
 -- Expect: ${MADE_UP.length} made-up customers, ${finished} finished orders, ${orders.length - finished} under way, ${rows.pos.length} purchase
 -- orders, ${deliveryCount} supplier deliveries (a few may merge if there are fewer than
--- ${SUPPLIER_SLOTS} manufacturers), ${rows.history.length} status changes.
+-- ${SUPPLIER_SLOTS} manufacturers), ${rows.history.length} status changes, ${arrivals} recorded arrivals.
 select 'made-up customers' as what, count(*) as how_many from public.profiles where email like '%@simulated.example.com'
 union all
 select 'finished orders', count(*) from public.customer_orders where order_number like 'SIM-ORD-%' and status = 'shipped'
@@ -932,7 +1019,9 @@ select 'purchase orders', count(*) from public.purchase_orders where po_number l
 union all
 select 'supplier deliveries', count(distinct (i.purchase_order_id, i.supplier_id)) from public.purchase_order_items i join public.purchase_orders p on p.id = i.purchase_order_id where p.po_number like 'SIM-PO-%'
 union all
-select 'status changes', count(*) from public.customer_order_status_history h join public.customer_orders o on o.id = h.customer_order_id where o.order_number like 'SIM-ORD-%';
+select 'status changes', count(*) from public.customer_order_status_history h join public.customer_orders o on o.id = h.customer_order_id where o.order_number like 'SIM-ORD-%'
+union all
+select 'recorded arrivals', count(*) from public.customer_orders where order_number like 'SIM-ORD-%' and arrived_on is not null;
 `
 
 fs.writeFileSync(OUTPUT, sql)
@@ -943,5 +1032,9 @@ console.log(`  ${rows.items.length} order lines, ${rows.pos.length} POs, ${rows.
 console.log(`  Deliveries in: ${deliveryStats.count}, late: ${deliveryStats.late} (${Math.round((100 * deliveryStats.late) / deliveryStats.count)}%)`)
 console.log(`  Finished orders by labeling kind: ${Object.entries(kindCounts).map(([kind, count]) => `${kind} ${count}`).join(', ')}; kinds changed by the final dates: ${kindMismatches}`)
 console.log(`  Shipped by month: ${Object.entries(shippedByMonth).sort().map(([month, count]) => `${month} ${count}`).join(', ')}`)
+const placedByMonth = {}
+for (const order of orders) { const month = dayOf(order.times['pending payment']).slice(0, 7); placedByMonth[month] = (placedByMonth[month] || 0) + 1 }
+console.log(`  Placed by month: ${Object.entries(placedByMonth).sort().map(([month, count]) => `${month} ${count}`).join(', ')}`)
+console.log(`  Recorded arrivals: ${arrivals} of ${finished} shipped orders (the rest still at sea or not recorded yet)`)
 console.log('  Supplier patterns (position: usual lead days, on-time share, late by):')
 console.log(`  ${SUPPLIERS.map((supplier) => `${supplier.slot}: ${supplier.lead}d ${Math.round(supplier.onTime * 100)}% +${supplier.lateBy}d`).join(' · ')}`)

@@ -3,6 +3,8 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
+  ErrorBar,
   LabelList,
   Line,
   LineChart,
@@ -336,6 +338,67 @@ export function StepTimesTable({ steps }) {
         { label: 'Usual', value: (step) => (step.typical === null ? 'Not enough orders yet' : formatDays(step.typical)), numeric: true },
         { label: 'Likely range', value: (step) => (step.typical === null ? '—' : `${formatDays(step.quick)} to ${formatDays(step.slow)}`), numeric: true },
         { label: 'Finished orders', value: (step) => step.records || 'None yet', numeric: true },
+      ]}
+    />
+  )
+}
+
+
+// 1b. Days at sea, by country ---------------------------------------------------------------
+
+function AtSeaTooltip({ active, payload }) {
+  const row = active && payload?.[0]?.payload
+  if (!row) return null
+
+  return (
+    <TooltipBox
+      value={`Usually ${formatDays(row.usual)} at sea`}
+      name={row.name}
+      lines={[
+        `Likely ${formatDays(row.quick)} to ${formatDays(row.slow)} from shipping to arriving`,
+        `From ${count(row.arrivals, 'recorded arrival')}`,
+      ]}
+    />
+  )
+}
+
+export function AtSeaChart({ rows }) {
+  const data = rows.map((row) => ({ ...row, span: [row.quick, row.slow] }))
+  const max = Math.ceil((Math.max(7, ...data.map((row) => row.slow)) + 1) / 7) * 7
+  const ticks = Array.from({ length: max / 7 + 1 }, (_, index) => index * 7)
+  const [ref, compact] = useCompact()
+  const shape = (props) => <RangeLine {...props} name={compact ? props.payload.name : null} />
+
+  return (
+    <div ref={ref}>
+      <ResponsiveContainer width="100%" height={data.length * (compact ? 50 : 36) + 40}>
+        <BarChart data={data} layout="vertical" margin={{ top: 8, right: 80, bottom: 4, left: 0 }} barCategoryGap={compact ? 18 : 10}>
+          <CartesianGrid horizontal={false} stroke={CHART.grid} />
+          <XAxis type="number" domain={[0, max]} ticks={ticks} tick={TICK} tickLine={false} axisLine={{ stroke: CHART.axis }} tickFormatter={(days) => `${days}d`} />
+          <YAxis type="category" dataKey="name" hide={compact} width={168} axisLine={false} tickLine={false} tick={CATEGORY_TICK} tickFormatter={(name) => shorten(name)} />
+          <Tooltip cursor={{ fill: CHART.hover }} content={<AtSeaTooltip />} />
+          <Bar dataKey="span" barSize={12} isAnimationActive={false} shape={shape} activeBar={shape} />
+        </BarChart>
+      </ResponsiveContainer>
+
+      <Legend items={[
+        { label: 'Likely range', mark: 'line', color: CHART.series },
+        { label: 'Usual days at sea, from its recorded arrivals', mark: 'dot', color: CHART.series },
+      ]} />
+    </div>
+  )
+}
+
+export function AtSeaTable({ rows }) {
+  return (
+    <DataTable
+      rows={rows}
+      rowKey={(row) => row.id}
+      columns={[
+        { label: 'Country', value: (row) => row.name },
+        { label: 'Usual', value: (row) => formatDays(row.usual), numeric: true },
+        { label: 'Likely range', value: (row) => `${formatDays(row.quick)} to ${formatDays(row.slow)}`, numeric: true },
+        { label: 'Arrivals', value: (row) => row.arrivals, numeric: true },
       ]}
     />
   )
@@ -768,7 +831,104 @@ export function AccuracyTable({ accuracy }) {
 }
 
 
-// 7. A supplier's delivery history ---------------------------------------------------------------
+// 7. Demand forecast ---------------------------------------------------------------------------
+
+const casesText = (cases) => `${Math.round(cases).toLocaleString('en-US')} cases`
+
+// The months on record (the last 12) and the forecast, one row each.
+const demandRows = (history = [], forecast = []) => [
+  ...history.slice(-12).map((row) => ({ month: row.month, cases: row.cases, forecast: false })),
+  ...(forecast || []).map((row) => ({ month: row.month, cases: row.cases, quick: row.quick, slow: row.slow, forecast: true, range: [row.cases - row.quick, row.slow - row.cases] })),
+].map((row) => ({ ...row, label: shortMonth(row.month) }))
+
+function DemandTooltip({ active, payload }) {
+  const row = active && payload?.[0]?.payload
+  if (!row) return null
+
+  return (
+    <TooltipBox
+      value={row.forecast ? `About ${casesText(row.cases)}` : casesText(row.cases)}
+      name={formatMonth(row.month)}
+      lines={row.forecast ? [`Forecast: likely ${casesText(row.quick)} to ${casesText(row.slow)}`] : ['Ordered (orders past their down payment)']}
+    />
+  )
+}
+
+export function DemandChart({ history, forecast }) {
+  const data = demandRows(history, forecast)
+
+  return (
+    <>
+      <ResponsiveContainer width="100%" height={240}>
+        <BarChart data={data} margin={{ top: 20, right: 8, bottom: 0, left: 0 }} barCategoryGap="18%">
+          <CartesianGrid vertical={false} stroke={CHART.grid} />
+          <XAxis dataKey="label" tickLine={false} axisLine={{ stroke: CHART.axis }} tick={TICK} interval={0} />
+          <YAxis width={52} axisLine={false} tickLine={false} tick={TICK} tickFormatter={(cases) => Number(cases).toLocaleString('en-US')} />
+          <Tooltip cursor={{ fill: CHART.hover }} content={<DemandTooltip />} />
+          <Bar dataKey="cases" maxBarSize={34} isAnimationActive={false} radius={[4, 4, 0, 0]}>
+            {data.map((row) => (
+              <Cell key={row.month} fill={row.forecast ? CHART.series : CHART.muted} />
+            ))}
+            <ErrorBar dataKey="range" width={8} strokeWidth={1.5} stroke={CHART.ink} direction="y" />
+            <LabelList
+              dataKey="cases"
+              position="top"
+              offset={14}
+              content={({ x, y, width, value, index }) => (data[index]?.forecast
+                ? <text x={x + width / 2} y={y - 14} textAnchor="middle" fontSize={11} fill={CHART.ink} {...HALO}>{Math.round(value).toLocaleString('en-US')}</text>
+                : null)}
+            />
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+
+      <Legend items={[
+        { label: 'Ordered', mark: 'bar', color: CHART.muted },
+        { label: 'Forecast, with its likely range', mark: 'bar', color: CHART.series },
+      ]} />
+    </>
+  )
+}
+
+export function DemandTable({ history, forecast }) {
+  return (
+    <DataTable
+      rows={demandRows(history, forecast)}
+      rowKey={(row) => row.month}
+      columns={[
+        { label: 'Month', value: (row) => formatMonth(row.month) },
+        { label: 'Cases', value: (row) => (row.forecast ? `About ${casesText(row.cases)}` : casesText(row.cases)), numeric: true },
+        { label: 'Likely range', value: (row) => (row.forecast ? `${casesText(row.quick)} to ${casesText(row.slow)}` : 'Ordered'), numeric: true },
+      ]}
+    />
+  )
+}
+
+// The products most likely ordered next month.
+export function TopProductsList({ products }) {
+  if (!products.length) return null
+
+  return (
+    <div className="mt-4 border-t border-gray-100 pt-3">
+      <p className="text-sm font-medium text-gray-700">Most likely ordered next month</p>
+      <ol className="mt-2 space-y-1.5 text-sm">
+        {products.map((product, index) => (
+          <li key={product.id} className="flex items-baseline justify-between gap-4">
+            <span className="min-w-0 text-gray-700">
+              <span className="mr-2 text-gray-400 tabular-nums">{index + 1}.</span>
+              {product.name || 'A product'}
+              <span className="ml-1.5 text-xs text-gray-400">{product.category}</span>
+            </span>
+            <span className="shrink-0 text-gray-800 tabular-nums">about {casesText(product.nextMonth)}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  )
+}
+
+
+// 7b. A supplier's delivery history ---------------------------------------------------------------
 
 const latenessText = (days) => {
   if (!days) return 'On the promised day'

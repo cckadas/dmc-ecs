@@ -2,9 +2,11 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faCheck } from '@fortawesome/free-solid-svg-icons'
 
-import { ORDER_STEPS, stepsDone, stepDates } from '../utils/orderProgress'
-import { loadOrderProgress } from '../services/predictionService'
-import { formatDateTime } from '../utils/dates'
+import { ARRIVED_STEP, ORDER_STEPS, stepsDone, stepDates } from '../utils/orderProgress'
+import { loadOrderProgress, recordArrival } from '../services/predictionService'
+import { formatDateTime, localDateString } from '../utils/dates'
+import { useAuth } from '../context/AuthContext'
+import { useToast } from '../context/ToastContext'
 
 
 const formatDate = (date) =>
@@ -13,17 +15,27 @@ const formatDate = (date) =>
 const formatShortDate = (date) =>
   date ? new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''
 
+// A YYYY-MM-DD day, e.g. "Jan 4, 2027".
+const formatDay = (day) => (day ? formatDate(new Date(`${String(day).slice(0, 10)}T00:00:00`)) : '')
+
 const DAY = 24 * 60 * 60 * 1000
 
+// Who can record a container's arrival (db/migrations/025).
+const RECORDS_ARRIVALS = ['admin', 'sales', 'warehouse']
+
 // Each step's estimate step, whose end is when that step is reached
-// (utils/predictions.js ESTIMATE_STEPS). The first step starts the order.
+// (utils/predictions.js ESTIMATE_STEPS). The first step starts the order;
+// Arrived comes from the days at sea recorded arrivals took.
 const ESTIMATE_STEP_FOR = [null, 'payment_check', 'ordering', 'suppliers', 'labeling', 'shipping']
 
 // When each step not reached yet should be, from the estimate.
-const expectedDates = (prediction) => ESTIMATE_STEP_FOR.map((key) => {
-  const step = key && (prediction?.stepsAhead || []).find((entry) => entry.key === key)
-  return step?.expectedEnd ? new Date(step.expectedEnd) : null
-})
+const expectedDates = (prediction, shipped) => [
+  ...ESTIMATE_STEP_FOR.map((key) => {
+    const step = !shipped && key && (prediction?.stepsAhead || []).find((entry) => entry.key === key)
+    return step?.expectedEnd ? new Date(step.expectedEnd) : null
+  }),
+  prediction?.estimatedArrivalDate && !prediction?.arrivedOn ? new Date(prediction.estimatedArrivalDate) : null,
+]
 
 const formatPeso = (value) =>
   `₱${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -40,10 +52,12 @@ const formatPeso = (value) =>
 // forStaff adds the confidence and the reasons, which can name suppliers.
 // =============================================
 export default function OrderProgress({ order, forStaff = false }) {
+  const { profile } = useAuth()
   const [history, setHistory] = useState([])
   const [prediction, setPrediction] = useState(null)
   const [loading, setLoading] = useState(true)
   const [loadedAt, setLoadedAt] = useState(null)
+  const [reloads, setReloads] = useState(0)
 
   useEffect(() => {
     let active = true
@@ -59,13 +73,15 @@ export default function OrderProgress({ order, forStaff = false }) {
       .finally(() => { if (active) setLoading(false) })
 
     return () => { active = false }
-  }, [order.id, order.status, forStaff])
+  }, [order.id, order.status, forStaff, reloads])
 
   const status = (order.status || '').trim().toLowerCase()
-  const done = stepsDone(status)
-  const dates = stepDates(order, history)
   const shipped = status === 'shipped'
-  const expected = shipped ? [] : expectedDates(prediction)
+  const arrivedOn = shipped ? prediction?.arrivedOn || null : null
+  const done = stepsDone(status, Boolean(arrivedOn))
+  const dates = stepDates(order, history, arrivedOn)
+  const expected = expectedDates(prediction, shipped)
+  const canRecordArrival = forStaff && shipped && RECORDS_ARRIVALS.includes(profile?.role?.toLowerCase())
 
   return (
     <div className="mb-6 rounded-lg border border-gray-200 p-4">
@@ -74,7 +90,7 @@ export default function OrderProgress({ order, forStaff = false }) {
       </h3>
 
       {/* Steps */}
-      <ol className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <ol className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-7">
         {ORDER_STEPS.map((step, index) => {
           const isDone = index < done
           const isCurrent = index === done
@@ -102,9 +118,19 @@ export default function OrderProgress({ order, forStaff = false }) {
                   {step.label}
                 </p>
 
-                {/* When the system saved this step, to the minute */}
-                {isDone && dates[index] && (
+                {/* When the system saved this step, to the minute. Arrived is
+                    the day recorded, and staff see when it was recorded. */}
+                {isDone && dates[index] && index !== ARRIVED_STEP && (
                   <p className="text-xs text-gray-500">{formatDateTime(dates[index])}</p>
+                )}
+
+                {isDone && index === ARRIVED_STEP && (
+                  <>
+                    <p className="text-xs text-gray-500">{formatDay(arrivedOn)}</p>
+                    {forStaff && prediction?.arrivalRecordedAt && (
+                      <p className="text-[11px] text-gray-400">recorded {formatDateTime(prediction.arrivalRecordedAt)}</p>
+                    )}
+                  </>
                 )}
 
                 {!isDone && expected[index] && (
@@ -123,13 +149,16 @@ export default function OrderProgress({ order, forStaff = false }) {
       </ol>
 
       {!loading && loadedAt && (
-        <OrderTimeline dates={dates} expected={expected} done={done} prediction={prediction} shipped={shipped} now={loadedAt} />
+        <OrderTimeline dates={dates} expected={expected} done={done} prediction={prediction} shipped={shipped} arrived={Boolean(arrivedOn)} now={loadedAt} />
       )}
 
       {/* Estimated ship date and payment */}
       <div className="mt-4 space-y-1 rounded-md bg-gray-50 p-3 text-sm">
         {shipped ? (
-          <p className="text-gray-700">Shipped{dates[5] ? ` on ${formatDateTime(dates[5])}` : ''}.</p>
+          <>
+            <p className="text-gray-700">Shipped{dates[5] ? ` on ${formatDateTime(dates[5])}` : ''}.</p>
+            <ArrivalLine prediction={prediction} arrivedOn={arrivedOn} forStaff={forStaff} />
+          </>
         ) : loading ? (
           <p className="text-gray-700">Estimating the ship date...</p>
         ) : prediction?.estimatedShipDate ? (
@@ -144,6 +173,110 @@ export default function OrderProgress({ order, forStaff = false }) {
         <p className="text-gray-700">
           <PaymentLine order={order} />
         </p>
+      </div>
+
+      {canRecordArrival && !loading && (
+        <ArrivalRecorder
+          order={order}
+          arrivedOn={arrivedOn}
+          shippedOn={dates[5]}
+          onSaved={() => setReloads((count) => count + 1)}
+        />
+      )}
+    </div>
+  )
+}
+
+
+// A shipped order's arrival: the day recorded, or when it should arrive, from
+// the days at sea recorded arrivals took to that country.
+function ArrivalLine({ prediction, arrivedOn, forStaff }) {
+  if (arrivedOn) return <p className="text-gray-700">Arrived on {formatDay(arrivedOn)}.</p>
+  if (!prediction?.estimatedArrivalDate) {
+    return forStaff ? <p className="text-gray-500">No arrival estimate yet: too few recorded arrivals to this part of the world.</p> : null
+  }
+
+  return (
+    <p className="text-gray-700">
+      Expected to arrive around {formatDate(new Date(prediction.estimatedArrivalDate))}
+      {prediction.arrivalRange && (
+        <span className="text-gray-500">
+          {' '}· likely {formatShortDate(prediction.arrivalRange.quick)} to {formatShortDate(prediction.arrivalRange.slow)}
+        </span>
+      )}
+      {forStaff && prediction.arrivalNearest && (
+        <span className="text-gray-500"> (from arrivals to {prediction.arrivalNearest}, the nearest with enough)</span>
+      )}
+    </p>
+  )
+}
+
+
+// Staff record the day a shipped order's container arrived (sales, warehouse
+// or admin; db/migrations/025). Recording it again corrects it.
+function ArrivalRecorder({ order, arrivedOn, shippedOn, onSaved }) {
+  const { toast } = useToast()
+  const [day, setDay] = useState(arrivedOn || localDateString(0))
+  const [saving, setSaving] = useState(false)
+  const [editing, setEditing] = useState(!arrivedOn)
+  const earliest = shippedOn ? new Date(shippedOn.getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10) : undefined
+
+  async function save() {
+    setSaving(true)
+    try {
+      const result = await recordArrival(order.id, day)
+      toast.success(`Arrival recorded: ${formatDay(day)}${result?.days_at_sea !== null && result?.days_at_sea !== undefined ? `, ${result.days_at_sea} days at sea` : ''}.`)
+      setEditing(false)
+      onSaved()
+    } catch (error) {
+      toast.error(error.message || 'The arrival could not be recorded.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!editing) {
+    return (
+      <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-gray-600">
+        <span>Arrival recorded: {formatDay(arrivedOn)}.</span>
+        <button type="button" onClick={() => setEditing(true)} className="text-sm font-medium text-[#2D5A42] hover:underline">
+          Correct it
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-3 rounded-md border border-gray-200 p-3">
+      <p className="text-sm font-medium text-gray-800">Record the container's arrival</p>
+      <p className="mt-0.5 text-xs text-gray-500">
+        The day it arrived at the customer's port, from the shipping line's notice or the customer. The estimates
+        learn each country's days at sea from these.
+      </p>
+
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <input
+          type="date"
+          value={day}
+          min={earliest}
+          max={localDateString(0)}
+          onChange={(event) => setDay(event.target.value)}
+          className="rounded-md border border-gray-300 px-3 py-1.5 text-sm"
+          aria-label="Arrival day"
+        />
+        <button
+          type="button"
+          onClick={save}
+          disabled={saving || !day}
+          className="rounded-md bg-[#2D5A42] px-4 py-1.5 text-sm font-medium text-white hover:bg-[#234633] disabled:opacity-60"
+        >
+          {saving ? 'Saving...' : 'Save arrival'}
+        </button>
+        {arrivedOn && (
+          <button type="button" onClick={() => setEditing(false)} className="text-sm text-gray-500 hover:underline">
+            Cancel
+          </button>
+        )}
       </div>
     </div>
   )
@@ -161,7 +294,7 @@ export default function OrderProgress({ order, forStaff = false }) {
 const TIMELINE = { height: 104, line: 52, gutter: 18 }
 const INK = { primary: '#1f2937', secondary: '#6b7280', track: '#e1e0d9', step: '#2D5A42', band: '#2a78d6' }
 
-function OrderTimeline({ dates, expected, done, prediction, shipped, now }) {
+function OrderTimeline({ dates, expected, done, prediction, shipped, arrived = false, now }) {
   const box = useRef(null)
   const [width, setWidth] = useState(0)
 
@@ -187,7 +320,10 @@ function OrderTimeline({ dates, expected, done, prediction, shipped, now }) {
   const last = points[points.length - 1]
 
   const start = Math.min(...points.map((point) => point.at))
-  const end = Math.max(...points.map((point) => point.at), slow || 0, requested || 0, shipped ? 0 : now)
+  const end = Math.max(...points.map((point) => point.at), slow || 0, requested || 0, arrived ? 0 : now)
+  const lastLabel = last.index === ARRIVED_STEP ? (last.done ? 'Arrived' : 'Arrives around')
+    : last.index === ARRIVED_STEP - 1 ? (last.done ? 'Shipped' : 'Ships around')
+      : 'Expected'
   const span = Math.max(end - start, DAY)
   const left = TIMELINE.gutter
   const right = Math.max(width, 280) - TIMELINE.gutter
@@ -225,7 +361,7 @@ function OrderTimeline({ dates, expected, done, prediction, shipped, now }) {
           {lastDone && <line x1={x(start)} x2={x(lastDone.at)} y1={TIMELINE.line} y2={TIMELINE.line} stroke={INK.step} strokeWidth={2} strokeLinecap="round" />}
 
           {/* Today */}
-          {!shipped && now >= start && now <= end && (
+          {!arrived && now >= start && now <= end && (
             <g>
               <line x1={x(now)} x2={x(now)} y1={TIMELINE.line - 12} y2={TIMELINE.line + 12} stroke={INK.primary} strokeWidth={1} />
               <text x={x(now)} y={TIMELINE.line - 18} textAnchor={anchor(x(now))} fontSize={11} fill={INK.primary}>Today</text>
@@ -246,14 +382,14 @@ function OrderTimeline({ dates, expected, done, prediction, shipped, now }) {
           {/* The first and last dates */}
           <text x={x(start)} y={TIMELINE.height - 4} textAnchor="start" fontSize={11} fill={INK.secondary}>{formatShortDate(start)}</text>
           <text x={x(last.at)} y={TIMELINE.height - 4} textAnchor={anchor(x(last.at)) === 'start' ? 'start' : 'end'} fontSize={11} fontWeight={600} fill={INK.primary}>
-            {shipped ? 'Shipped' : last.index === ORDER_STEPS.length - 1 ? 'Ships around' : 'Expected'} {formatShortDate(last.at)}
+            {lastLabel} {formatShortDate(last.at)}
           </text>
         </svg>
       )}
 
       <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
         <li className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-[#2D5A42]" /> Done</li>
-        {!shipped && <li className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-[#2D5A42] bg-white" /> Expected</li>}
+        {points.some((point) => !point.done) && <li className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-[#2D5A42] bg-white" /> Expected</li>}
         {quick && slow && <li className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-4 rounded-sm bg-[#2a78d6]/15" /> Likely ship dates</li>}
         {requested && <li className="flex items-center gap-1.5"><span className="inline-block h-3 w-0 border-l border-dashed border-gray-500" /> Requested ship date</li>}
       </ul>
@@ -296,6 +432,11 @@ function EstimateLines({ prediction, forStaff }) {
       {prediction.estimatedArrivalDate && (
         <p className="text-gray-700">
           Estimated arrival at your port: {formatDate(new Date(prediction.estimatedArrivalDate))}
+          {prediction.arrivalRange && (
+            <span className="text-gray-500">
+              {' '}· likely {formatShortDate(prediction.arrivalRange.quick)} to {formatShortDate(prediction.arrivalRange.slow)}
+            </span>
+          )}
         </p>
       )}
 
