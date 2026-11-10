@@ -48,6 +48,15 @@ export function localDateExcludingSundays(days) {
 }
 
 
+// A moment the system saved, as the date and time, e.g. "Nov 9, 2026, 7:42 PM".
+export const formatDateTime = (value) =>
+  value
+    ? new Date(value).toLocaleString(undefined, {
+      month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+    })
+    : '-'
+
+
 // A YYYY-MM-DD date for display, e.g. "Tue, Nov 3, 2026".
 export const formatDateString = (dateString) =>
   new Date(`${dateString}T00:00:00`).toLocaleDateString(undefined, {

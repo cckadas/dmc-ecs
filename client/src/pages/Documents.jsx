@@ -12,6 +12,7 @@ import StatusBadge from '../components/StatusBadge'
 
 import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
+import { formatDateTime } from '../utils/dates'
 
 
 export default function DocumentsPage() {
@@ -208,7 +209,7 @@ export default function DocumentsPage() {
 
                   {/* DATE */}
                   <td className="px-5 py-3">
-                    {new Date(order.created_at).toLocaleDateString()}
+                    {formatDateTime(order.created_at)}
                   </td>
 
 

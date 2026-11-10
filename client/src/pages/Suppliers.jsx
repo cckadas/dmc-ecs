@@ -8,6 +8,7 @@ import { useToast } from '../context/ToastContext'
 
 import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
+import { formatDateTime } from '../utils/dates'
 
 
 export default function SuppliersPage() {
@@ -681,7 +682,7 @@ function ViewSupplierModal({ supplier, onClose }) {
               </p>
 
               <p className="mt-1 text-gray-800">
-                {supplier.created_at ? new Date(supplier.created_at).toLocaleDateString() : '-'}
+                {formatDateTime(supplier.created_at)}
               </p>
             </div>
 

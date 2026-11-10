@@ -6,7 +6,8 @@ import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
 import { createNotification } from '../services/notificationService'
 import { sendPurchaseOrderEmails, sendPaymentProof } from '../services/emailService'
-import { MIN_PO_DELIVERY_DAYS, localDateString } from '../utils/dates'
+import { MIN_PO_DELIVERY_DAYS, formatDateTime, localDateString } from '../utils/dates'
+import { progressStepTimes } from '../utils/purchaseOrderHistory'
 import { getCurrentSupplierPrices, lookupSupplierPrice, pricingErrorMessage } from '../services/pricingService'
 import { formatPeso } from '../services/creditService'
 import { summarizeCapacity, formatCbm } from '../utils/warehouseCapacity'
@@ -24,6 +25,7 @@ import {
 import StatusBadge from '../components/StatusBadge'
 import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
+import PurchaseOrderHistory from '../components/PurchaseOrderHistory'
 
 
 // A file name that won't clash with an earlier upload.
@@ -701,7 +703,7 @@ export default function PurchaseOrdersPage() {
               </th>
 
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
-                Date
+                Created
               </th>
 
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
@@ -809,9 +811,9 @@ export default function PurchaseOrdersPage() {
                     </td>
 
 
-                    {/* DATE */}
-                    <td className="px-5 py-4">
-                      {po.created_at ? new Date(po.created_at).toLocaleDateString() : '-'}
+                    {/* CREATED — the date and time the PO was saved */}
+                    <td className="whitespace-nowrap px-5 py-4">
+                      {formatDateTime(po.created_at)}
                     </td>
 
 
@@ -897,6 +899,28 @@ export default function PurchaseOrdersPage() {
 function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI, profile}) {
 
   const items = purchaseOrder.purchase_order_items || []
+
+  // Every step of this PO with the date and time it was saved (db/migrations/023).
+  const [history, setHistory] = useState({ entries: [], loading: true, unavailable: false })
+
+  useEffect(() => {
+    let active = true
+
+    supabase
+      .from('purchase_order_history')
+      .select('id, event, supplier_id, details, happened_at, done_by_name, done_by_role')
+      .eq('purchase_order_id', purchaseOrder.id)
+      .order('happened_at', { ascending: true })
+      .then(({ data, error }) => {
+        if (!active) return
+        if (error) console.error('Failed to load the PO history:', error)
+        setHistory({ entries: error ? [] : data || [], loading: false, unavailable: Boolean(error) })
+      })
+
+    return () => { active = false }
+  }, [purchaseOrder.id])
+
+  const stepTimes = progressStepTimes(history.entries)
 
   // ===================================================
   // GROUP ITEMS BY SUPPLIER
@@ -1080,6 +1104,15 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI, profile}
                             >
                               {step}
                             </span>
+
+                            {/* When the system saved this step */}
+                            {(isComplete || isCurrent) && stepTimes[index] && (
+                              <span className="mt-1 text-[11px] leading-4 text-gray-500">
+                                {stepTimes[index].dayOnly
+                                  ? new Date(`${stepTimes[index].day}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+                                  : formatDateTime(stepTimes[index].at)}
+                              </span>
+                            )}
                           </li>
                         )
                       })}
@@ -1097,10 +1130,15 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI, profile}
             Purchase Order Information
           </h3>
 
-          <div className="mb-6 grid grid-cols-1 gap-4 rounded-lg bg-gray-50 p-4 md:grid-cols-4">
+          <div className="mb-6 grid grid-cols-1 gap-4 rounded-lg bg-gray-50 p-4 md:grid-cols-5">
             <div>
               <p className="text-xs uppercase text-gray-500"> PO Number </p>
               <p className="mt-1 font-medium text-gray-800"> {purchaseOrder.po_number} </p>
+            </div>
+
+            <div>
+              <p className="text-xs uppercase text-gray-500"> Created </p>
+              <p className="mt-1 font-medium text-gray-800"> {formatDateTime(purchaseOrder.created_at)} </p>
             </div>
 
             <div>
@@ -1359,6 +1397,16 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI, profile}
               </div>
             </div>
           </div>
+
+          {/* =================================================
+              HISTORY — every step with its saved date and time
+          ================================================= */}
+          <PurchaseOrderHistory
+            entries={history.entries}
+            items={items}
+            loading={history.loading}
+            unavailable={history.unavailable}
+          />
         </div>
 
 

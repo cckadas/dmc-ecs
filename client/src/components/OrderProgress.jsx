@@ -4,6 +4,7 @@ import { faCheck } from '@fortawesome/free-solid-svg-icons'
 
 import { ORDER_STEPS, stepsDone, stepDates } from '../utils/orderProgress'
 import { loadOrderProgress } from '../services/predictionService'
+import { formatDateTime } from '../utils/dates'
 
 
 const formatDate = (date) =>
@@ -101,8 +102,9 @@ export default function OrderProgress({ order, forStaff = false }) {
                   {step.label}
                 </p>
 
+                {/* When the system saved this step, to the minute */}
                 {isDone && dates[index] && (
-                  <p className="text-xs text-gray-500">{formatDate(dates[index])}</p>
+                  <p className="text-xs text-gray-500">{formatDateTime(dates[index])}</p>
                 )}
 
                 {!isDone && expected[index] && (
@@ -127,7 +129,7 @@ export default function OrderProgress({ order, forStaff = false }) {
       {/* Estimated ship date and payment */}
       <div className="mt-4 space-y-1 rounded-md bg-gray-50 p-3 text-sm">
         {shipped ? (
-          <p className="text-gray-700">Shipped{dates[5] ? ` on ${formatDate(dates[5])}` : ''}.</p>
+          <p className="text-gray-700">Shipped{dates[5] ? ` on ${formatDateTime(dates[5])}` : ''}.</p>
         ) : loading ? (
           <p className="text-gray-700">Estimating the ship date...</p>
         ) : prediction?.estimatedShipDate ? (

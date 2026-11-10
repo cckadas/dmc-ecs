@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlus, faTrash, faFileSignature, faDownload, faXmark, faChevronDown } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
-import { MIN_PREFERRED_SHIP_DAYS, localDateString } from '../utils/dates'
+import { MIN_PREFERRED_SHIP_DAYS, localDateString, formatDateTime } from '../utils/dates'
 import { getCreditStatus, formatPeso } from '../services/creditService'
 import { getMinimumOrderQuantities } from '../services/pricingService'
 import { groupByFamily, sizeLabel } from '../utils/productGroups'
@@ -529,7 +529,7 @@ export default function QuotationRequestsPage() {
                   </td>
 
                   <td className="px-5 py-3">
-                    {new Date(request.created_at).toLocaleDateString()}
+                    {formatDateTime(request.created_at)}
                   </td>
 
                   <td className="px-5 py-3">
@@ -776,7 +776,7 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
 
             <div className="flex flex-col justify-center">
               <p className="text-xs uppercase text-gray-500"> Date Created </p>
-              <p className="mt-1 font-medium text-gray-800"> {new Date(quotation.created_at).toLocaleDateString()} </p>
+              <p className="mt-1 font-medium text-gray-800"> {formatDateTime(quotation.created_at)} </p>
             </div>
 
             <div className={`flex flex-col justify-center rounded-md border p-2 ${isExpiringSoon ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>

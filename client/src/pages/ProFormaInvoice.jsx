@@ -8,7 +8,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faFolderOpen, faFileSignature, faXmark, faDownload, faFileInvoice } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 import { generatePFI } from '../services/pfiService'
-import { localDateExcludingSundays, formatDateString, QUOTATION_VALIDITY_DAYS } from '../utils/dates'
+import { localDateExcludingSundays, formatDateString, QUOTATION_VALIDITY_DAYS, formatDateTime } from '../utils/dates'
 import { getQuotationPricing, pricingErrorMessage } from '../services/pricingService'
 import { formatVolume, formatWeight } from '../utils/containers'
 import { previewEstimate } from '../services/predictionService'
@@ -396,7 +396,7 @@ export default function ProFormaInvoicePage() {
                   </td>
 
                   <td className="px-5 py-3">
-                    {new Date(request.created_at).toLocaleDateString()}
+                    {formatDateTime(request.created_at)}
                   </td>
 
                   <td className="px-5 py-3">
@@ -547,7 +547,7 @@ function QuotationViewModal({ quotation, onClose }) {
 
             <div>
               <p className="text-xs uppercase text-gray-500"> Date Created </p>
-              <p className="mt-1 font-medium text-gray-800"> {new Date(quotation.created_at).toLocaleDateString()} </p>
+              <p className="mt-1 font-medium text-gray-800"> {formatDateTime(quotation.created_at)} </p>
             </div>
           </div>
 
