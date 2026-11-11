@@ -11,6 +11,12 @@ const dayText = (dateString) =>
 // who did it (utils/purchaseOrderHistory.js, db/migrations/023).
 // =============================================================================
 export default function PurchaseOrderHistory({ entries, items = [], loading = false, unavailable = false }) {
+  // A payment filled in from an older PO has only its day (placed at noon), so
+  // it's never listed before the PO was created.
+  const createdAt = Date.parse(entries.find((entry) => entry.event === 'created')?.happened_at) || 0
+  const placedAt = (entry) => (historyEntryDayOnly(entry) ? Math.max(Date.parse(entry.happened_at), createdAt + 1) : Date.parse(entry.happened_at))
+  const ordered = [...entries].sort((a, b) => placedAt(a) - placedAt(b))
+
   const suppliers = new Map(items.map((item) => [item.supplier_id, item.suppliers?.supplier_name]))
   const products = new Map(items.map((item) => [item.product_id, item.products?.product_name]))
   const lookups = {
@@ -36,7 +42,7 @@ export default function PurchaseOrderHistory({ entries, items = [], loading = fa
         <p className="text-sm text-gray-500">Nothing saved yet.</p>
       ) : (
         <ol className="divide-y divide-gray-100 rounded-lg border border-gray-200">
-          {entries.map((entry) => (
+          {ordered.map((entry) => (
             <li key={entry.id} className="flex flex-col gap-0.5 px-4 py-2.5 text-sm sm:flex-row sm:items-baseline sm:gap-4">
               <span className="shrink-0 text-gray-500 tabular-nums sm:w-48">
                 {historyEntryDayOnly(entry)
