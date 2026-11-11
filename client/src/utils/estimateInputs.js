@@ -107,7 +107,7 @@ export function sailingFor(records = [], country) {
   const byCountry = new Map()
   for (const record of records) {
     const key = countryName(record.country)
-    if (!byCountry.has(key)) byCountry.set(key, { country: record.country, days: [] })
+    if (!byCountry.has(key)) byCountry.set(key, { country: String(record.country).trim(), days: [] })
     byCountry.get(key).days.push(record.days)
   }
 
