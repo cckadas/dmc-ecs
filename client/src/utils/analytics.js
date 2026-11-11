@@ -418,6 +418,59 @@ export function headlineNumbers({ predictions = [], orders = [], historyByOrder 
 }
 
 
+// What's ahead ------------------------------------------------------------------------
+// The numbers at the top of the Predictions tab, all about what's coming:
+//   onTrack         orders under way on track for their requested date, by their estimates
+//   shipSoon        orders likely to ship in the next 4 weeks
+//   lateDeliveries  supplier deliveries still to come that are overdue or likely late
+//   demandNext      the cases customers will likely order next month (utils/demandForecast.js)
+//   accuracy        the method in use: the share that shipped within its likely range
+// A number is null when its part wasn't loaded.
+export const SOON_DAYS = 28
+
+export function aheadNumbers({ predictions = null, deliveries = null, demand = null, accuracy = null, now = Date.now() }) {
+  const underWay = (predictions || []).filter((prediction) => !prediction.shipped && !prediction.ifPaidToday)
+  const dated = underWay.filter((prediction) => prediction.estimatedShipDate)
+  const until = timeOf(now) + SOON_DAYS * DAY
+
+  return {
+    onTrack: predictions ? { count: dated.filter((prediction) => prediction.risk !== 'at risk').length, total: dated.length, learning: underWay.filter((prediction) => prediction.learning).length } : null,
+    shipSoon: predictions ? { count: dated.filter((prediction) => timeOf(prediction.estimatedShipDate) <= until).length, days: SOON_DAYS } : null,
+    lateDeliveries: deliveries ? {
+      count: deliveries.filter((delivery) => delivery.overdueDays > 0 || delivery.likelyLate).length,
+      overdue: deliveries.filter((delivery) => delivery.overdueDays > 0).length,
+      total: deliveries.length,
+    } : null,
+    demandNext: demand?.enough ? demand.forecast?.all?.[0] || null : null,
+    accuracy: accuracy?.enough ? { ...accuracy.methods.find((method) => method.inUse), tested: accuracy.tested } : null,
+  }
+}
+
+
+// Each order under way, soonest to ship first: when it should ship and arrive,
+// whether it's at risk and why, or why there's no estimate yet. customers:
+// { customer_id: { name, company } }.
+export function ordersAhead(predictions = [], customers = {}) {
+  return predictions
+    .filter((prediction) => !prediction.shipped)
+    .map((prediction) => ({
+      id: prediction.id,
+      orderNumber: prediction.order_number || 'An order',
+      customer: customers[prediction.customer_id]?.company || customers[prediction.customer_id]?.name || null,
+      status: prediction.currentStatus,
+      ifPaidToday: Boolean(prediction.ifPaidToday),
+      shipDate: prediction.estimatedShipDate || null,
+      shipRange: prediction.shipDateRange || null,
+      arrival: prediction.estimatedArrivalDate || null,
+      requested: prediction.requestedShipDate || null,
+      risk: prediction.risk,
+      reasons: prediction.riskReasons || [],
+      learning: prediction.learning?.text || null,
+    }))
+    .sort((a, b) => (a.shipDate ? timeOf(a.shipDate) : Infinity) - (b.shipDate ? timeOf(b.shipDate) : Infinity) || a.orderNumber.localeCompare(b.orderNumber))
+}
+
+
 // 7. A supplier's delivery history ---------------------------------------------------
 // Its deliveries of the last 12 months in date order, each with how many days
 // after the promised date it arrived (below zero when early). Deliveries without

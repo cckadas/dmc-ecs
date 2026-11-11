@@ -12,7 +12,8 @@
 //   - the forecast: the level times the coming month's season
 //   - the likely range: how far past months strayed from level × season
 // It's checked like the estimates: the last 3 full months, each forecast from
-// the months before it only, against simply repeating the month before.
+// the months before it only, against simply repeating the month before. Each
+// product's sales and expected cases come with it (productSales).
 //
 // Imports carry their .js extension so the maths can be tested in Node.
 // =============================================================================
@@ -145,41 +146,78 @@ export function checkForecast(months, values) {
 }
 
 
-// The products likely ordered most next month: each product's share of its
-// category's cases over the last LEVEL_MONTHS full months, times that
-// category's forecast.
-function topProducts({ orders, items, products, months, forecasts, limit }) {
+// Each product's sales, from the system's orders past their down payment:
+//   monthly        its cases and amount (₱) in each of the last 12 full months
+//   cases, amount  those 12 months' totals
+//   trend          the last 3 months' cases against the 3 before (0.2 = 20% more)
+//   share          its share of its category's cases over the last 6 months
+//   forecast       its expected cases in the coming months: that share times
+//                  its category's forecast, so the more it sells, the more
+//                  it's expected to sell
+// Biggest sellers (by cases) first. forecasts: forecastSeries by category.
+export function productSales({ orders = [], items = [], products = [], months = [], forecasts = {} }) {
+  const shown = months.slice(-12)
   const recent = new Set(months.slice(-LEVEL_MONTHS))
   const placedIn = new Map(orders.filter((order) => isDemand(order.status) && order.created_at).map((order) => [order.id, monthOf(order.created_at)]))
   const productOf = Object.fromEntries(products.map((product) => [product.id, product]))
-  const byProduct = new Map()
-  const byCategory = new Map()
+  const categoryOf = (product) => String(product.category || '').trim() || 'Other'
+  const sales = new Map()
+  const categoryRecent = new Map()
 
   for (const item of items) {
-    if (!recent.has(placedIn.get(item.customer_order_id))) continue
+    const month = placedIn.get(item.customer_order_id)
     const product = productOf[item.product_id]
-    if (!product) continue
+    if (!month || !product || !shown.includes(month)) continue
 
-    const category = String(product.category || '').trim() || 'Other'
     const quantity = Number(item.quantity) || 0
-    byProduct.set(product.id, (byProduct.get(product.id) || 0) + quantity)
-    byCategory.set(category, (byCategory.get(category) || 0) + quantity)
+    const amount = Number(item.subtotal) || quantity * (Number(item.unit_price) || 0)
+    if (!sales.has(product.id)) sales.set(product.id, { cases: {}, amount: {}, recent: 0 })
+    const entry = sales.get(product.id)
+    entry.cases[month] = (entry.cases[month] || 0) + quantity
+    entry.amount[month] = (entry.amount[month] || 0) + amount
+
+    if (recent.has(month)) {
+      entry.recent += quantity
+      categoryRecent.set(categoryOf(product), (categoryRecent.get(categoryOf(product)) || 0) + quantity)
+    }
   }
 
-  return [...byProduct.entries()]
-    .map(([id, quantity]) => {
+  const sum = (values) => values.reduce((total, value) => total + value, 0)
+
+  return [...sales.entries()]
+    .map(([id, entry]) => {
       const product = productOf[id]
-      const category = String(product.category || '').trim() || 'Other'
-      const next = forecasts[category]?.[0]
+      const category = categoryOf(product)
+      const monthly = shown.map((month) => ({ month, cases: entry.cases[month] || 0, amount: entry.amount[month] || 0 }))
+      const last3 = sum(monthly.slice(-3).map((month) => month.cases))
+      const before3 = sum(monthly.slice(-6, -3).map((month) => month.cases))
+      const share = categoryRecent.get(category) ? entry.recent / categoryRecent.get(category) : 0
+      const categoryForecast = forecasts[category] || null
+
       return {
         id,
         name: product.product_name,
         category,
-        recentMonthly: quantity / recent.size,
-        nextMonth: next ? (quantity / byCategory.get(category)) * next.cases : null,
+        monthly,
+        cases: sum(monthly.map((month) => month.cases)),
+        amount: sum(monthly.map((month) => month.amount)),
+        trend: before3 > 0 ? last3 / before3 - 1 : null,
+        share,
+        recentMonthly: entry.recent / recent.size,
+        forecast: categoryForecast
+          ? categoryForecast.map((month) => ({ month: month.month, cases: month.cases * share, quick: month.quick * share, slow: month.slow * share }))
+          : null,
       }
     })
-    .filter((row) => row.nextMonth !== null)
+    .sort((a, b) => b.cases - a.cases || a.name.localeCompare(b.name))
+}
+
+
+// The products likely ordered most next month, from productSales.
+function topProducts(sales, limit) {
+  return sales
+    .filter((row) => row.forecast && row.share > 0)
+    .map((row) => ({ id: row.id, name: row.name, category: row.category, recentMonthly: row.recentMonthly, nextMonth: row.forecast[0].cases }))
     .sort((a, b) => b.nextMonth - a.nextMonth || a.name.localeCompare(b.name))
     .slice(0, limit)
 }
@@ -198,6 +236,8 @@ export function demandForecast({ orders = [], items = [], products = [], today =
     .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
     .map(({ name }) => name)
 
+  const sales = productSales({ orders, items, products, months, forecasts })
+
   return {
     enough: months.length >= MIN_MONTHS,
     months: months.length,
@@ -207,6 +247,7 @@ export function demandForecast({ orders = [], items = [], products = [], today =
     forecast: forecasts,
     check: forecasts.all ? checkForecast(months, series.all) : null,
     categories,
-    topProducts: topProducts({ orders, items, products, months, forecasts, limit: topLimit }),
+    topProducts: topProducts(sales, topLimit),
+    productSales: sales,
   }
 }

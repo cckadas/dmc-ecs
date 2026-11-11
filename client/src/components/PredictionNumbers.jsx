@@ -18,8 +18,10 @@ const LABELS = ['Orders on track', 'Payment to shipping', 'Supplier on-time rate
 
 
 function Tiles({ tiles, dimmed = false }) {
+  const columns = tiles.length >= 5 ? 'xl:grid-cols-5' : tiles.length === 3 ? 'xl:grid-cols-3' : 'xl:grid-cols-4'
+
   return (
-    <div className={`grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 ${dimmed ? 'opacity-60' : ''}`}>
+    <div className={`grid grid-cols-1 gap-4 sm:grid-cols-2 ${columns} ${dimmed ? 'opacity-60' : ''}`}>
       {tiles.map((tile) => (
         <div key={tile.label} className="rounded-xl border border-gray-200 bg-white px-5 py-4 shadow-sm">
           <p className="text-xs text-gray-500">{tile.label}</p>
@@ -76,6 +78,50 @@ export function PredictionNumbers({ numbers, simulated = false }) {
       <Tiles tiles={tiles} />
     </>
   )
+}
+
+
+// The numbers at the top of Predictive Analytics' Predictions tab, all about
+// what's ahead (utils/analytics.js aheadNumbers). A number whose part this
+// role doesn't see is left out.
+export function AheadNumbers({ ahead }) {
+  const { onTrack, shipSoon, lateDeliveries, demandNext, accuracy } = ahead
+  const cases = (value) => `${Math.round(value).toLocaleString('en-US')} cases`
+  const monthName = (month) => new Date(`${month}-01T00:00:00Z`).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' })
+
+  const tiles = [
+    onTrack && {
+      label: 'Orders on track',
+      value: onTrack.total ? `${onTrack.count} of ${onTrack.total}` : '—',
+      note: onTrack.total
+        ? `orders under way expected by their requested date${onTrack.learning ? `; ${onTrack.learning} still learning` : ''}`
+        : 'No orders under way with an estimate',
+    },
+    shipSoon && {
+      label: 'Shipping soon',
+      value: count(shipSoon.count, 'order'),
+      note: `likely to ship in the next ${shipSoon.days / 7} weeks`,
+    },
+    lateDeliveries && {
+      label: 'Deliveries likely late',
+      value: lateDeliveries.total ? `${lateDeliveries.count} of ${lateDeliveries.total}` : '—',
+      note: lateDeliveries.total
+        ? `supplier deliveries still to come${lateDeliveries.overdue ? `; ${lateDeliveries.overdue} already overdue` : ''}`
+        : 'No supplier deliveries still to come',
+    },
+    demandNext && {
+      label: 'Expected orders next month',
+      value: `about ${cases(demandNext.cases)}`,
+      note: `in ${monthName(demandNext.month)}, likely ${cases(demandNext.quick)} to ${cases(demandNext.slow)}`,
+    },
+    accuracy && {
+      label: 'Prediction accuracy',
+      value: formatPercent(accuracy.withinRangeShare),
+      note: `of tested orders shipped within their likely range (${count(accuracy.tested, 'order')})`,
+    },
+  ].filter(Boolean)
+
+  return <Tiles tiles={tiles} />
 }
 
 

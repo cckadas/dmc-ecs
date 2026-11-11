@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { useAuth } from '../context/AuthContext'
-import { ALL_PARTS, loadAnalytics } from '../services/analyticsService'
+import { ALL_PARTS, HISTORY_PARTS, PREDICTION_PARTS, loadAnalytics } from '../services/analyticsService'
 import { modelIsStale, retrainModels } from '../services/modelService'
 import { MODEL_KEYS } from '../utils/predictionModel'
-import { PredictionNumbers } from '../components/PredictionNumbers'
+import { AheadNumbers } from '../components/PredictionNumbers'
+import { DeliveriesAheadTable, OrdersAheadTable, ProductSales } from '../components/PredictionTables'
 import SimulatedBadge from '../components/SimulatedBadge'
 import {
   AccuracyChart,
@@ -38,18 +39,32 @@ import { count, formatDays } from '../utils/chartFormat'
 // =============================================================================
 // Predictive Analytics
 //
-// The charts behind the estimates (utils/analytics.js, loaded by
-// services/analyticsService.js). Each role sees the charts that help its work:
-// admin and management all of them and the four numbers, procurement the
-// supplier charts, and the warehouse what's coming up.
+// Two tabs (services/analyticsService.js loads them):
+//   Predictions  what's ahead: each order's ship and arrival dates, each
+//                supplier delivery still to come, what's ready each week,
+//                the demand forecast with sales by product, and how close the
+//                predictions have come
+//   What the predictions learn from  descriptive: the records behind them,
+//                such as how long each step took and how suppliers delivered
+// Each role sees the parts that help its work: admin and management all of
+// them, procurement deliveries, demand and suppliers, and the warehouse what's
+// coming in and going out.
 // =============================================================================
 
 const PARTS_BY_ROLE = {
   admin: ALL_PARTS,
   management: ALL_PARTS,
-  procurement: ['suppliers', 'demand'],
-  warehouse: ['weeks'],
+  procurement: ['ahead', 'deliveries', 'demand', 'suppliers'],
+  warehouse: ['ahead', 'weeks', 'deliveries'],
 }
+
+// Who sees sales in pesos.
+const SEES_MONEY = ['admin', 'management']
+
+const TABS = [
+  { key: 'predictions', label: 'Predictions', parts: PREDICTION_PARTS },
+  { key: 'history', label: 'What the predictions learn from', parts: HISTORY_PARTS },
+]
 
 // The page trains the model by itself only once there's enough to learn from:
 // 30 records before the newest 20% held back for testing.
@@ -63,13 +78,16 @@ export default function PredictiveAnalytics() {
   const role = profile?.role?.toLowerCase()
   const parts = PARTS_BY_ROLE[role] || []
   const has = (part) => parts.includes(part)
+  const tabs = TABS.filter((tab) => tab.parts.some(has))
 
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
   const [reload, setReload] = useState(0)
   const [training, setTraining] = useState(null)
+  const [tab, setTab] = useState('predictions')
   const autoTrained = useRef(false)
   const canTrain = role === 'admin' || role === 'management'
+  const shownTab = tabs.find((entry) => entry.key === tab) ? tab : tabs[0]?.key
 
   useEffect(() => {
     if (!PARTS_BY_ROLE[role]) return
@@ -114,7 +132,7 @@ export default function PredictiveAnalytics() {
     retrain(data.models.rows.length ? 'stale' : 'first')
   }, [data, canTrain])
 
-  const cards = ['steps', 'steps', 'suppliers', 'suppliers', 'suppliers', 'months', 'weeks', 'accuracy', 'demand'].filter(has).length
+  const historyCards = ['steps', 'steps', 'suppliers', 'suppliers', 'suppliers', 'months'].filter(has).length
 
   return (
     <div>
@@ -124,9 +142,28 @@ export default function PredictiveAnalytics() {
         </h1>
 
         <p className="mt-1 text-gray-500">
-          How long orders take, how suppliers deliver, what's coming up, and how close the estimates are.
+          When orders will ship and arrive, when supplier deliveries will come, what customers will likely order, and how close these predictions have been.
         </p>
       </div>
+
+      {tabs.length > 1 && (
+        <div role="tablist" aria-label="Predictive Analytics" className="mb-6 flex flex-wrap gap-2 border-b border-gray-200">
+          {tabs.map((entry) => (
+            <button
+              key={entry.key}
+              type="button"
+              role="tab"
+              aria-selected={shownTab === entry.key}
+              onClick={() => setTab(entry.key)}
+              className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
+                shownTab === entry.key ? 'border-[#2D5A42] text-[#2D5A42]' : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {entry.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {error && (
         <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
@@ -150,27 +187,100 @@ export default function PredictiveAnalytics() {
             </div>
           )}
 
-          {has('numbers') && <MethodNote data={data} canTrain={canTrain} training={training} onRetrain={() => retrain('manual')} />}
+          {shownTab === 'predictions' && (
+            <>
+              <MethodNote data={data} canTrain={canTrain} training={training} onRetrain={() => retrain('manual')} />
 
-          {has('numbers') && (
-            <div className="mb-6">
-              <PredictionNumbers numbers={data.numbers} />
-            </div>
+              {has('ahead') && data.ahead && (
+                <div className="mb-6">
+                  <AheadNumbers ahead={data.ahead} />
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                {has('orders') && <OrdersAheadCard orders={data.orders} simulated={data.simulated} />}
+                {has('deliveries') && <DeliveriesAheadCard deliveries={data.deliveries} simulated={data.simulated} />}
+                {has('weeks') && <WeeksCard weeks={data.weeks} simulated={data.simulated} />}
+                {has('accuracy') && <AccuracyCard accuracy={data.accuracy} simulated={data.simulated} />}
+                {has('demand') && <DemandCard demand={data.demand} simulated={data.simulated} wide />}
+                {has('demand') && data.demand?.enough && <ProductSalesCard demand={data.demand} showMoney={SEES_MONEY.includes(role)} simulated={data.simulated} />}
+              </div>
+            </>
           )}
 
-          <div className={`grid grid-cols-1 gap-6 ${cards > 1 ? 'lg:grid-cols-2' : ''}`}>
-            {has('steps') && <StepsCard steps={data.steps} simulated={data.simulated} />}
-            {has('steps') && <AtSeaCard atSea={data.atSea} simulated={data.simulated} />}
-            {has('suppliers') && <OnTimeCard onTime={data.onTime} simulated={data.simulated} />}
-            {has('suppliers') && <LeadTimeCard leadTimes={data.leadTimes} simulated={data.simulated} />}
-            {has('suppliers') && <BusyMonthsCard months={data.busyMonths} simulated={data.simulated} />}
-            {has('months') && <MonthsCard months={data.months} simulated={data.simulated} />}
-            {has('weeks') && <WeeksCard weeks={data.weeks} simulated={data.simulated} />}
-            {has('accuracy') && <AccuracyCard accuracy={data.accuracy} simulated={data.simulated} />}
-            {has('demand') && <DemandCard demand={data.demand} simulated={data.simulated} wide={cards > 1} />}
-          </div>
+          {shownTab === 'history' && (
+            <>
+              <div className="mb-6 rounded-xl border border-gray-200 bg-white px-5 py-4 text-sm text-gray-600 shadow-sm">
+                <p className="font-semibold text-gray-800">What the predictions learn from</p>
+                <p className="mt-1">
+                  These charts are descriptive: they show what has happened in the system's records, such as how long each
+                  step took and how each supplier delivered. The Predictions tab is worked out from these same records.
+                </p>
+              </div>
+
+              <div className={`grid grid-cols-1 gap-6 ${historyCards > 1 ? 'lg:grid-cols-2' : ''}`}>
+                {has('steps') && <StepsCard steps={data.steps} simulated={data.simulated} />}
+                {has('steps') && <AtSeaCard atSea={data.atSea} simulated={data.simulated} />}
+                {has('suppliers') && <OnTimeCard onTime={data.onTime} simulated={data.simulated} />}
+                {has('suppliers') && <LeadTimeCard leadTimes={data.leadTimes} simulated={data.simulated} />}
+                {has('suppliers') && <BusyMonthsCard months={data.busyMonths} simulated={data.simulated} />}
+                {has('months') && <MonthsCard months={data.months} simulated={data.simulated} />}
+              </div>
+            </>
+          )}
         </>
       )}
+    </div>
+  )
+}
+
+
+// Each order under way, soonest to ship first.
+function OrdersAheadCard({ orders, simulated }) {
+  return (
+    <div className="lg:col-span-2">
+      <ChartCard
+        simulated={simulated}
+        title="Orders under way: when they'll ship"
+        question="When will each order ship and arrive, and will it make its requested date?"
+        footnote="Each order's dates come from how long each of its remaining steps usually takes, its suppliers' deliveries and the days at sea to its country, all from the system's records. At risk: it's expected after the date the customer asked for, or a step or delivery is running late."
+      >
+        <OrdersAheadTable orders={orders} />
+      </ChartCard>
+    </div>
+  )
+}
+
+
+// Each supplier delivery still to come, soonest first.
+function DeliveriesAheadCard({ deliveries, simulated }) {
+  return (
+    <div className="lg:col-span-2">
+      <ChartCard
+        simulated={simulated}
+        title="Supplier deliveries still to come"
+        question="When will each delivery arrive, and which are likely late?"
+        footnote="Each delivery is expected around its promised day, moved by how early or late that supplier's deliveries have been (leaning on every supplier's while it has few). Likely late: late at least half the time."
+      >
+        <DeliveriesAheadTable deliveries={deliveries} />
+      </ChartCard>
+    </div>
+  )
+}
+
+
+// Sales by product, with how each product's sales make its forecast.
+function ProductSalesCard({ demand, showMoney, simulated }) {
+  return (
+    <div className="lg:col-span-2">
+      <ChartCard
+        simulated={simulated}
+        title="Sales by product"
+        question="How much has each product sold, and how much is it expected to sell?"
+        footnote="From the system's own orders past their down payment, by the month they were placed. A product's expected cases are its share of its category over the last 6 months times the category's forecast."
+      >
+        <ProductSales sales={demand.productSales} showMoney={showMoney} />
+      </ChartCard>
     </div>
   )
 }
