@@ -5,7 +5,7 @@ import { ALL_PARTS, HISTORY_PARTS, PREDICTION_PARTS, loadAnalytics } from '../se
 import { modelIsStale, retrainModels } from '../services/modelService'
 import { MODEL_KEYS } from '../utils/predictionModel'
 import { AheadNumbers } from '../components/PredictionNumbers'
-import { DeliveriesAheadTable, OrdersAheadTable, ProductSales } from '../components/PredictionTables'
+import { DeliveriesAheadTable, OrdersAheadTable, ProductSales, ReorderTable } from '../components/PredictionTables'
 import SimulatedBadge from '../components/SimulatedBadge'
 import {
   AccuracyChart,
@@ -41,25 +41,27 @@ import { count, formatDays } from '../utils/chartFormat'
 //
 // Two tabs (services/analyticsService.js loads them):
 //   Predictions  what's ahead: each order's ship and arrival dates, each
-//                supplier delivery still to come, what's ready each week,
-//                the demand forecast with sales by product, and how close the
-//                predictions have come
+//                supplier delivery still to come, what's ready each week, when
+//                each customer will likely order next, the demand forecast
+//                with sales by product, and how close the predictions have come
 //   What the predictions learn from  descriptive: the records behind them,
 //                such as how long each step took and how suppliers delivered
 // Each role sees the parts that help its work: admin and management all of
-// them, procurement deliveries, demand and suppliers, and the warehouse what's
-// coming in and going out.
+// them, sales its customers' orders and what they'll order, procurement
+// deliveries, demand and suppliers, and the warehouse what's coming in and
+// going out.
 // =============================================================================
 
 const PARTS_BY_ROLE = {
   admin: ALL_PARTS,
   management: ALL_PARTS,
+  sales: ['ahead', 'orders', 'reorders', 'demand', 'labels'],
   procurement: ['ahead', 'deliveries', 'demand', 'suppliers'],
-  warehouse: ['ahead', 'weeks', 'deliveries'],
+  warehouse: ['ahead', 'weeks', 'deliveries', 'labels'],
 }
 
 // Who sees sales in pesos.
-const SEES_MONEY = ['admin', 'management']
+const SEES_MONEY = ['admin', 'management', 'sales']
 
 const TABS = [
   { key: 'predictions', label: 'Predictions', parts: PREDICTION_PARTS },
@@ -132,7 +134,7 @@ export default function PredictiveAnalytics() {
     retrain(data.models.rows.length ? 'stale' : 'first')
   }, [data, canTrain])
 
-  const historyCards = ['steps', 'steps', 'suppliers', 'suppliers', 'suppliers', 'months'].filter(has).length
+  const historyCards = ['steps', 'steps', 'labels', 'suppliers', 'suppliers', 'suppliers', 'months'].filter(has).length
 
   return (
     <div>
@@ -142,7 +144,7 @@ export default function PredictiveAnalytics() {
         </h1>
 
         <p className="mt-1 text-gray-500">
-          When orders will ship and arrive, when supplier deliveries will come, what customers will likely order, and how close these predictions have been.
+          When orders will ship and arrive, when supplier deliveries will come, when and what customers will likely order next, and how close these predictions have been.
         </p>
       </div>
 
@@ -202,6 +204,7 @@ export default function PredictiveAnalytics() {
                 {has('deliveries') && <DeliveriesAheadCard deliveries={data.deliveries} simulated={data.simulated} />}
                 {has('weeks') && <WeeksCard weeks={data.weeks} simulated={data.simulated} />}
                 {has('accuracy') && <AccuracyCard accuracy={data.accuracy} simulated={data.simulated} />}
+                {has('reorders') && <ReordersCard reorders={data.reorders} simulated={data.simulated} />}
                 {has('demand') && <DemandCard demand={data.demand} simulated={data.simulated} wide />}
                 {has('demand') && data.demand?.enough && <ProductSalesCard demand={data.demand} showMoney={SEES_MONEY.includes(role)} simulated={data.simulated} />}
               </div>
@@ -221,6 +224,7 @@ export default function PredictiveAnalytics() {
               <div className={`grid grid-cols-1 gap-6 ${historyCards > 1 ? 'lg:grid-cols-2' : ''}`}>
                 {has('steps') && <StepsCard steps={data.steps} simulated={data.simulated} />}
                 {has('steps') && <AtSeaCard atSea={data.atSea} simulated={data.simulated} />}
+                {has('labels') && <LabelStepsCard labelSteps={data.labelSteps} simulated={data.simulated} />}
                 {has('suppliers') && <OnTimeCard onTime={data.onTime} simulated={data.simulated} />}
                 {has('suppliers') && <LeadTimeCard leadTimes={data.leadTimes} simulated={data.simulated} />}
                 {has('suppliers') && <BusyMonthsCard months={data.busyMonths} simulated={data.simulated} />}
@@ -263,6 +267,42 @@ function DeliveriesAheadCard({ deliveries, simulated }) {
         footnote="Each delivery is expected around its promised day, moved by how early or late that supplier's deliveries have been (leaning on every supplier's while it has few). Likely late: late at least half the time."
       >
         <DeliveriesAheadTable deliveries={deliveries} />
+      </ChartCard>
+    </div>
+  )
+}
+
+
+// Each customer's next order, soonest expected first.
+function ReordersCard({ reorders, simulated }) {
+  const check = reorders.check
+
+  return (
+    <div className="lg:col-span-2">
+      <ChartCard
+        simulated={simulated}
+        title="Customers likely to order next"
+        question="When will each customer order again, and who is later than usual?"
+        footnote={
+          <>
+            From the system's own orders: the days between each customer's orders. Its next order is expected its
+            usual gap after its last one: the middle of its last 4 gaps, with the shortest and longest of them as its
+            likely dates, so the prediction follows a customer as it orders sooner or later through the year. A
+            customer with fewer than {reorders.needed} gaps leans on every customer's
+            {reorders.everyone ? ` (usually ${formatDays(reorders.everyone.usual)})` : ''}. Orders placed on the same
+            day count as one, and cancelled orders don't count.
+            {check && ` Checked on the latest ${check.tested} gaps, each predicted from the orders before it: ${formatDays(check.averageDaysOff)} off on average, against ${formatDays(check.sameForAllDaysOff)} for giving every customer the same gap.`}
+            {reorders.quiet > 0 && ` ${count(reorders.quiet, 'customer')} with no order in the last 12 months ${reorders.quiet === 1 ? 'is' : 'are'} left out.`}
+          </>
+        }
+      >
+        {reorders.enough
+          ? <ReorderTable customers={reorders.customers} />
+          : (
+            <ChartEmpty>
+              This needs {reorders.needed} gaps between customers' orders to go by; there {reorders.gaps === 1 ? 'is' : 'are'} {reorders.gaps} so far.
+            </ChartEmpty>
+          )}
       </ChartCard>
     </div>
   )
@@ -383,6 +423,29 @@ function StepsCard({ steps, simulated }) {
       footnote={`From finished orders only. The longest bar is the step to work on first. A step needs ${steps[0]?.needed ?? 3} finished orders before it has numbers. The down payment isn't included, since it waits on the customer.`}
     >
       <StepTimesChart steps={steps} />
+    </ChartCard>
+  )
+}
+
+
+// How long each step of a compliance label takes, from every label's saved steps.
+function LabelStepsCard({ labelSteps, simulated }) {
+  const { available, steps } = labelSteps
+  const recorded = steps.some((step) => step.records > 0)
+
+  return (
+    <ChartCard
+      simulated={simulated}
+      title="Labeling steps"
+      question="Which step of a compliance label takes the longest?"
+      table={recorded ? <StepTimesTable steps={steps} counts="label" /> : null}
+      footnote={`From each label's saved steps: the time from one step to the next, so it shows who a label waits on the longest, such as how long customers take to send their translated design. A step needs ${steps[0]?.needed ?? 3} labels before it has numbers. Labels started before their steps were saved have only their start and latest step.`}
+    >
+      {!available
+        ? <ChartEmpty>Each label step's time is saved once db/migrations/026 has been run in Supabase.</ChartEmpty>
+        : recorded
+          ? <StepTimesChart steps={steps} counts="label" />
+          : <ChartEmpty>No label has gone from one step to the next since its steps began to be saved.</ChartEmpty>}
     </ChartCard>
   )
 }

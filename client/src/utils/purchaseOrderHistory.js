@@ -55,9 +55,12 @@ export function describeHistoryEntry(entry, { supplierName = () => null, product
 }
 
 
-// Who did it: the person, or where a filled-in entry came from.
+// Who did it: the person, or where a filled-in entry came from. An entry of the
+// made-up demo history (db/demo/) has a role and no person. The payment and
+// label histories (db/migrations/026) use this too.
 export function historyEntryBy(entry) {
   if (entry.done_by_name) return entry.done_by_role ? `${entry.done_by_name} (${entry.done_by_role})` : entry.done_by_name
+  if (entry.details?.simulated) return entry.done_by_role ? `Simulated ${entry.done_by_role}` : 'Simulated'
   return entry.details?.filled_in ? 'From saved records' : 'System'
 }
 

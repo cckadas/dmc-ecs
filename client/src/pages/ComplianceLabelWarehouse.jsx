@@ -10,6 +10,7 @@ import { faBoxOpen, faFileLines, faUpload, faXmark, faImage, faCheck, faStickyNo
 import StatusBadge from '../components/StatusBadge'
 import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
+import { LabelHistory } from '../components/HistoryList'
 
 
 export default function ComplianceLabelWarehouse() {
@@ -1195,6 +1196,12 @@ async function loadCustomerOrders() {
                   </div>
                 )}
               </div>
+
+
+              {/* =================================================
+                  HISTORY (each step's date and time)
+              ================================================= */}
+              <LabelHistory exchangeId={selectedExchange?.id}/>
             </div>
 
 

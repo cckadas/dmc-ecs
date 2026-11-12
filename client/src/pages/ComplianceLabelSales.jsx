@@ -11,6 +11,7 @@ import { faBoxOpen, faFileLines, faXmark, faImage, faPaperPlane, faPrint } from 
 import StatusBadge from '../components/StatusBadge'
 import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
+import { LabelHistory } from '../components/HistoryList'
 
 
 export default function ComplianceLabelSalesPage() {
@@ -785,9 +786,20 @@ export default function ComplianceLabelSalesPage() {
                                 {/* ACTION */}
                                 <td className="px-6 py-4">
                                   {exchange?.status === 'applied to units' ? (
-                                    <span className="text-sm font-medium text-green-600">
-                                      Unit is now in staging
-                                    </span>
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-sm font-medium text-green-600">
+                                        Unit is now in staging
+                                      </span>
+
+                                      {/* STILL OPENS, TO SEE THE LABEL'S HISTORY */}
+                                      <IconButton
+                                        icon={faFileLines}
+                                        title="View Compliance Label and its history"
+                                        color="amber"
+                                        disabled={false}
+                                        onClick={() => openComplianceModal(customerOrder, item)}
+                                      />
+                                    </div>
                                   ) : (
                                     <div className="flex items-center gap-2">
                                       <IconButton
@@ -938,6 +950,12 @@ export default function ComplianceLabelSalesPage() {
                   </div>
                 )}
               </div>
+
+
+              {/* =================================================
+                  HISTORY (each step's date and time)
+              ================================================= */}
+              <LabelHistory exchangeId={selectedExchange?.id}/>
             </div>
 
 

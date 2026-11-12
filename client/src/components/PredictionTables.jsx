@@ -7,8 +7,9 @@ import TableScroll from './TableScroll'
 // =============================================================================
 // The predictions as lists, for Predictive Analytics' Predictions tab: each
 // order under way with when it should ship and arrive, each supplier delivery
-// still to come with when it should arrive, and sales by product with each
-// product's expected cases (services/analyticsService.js loads them).
+// still to come with when it should arrive, each customer with when it will
+// likely order next, and sales by product with each product's expected cases
+// (services/analyticsService.js loads them).
 // =============================================================================
 
 const dateFormat = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'Asia/Manila' })
@@ -133,8 +134,75 @@ export function DeliveriesAheadTable({ deliveries }) {
 }
 
 
+// Each customer's next order: its usual gap between orders, when the next one
+// is expected, and whether it's due or later than usual (utils/reorderTiming.js).
+export function ReorderTable({ customers }) {
+  if (!customers.length) return <p className="text-sm text-gray-500">No customer has ordered in the last 12 months.</p>
+
+  const days = (value) => `${Math.round(value)} ${Math.round(value) === 1 ? 'day' : 'days'}`
+
+  return (
+    <TableScroll>
+      <table className="min-w-full">
+        <thead className="bg-gray-50">
+          <tr>
+            <th className={HEAD}>Customer</th>
+            <th className={HEAD}>Usually orders</th>
+            <th className={HEAD}>Last order</th>
+            <th className={HEAD}>Next order expected</th>
+            <th className={HEAD}>Prediction</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {customers.map((customer) => (
+            <tr key={customer.id}>
+              <td className={CELL}>
+                <p className="font-medium text-gray-800">{customer.name}</p>
+                <p className="text-xs text-gray-500">
+                  {customer.orders} {customer.orders === 1 ? 'order' : 'orders'}
+                  {customer.usualCases ? ` · usually about ${cases(customer.usualCases)} cases` : ''}
+                </p>
+              </td>
+              <td className={CELL}>
+                <p className="text-gray-800">every {days(customer.usual)}</p>
+                <p className="text-xs text-gray-500">
+                  {customer.leansOnEveryone
+                    ? "too few orders yet: going by every customer's pace"
+                    : `${Math.round(customer.quick)} to ${days(customer.slow)} in its last ${customer.gaps} gaps`}
+                </p>
+              </td>
+              <td className={`${CELL} whitespace-nowrap`}>
+                <p>{dayFormat(customer.lastDay)}</p>
+                {customer.lastOrderNumber && <p className="text-xs text-gray-500">{customer.lastOrderNumber}</p>}
+              </td>
+              <td className={`${CELL} whitespace-nowrap`}>
+                <p className="font-medium text-gray-800">around {dayFormat(customer.expectedDay)}</p>
+                <p className="text-xs text-gray-500">likely {dayFormat(customer.range.quick)} to {dayFormat(customer.range.slow)}</p>
+              </td>
+              <td className={CELL}>
+                {customer.state === 'overdue' ? (
+                  <>
+                    <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">Later than usual</span>
+                    <p className="mt-1 text-xs text-gray-600">{days(customer.overdueDays)} past its likely dates</p>
+                  </>
+                ) : customer.state === 'due' ? (
+                  <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs font-semibold text-[#2D5A42]">Due now</span>
+                ) : (
+                  <span className="text-xs text-gray-500">In {days(customer.daysUntil)}</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </TableScroll>
+  )
+}
+
+
 // Sales by product: each product's cases (and, for showMoney, pesos) over the
-// last 12 months, its trend, and its expected cases next month. Choosing one
+// last 12 months, its trend, and its expected cases this month (the forecast's
+// first month is the one under way). Choosing one
 // shows its months and how its forecast comes from its sales.
 export function ProductSales({ sales, showMoney = false }) {
   const [search, setSearch] = useState('')
@@ -174,7 +242,7 @@ export function ProductSales({ sales, showMoney = false }) {
               <th className={`${HEAD} text-right`}>Cases, 12 months</th>
               {showMoney && <th className={`${HEAD} text-right`}>Sales, 12 months</th>}
               <th className={`${HEAD} text-right`}>Last 3 months</th>
-              <th className={`${HEAD} text-right`}>Expected next month</th>
+              <th className={`${HEAD} text-right`}>Expected this month</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
@@ -235,7 +303,7 @@ function ProductDetail({ product, showMoney }) {
 
       <p className="mt-2 text-sm text-gray-700">
         {next && product.share > 0
-          ? `How its sales make its forecast: over the last 6 months it was ${sharePercent}% of the ${product.category} cases ordered. ${product.category} is expected to order about ${cases(next.cases / product.share)} cases next month, so about ${cases(next.cases)} of this product (likely ${cases(next.quick)} to ${cases(next.slow)}). The more it sells, the bigger its share, and the more it's expected to sell.`
+          ? `How its sales make its forecast: over the last 6 months it was ${sharePercent}% of the ${product.category} cases ordered. ${product.category} is expected to order about ${cases(next.cases / product.share)} cases this month, so about ${cases(next.cases)} of this product (likely ${cases(next.quick)} to ${cases(next.slow)}). The more it sells, the bigger its share, and the more it's expected to sell.`
           : 'Not ordered in the last 6 months, so it has no share of its category to forecast from.'}
       </p>
     </div>

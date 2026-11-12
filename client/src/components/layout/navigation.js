@@ -55,7 +55,7 @@ export const NAV_SECTIONS = [
         label: 'Predictive Analytics',
         path: 'predictive-analytics',
         icon: faChartColumn,
-        roles: ['admin', 'management', 'procurement', 'warehouse'],
+        roles: ['admin', 'management', 'sales', 'procurement', 'warehouse'],
       },
     ],
   },

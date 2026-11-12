@@ -7,6 +7,7 @@ import { loadOrderProgress, recordArrival } from '../services/predictionService'
 import { formatDateTime, localDateString } from '../utils/dates'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
+import { PaymentHistory } from './HistoryList'
 
 
 const formatDate = (date) =>
@@ -22,6 +23,9 @@ const DAY = 24 * 60 * 60 * 1000
 
 // Who can record a container's arrival (db/migrations/025).
 const RECORDS_ARRIVALS = ['admin', 'sales', 'warehouse']
+
+// Who can read an order's payment history (db/migrations/026).
+const SEES_PAYMENTS = ['admin', 'sales', 'management']
 
 // Each step's estimate step, whose end is when that step is reached
 // (utils/predictions.js ESTIMATE_STEPS). The first step starts the order;
@@ -82,6 +86,7 @@ export default function OrderProgress({ order, forStaff = false }) {
   const dates = stepDates(order, history, arrivedOn)
   const expected = expectedDates(prediction, shipped)
   const canRecordArrival = forStaff && shipped && RECORDS_ARRIVALS.includes(profile?.role?.toLowerCase())
+  const seesPayments = forStaff && SEES_PAYMENTS.includes(profile?.role?.toLowerCase())
 
   return (
     <div className="mb-6 rounded-lg border border-gray-200 p-4">
@@ -182,6 +187,16 @@ export default function OrderProgress({ order, forStaff = false }) {
           shippedOn={dates[5]}
           onSaved={() => setReloads((count) => count + 1)}
         />
+      )}
+
+      {/* Every payment with its date and time: the down payment, then the balance. */}
+      {seesPayments && (
+        <div className="mt-4">
+          <PaymentHistory
+            orderId={order.id}
+            reloadKey={`${order.status}:${order.settled_amount}:${order.pending_payment_amount}`}
+          />
+        </div>
       )}
     </div>
   )

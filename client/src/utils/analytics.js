@@ -14,6 +14,7 @@ import { ESTIMATE_STEPS, MIN_RECORDS, blendStep, buildStageStatistics, monthEffe
 import { estimateContext, supplierHistories, supplierPool } from './estimateInputs.js'
 import { SCORE_WINDOW_DAYS, manilaDate, scoreSuppliers } from './supplierScores.js'
 import { countryName } from './countryPlaces.js'
+import { REORDER_SOON_DAYS } from './reorderTiming.js'
 
 const DAY = 24 * 60 * 60 * 1000
 
@@ -423,12 +424,15 @@ export function headlineNumbers({ predictions = [], orders = [], historyByOrder 
 //   onTrack         orders under way on track for their requested date, by their estimates
 //   shipSoon        orders likely to ship in the next 4 weeks
 //   lateDeliveries  supplier deliveries still to come that are overdue or likely late
-//   demandNext      the cases customers will likely order next month (utils/demandForecast.js)
+//   demandNext      the cases customers will likely order in the forecast's first
+//                   month, the one under way (utils/demandForecast.js)
+//   reorders        customers due to order now or later than usual, and those
+//                   expected soon (utils/reorderTiming.js)
 //   accuracy        the method in use: the share that shipped within its likely range
 // A number is null when its part wasn't loaded.
 export const SOON_DAYS = 28
 
-export function aheadNumbers({ predictions = null, deliveries = null, demand = null, accuracy = null, now = Date.now() }) {
+export function aheadNumbers({ predictions = null, deliveries = null, demand = null, accuracy = null, reorders = null, now = Date.now() }) {
   const underWay = (predictions || []).filter((prediction) => !prediction.shipped && !prediction.ifPaidToday)
   const dated = underWay.filter((prediction) => prediction.estimatedShipDate)
   const until = timeOf(now) + SOON_DAYS * DAY
@@ -442,6 +446,11 @@ export function aheadNumbers({ predictions = null, deliveries = null, demand = n
       total: deliveries.length,
     } : null,
     demandNext: demand?.enough ? demand.forecast?.all?.[0] || null : null,
+    reorders: reorders?.enough ? {
+      due: reorders.customers.filter((customer) => customer.state === 'due' || customer.state === 'overdue').length,
+      soon: reorders.customers.filter((customer) => customer.state === 'soon').length,
+      days: REORDER_SOON_DAYS,
+    } : null,
     accuracy: accuracy?.enough ? { ...accuracy.methods.find((method) => method.inUse), tested: accuracy.tested } : null,
   }
 }

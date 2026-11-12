@@ -19,6 +19,8 @@ import {
 } from '../utils/analytics'
 import { isSimulated } from '../utils/simulated'
 import { demandForecast } from '../utils/demandForecast'
+import { reorderTiming } from '../utils/reorderTiming'
+import { labelStepTimes } from '../utils/labelHistory'
 
 
 // =============================================================================
@@ -30,22 +32,25 @@ import { demandForecast } from '../utils/demandForecast'
 //
 // The predictions, what's ahead:
 //   ahead       the numbers at the top: orders on track, shipping soon,
-//               deliveries likely late, cases expected next month, accuracy
+//               deliveries likely late, cases expected this month, customers
+//               due to order, accuracy
 //   orders      each order under way: when it should ship and arrive, at risk
 //   deliveries  each supplier delivery still to come: when, likely late
 //   weeks       orders ready to ship, by week
+//   reorders    when each customer will likely order next
 //   demand      the demand forecast, with sales by product
 //   accuracy    how close the estimates came on orders they didn't learn from
 // What the predictions learn from (descriptive):
 //   steps       where the time goes, days at sea by country
+//   labels      how long each label step takes
 //   suppliers   on-time rate, lead time and busy months
 //   months      shipping on time, by month
 // And for the Executive Dashboard:
 //   numbers     its four numbers
 // =============================================================================
 
-export const PREDICTION_PARTS = ['ahead', 'orders', 'deliveries', 'weeks', 'demand', 'accuracy']
-export const HISTORY_PARTS = ['steps', 'suppliers', 'months']
+export const PREDICTION_PARTS = ['ahead', 'orders', 'deliveries', 'weeks', 'reorders', 'demand', 'accuracy']
+export const HISTORY_PARTS = ['steps', 'labels', 'suppliers', 'months']
 export const ALL_PARTS = [...PREDICTION_PARTS, ...HISTORY_PARTS]
 
 const CLOSED = ['shipped', 'cancelled']
@@ -67,7 +72,7 @@ async function rowsByIds(table, columns, column, ids) {
 
 export async function loadAnalytics(parts = ALL_PARTS) {
   const want = (part) => parts.includes(part)
-  const needOrders = ['ahead', 'orders', 'numbers', 'steps', 'months', 'weeks', 'accuracy', 'demand'].some(want)
+  const needOrders = ['ahead', 'orders', 'numbers', 'steps', 'months', 'weeks', 'accuracy', 'demand', 'reorders'].some(want)
 
   const [history, deliveries, suppliers, orders, models] = await Promise.all([
     needOrders ? loadStatusHistory() : [],
@@ -120,12 +125,31 @@ export async function loadAnalytics(parts = ALL_PARTS) {
   // The demand forecast and sales by product: every order's lines and each
   // product's category.
   let demand = null
+  let orderItems = null
   if (want('demand') || want('ahead')) {
     const [items, products] = await Promise.all([
       allRows(() => supabase.from('customer_order_items').select('id, customer_order_id, product_id, quantity, unit_price, subtotal').order('id')),
       allRows(() => supabase.from('products').select('id, category, product_name').order('id')),
     ])
+    orderItems = items
     demand = demandForecast({ orders: allOrders, items, products })
+  }
+
+  // When each customer will likely order next, from the days between its orders.
+  let reorders = null
+  if (want('reorders') || want('ahead')) {
+    const customerIds = [...new Set(allOrders.map((order) => order.customer_id).filter(Boolean))]
+    const customers = want('reorders') ? await rowsByIds('profiles', 'id, name, company', 'id', customerIds).catch(() => []) : []
+    reorders = reorderTiming({ orders: allOrders, customers: Object.fromEntries(customers.map((customer) => [customer.id, customer])), items: orderItems })
+  }
+
+  // How long each label step takes, from every label's saved steps
+  // (db/migrations/026). Not available until that script has been run.
+  let labelSteps = null
+  if (want('labels')) {
+    labelSteps = await allRows(() => supabase.from('label_exchange_history').select('id, exchange_id, to_status, happened_at').order('id'))
+      .then((rows) => ({ available: true, steps: labelStepTimes(rows) }))
+      .catch(() => ({ available: false, steps: labelStepTimes([]) }))
   }
 
   // Each order under way, with its customer.
@@ -138,16 +162,18 @@ export async function loadAnalytics(parts = ALL_PARTS) {
 
   return {
     // The predictions.
-    ahead: want('ahead') ? aheadNumbers({ predictions, deliveries: openDeliveries, demand, accuracy }) : null,
+    ahead: want('ahead') ? aheadNumbers({ predictions, deliveries: openDeliveries, demand, accuracy, reorders }) : null,
     orders: orderList,
     deliveries: want('deliveries') ? openDeliveries : null,
     weeks: want('weeks') ? comingUpByWeek(predictions) : null,
+    reorders: want('reorders') ? reorders : null,
     demand: want('demand') ? demand : null,
     accuracy: want('accuracy') ? accuracy : null,
     // What they learn from.
     steps: want('steps') ? stepTimes(stageStatistics) : null,
     // Days at sea by country, from recorded arrivals (db/migrations/025).
     atSea: want('steps') ? daysAtSea((await loadArrivals(supabase, history)).records) : null,
+    labelSteps,
     onTime: want('suppliers') ? supplierOnTime(deliveries, supplierList) : null,
     leadTimes: want('suppliers') ? supplierLeadTimes(deliveries, supplierList) : null,
     // The busy months the deliveries show, which the estimates add for suppliers not ordered from yet.

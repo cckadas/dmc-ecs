@@ -18,7 +18,7 @@ const LABELS = ['Orders on track', 'Payment to shipping', 'Supplier on-time rate
 
 
 function Tiles({ tiles, dimmed = false }) {
-  const columns = tiles.length >= 5 ? 'xl:grid-cols-5' : tiles.length === 3 ? 'xl:grid-cols-3' : 'xl:grid-cols-4'
+  const columns = tiles.length === 5 ? 'xl:grid-cols-5' : tiles.length % 3 === 0 ? 'xl:grid-cols-3' : 'xl:grid-cols-4'
 
   return (
     <div className={`grid grid-cols-1 gap-4 sm:grid-cols-2 ${columns} ${dimmed ? 'opacity-60' : ''}`}>
@@ -85,7 +85,7 @@ export function PredictionNumbers({ numbers, simulated = false }) {
 // what's ahead (utils/analytics.js aheadNumbers). A number whose part this
 // role doesn't see is left out.
 export function AheadNumbers({ ahead }) {
-  const { onTrack, shipSoon, lateDeliveries, demandNext, accuracy } = ahead
+  const { onTrack, shipSoon, lateDeliveries, demandNext, reorders, accuracy } = ahead
   const cases = (value) => `${Math.round(value).toLocaleString('en-US')} cases`
   const monthName = (month) => new Date(`${month}-01T00:00:00Z`).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' })
 
@@ -110,9 +110,14 @@ export function AheadNumbers({ ahead }) {
         : 'No supplier deliveries still to come',
     },
     demandNext && {
-      label: 'Expected orders next month',
+      label: 'Expected orders this month',
       value: `about ${cases(demandNext.cases)}`,
       note: `in ${monthName(demandNext.month)}, likely ${cases(demandNext.quick)} to ${cases(demandNext.slow)}`,
+    },
+    reorders && {
+      label: 'Customers due to order',
+      value: count(reorders.due, 'customer'),
+      note: `due now or later than usual, by their own pace; ${reorders.soon} more expected in the next ${reorders.days / 7} weeks`,
     },
     accuracy && {
       label: 'Prediction accuracy',

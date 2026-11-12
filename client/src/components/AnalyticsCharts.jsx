@@ -278,15 +278,21 @@ function SignedBar({ x, y, width, height, payload, isActive }) {
 
 // 1. Where the time goes -----------------------------------------------------------------
 
-// A step with too few finished orders has no numbers yet.
-const notYet = (step) => `Needs ${step.needed} finished orders; ${step.records} so far`
+// What a step's records are: finished orders, or labels (utils/labelHistory.js).
+const STEP_UNITS = {
+  order: { one: 'finished order', many: 'finished orders', short: 'orders', heading: 'Finished orders' },
+  label: { one: 'label', many: 'labels', short: 'labels', heading: 'Labels' },
+}
 
-function StepTooltip({ active, payload }) {
+// A step with too few records has no numbers yet.
+const notYet = (step, unit) => `Needs ${step.needed} ${unit.many}; ${step.records} so far`
+
+function StepTooltip({ active, payload, unit }) {
   const step = active && payload?.[0]?.payload
   if (!step) return null
 
   if (step.typical === null) {
-    return <TooltipBox value="Not enough orders yet" name={step.label} lines={[notYet(step)]} />
+    return <TooltipBox value={`Not enough ${unit.short} yet`} name={step.label} lines={[notYet(step, unit)]} />
   }
 
   return (
@@ -295,21 +301,23 @@ function StepTooltip({ active, payload }) {
       name={step.label}
       lines={[
         `Likely ${formatDays(step.quick)} to ${formatDays(step.slow)}`,
-        `From ${count(step.records, 'finished order')}`,
+        `From ${count(step.records, unit.one)}`,
       ]}
     />
   )
 }
 
-export function StepTimesChart({ steps }) {
+// counts: what the steps' records are, 'order' or 'label'.
+export function StepTimesChart({ steps, counts = 'order' }) {
   const [ref, compact] = useCompact()
+  const unit = STEP_UNITS[counts]
   const data = steps.map((step) => ({ ...step, days: step.typical ?? 0 }))
   const longest = Math.max(...data.map((step) => step.days))
   const shape = (props) => (
     <HorizontalBar
       {...props}
       fill={props.payload.days === longest ? CHART.series : CHART.muted}
-      label={props.payload.typical === null ? 'Not enough orders yet' : formatDays(props.payload.typical)}
+      label={props.payload.typical === null ? `Not enough ${unit.short} yet` : formatDays(props.payload.typical)}
       name={compact ? props.payload.label : null}
     />
   )
@@ -320,7 +328,7 @@ export function StepTimesChart({ steps }) {
         <BarChart data={data} layout="vertical" margin={{ top: compact ? 12 : 4, right: 76, bottom: 4, left: 0 }} barCategoryGap={compact ? 22 : 12}>
           <XAxis type="number" hide domain={[0, 'dataMax']} />
           <YAxis type="category" dataKey="label" hide={compact} width={156} axisLine={false} tickLine={false} tick={CATEGORY_TICK} />
-          <Tooltip cursor={{ fill: CHART.hover }} content={<StepTooltip />} />
+          <Tooltip cursor={{ fill: CHART.hover }} content={<StepTooltip unit={unit} />} />
           <Bar dataKey="days" barSize={16} isAnimationActive={false} shape={shape} activeBar={shape} />
         </BarChart>
       </ResponsiveContainer>
@@ -328,16 +336,18 @@ export function StepTimesChart({ steps }) {
   )
 }
 
-export function StepTimesTable({ steps }) {
+export function StepTimesTable({ steps, counts = 'order' }) {
+  const unit = STEP_UNITS[counts]
+
   return (
     <DataTable
       rows={steps}
       rowKey={(step) => step.key}
       columns={[
         { label: 'Step', value: (step) => step.label },
-        { label: 'Usual', value: (step) => (step.typical === null ? 'Not enough orders yet' : formatDays(step.typical)), numeric: true },
+        { label: 'Usual', value: (step) => (step.typical === null ? `Not enough ${unit.short} yet` : formatDays(step.typical)), numeric: true },
         { label: 'Likely range', value: (step) => (step.typical === null ? '—' : `${formatDays(step.quick)} to ${formatDays(step.slow)}`), numeric: true },
-        { label: 'Finished orders', value: (step) => step.records || 'None yet', numeric: true },
+        { label: unit.heading, value: (step) => step.records || 'None yet', numeric: true },
       ]}
     />
   )
@@ -904,13 +914,13 @@ export function DemandTable({ history, forecast }) {
   )
 }
 
-// The products most likely ordered next month.
+// The products most likely ordered this month (the forecast's first month).
 export function TopProductsList({ products }) {
   if (!products.length) return null
 
   return (
     <div className="mt-4 border-t border-gray-100 pt-3">
-      <p className="text-sm font-medium text-gray-700">Most likely ordered next month</p>
+      <p className="text-sm font-medium text-gray-700">Most likely ordered this month</p>
       <ol className="mt-2 space-y-1.5 text-sm">
         {products.map((product, index) => (
           <li key={product.id} className="flex items-baseline justify-between gap-4">

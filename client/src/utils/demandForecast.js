@@ -213,7 +213,7 @@ export function productSales({ orders = [], items = [], products = [], months = 
 }
 
 
-// The products likely ordered most next month, from productSales.
+// The products likely ordered most in the forecast's first month, from productSales.
 function topProducts(sales, limit) {
   return sales
     .filter((row) => row.forecast && row.share > 0)
@@ -224,7 +224,7 @@ function topProducts(sales, limit) {
 
 
 // Everything the Demand forecast card shows: the months on record and the
-// forecast, in all and by category, the check, and the top products next month.
+// forecast, in all and by category, the check, and the top products of its first month.
 export function demandForecast({ orders = [], items = [], products = [], today = new Date(), topLimit = 10 }) {
   const { months, series } = monthlyDemand({ orders, items, products, today })
   if (!months.length) return { enough: false, months: 0, needed: MIN_MONTHS }
