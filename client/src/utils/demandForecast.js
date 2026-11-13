@@ -11,7 +11,7 @@
 //     needs 12 months of records
 //   - the forecast: the level times the coming month's season
 //   - the likely range: how far past months strayed from level × season
-// It's checked like the estimates: the last 3 full months, each forecast from
+// It's checked like the estimates: the last 6 full months, each forecast from
 // the months before it only, against simply repeating the month before. Each
 // product's sales and expected cases come with it (productSales).
 //
@@ -22,7 +22,7 @@ export const LEVEL_MONTHS = 6       // the recent level: the last 6 full months
 export const FORECAST_MONTHS = 3    // forecast this many months ahead
 export const MIN_MONTHS = 3         // full months of orders needed for a forecast
 export const SEASON_MONTHS = 12     // and this many before seasons are used
-export const TESTED_MONTHS = 3      // the check: the last 3 full months
+export const TESTED_MONTHS = 6      // the check: the last 6 full months (busy and quiet ones)
 
 // Orders that are real demand: past their down payment, not cancelled.
 const NOT_DEMAND = new Set(['', 'draft', 'pending payment', 'payment rejected', 'cancelled'])

@@ -817,26 +817,67 @@ export function AccuracyChart({ accuracy }) {
   const daysOff = methods.map((method) => ({ ...method, value: method.averageDaysOff, text: formatDays(method.averageDaysOff) }))
 
   return (
-    <div className="grid gap-6 sm:grid-cols-2">
-      <MethodBars title="Shipped within the likely range" note="Higher is better" rows={inRange} max={100} />
-      <MethodBars title={`Within ${WITHIN_DAYS} days of the date`} note="Higher is better" rows={within} max={100} />
-      <MethodBars title="Average days off the date" note="Lower is better" rows={daysOff} max={Math.max(1, ...daysOff.map((row) => row.value))} />
+    <>
+      <div className="grid gap-6 sm:grid-cols-2">
+        <MethodBars title="Shipped within the likely range" note="Higher is better" rows={inRange} max={100} />
+        <MethodBars title={`Within ${WITHIN_DAYS} days of the date`} note="Higher is better" rows={within} max={100} />
+        <MethodBars title="Average days off the date" note="Lower is better" rows={daysOff} max={Math.max(1, ...daysOff.map((row) => row.value))} />
+      </div>
+      {accuracy.labeling?.enough && <LabelingAccuracy check={accuracy.labeling} />}
+    </>
+  )
+}
+
+// Once an order is in labeling: its ready date from its labels' steps, against
+// labeling as a whole (utils/analytics.js labelingCheck).
+function LabelingAccuracy({ check }) {
+  const methods = check.methods.map((method) => ({ ...method, name: method.inUse ? `${method.label} (in use)` : method.label }))
+  const daysOff = methods.map((method) => ({ ...method, value: method.averageDaysOff, text: formatDays(method.averageDaysOff) }))
+  const inRange = methods.map((method) => ({ ...method, value: method.withinRangeShare * 100, text: formatPercent(method.withinRangeShare) }))
+
+  return (
+    <div className="mt-6 border-t border-gray-100 pt-4">
+      <p className="text-sm font-semibold text-gray-800">Ready date, once an order is in labeling</p>
+      <p className="mb-2 text-xs text-gray-500">
+        {count(check.testedOrders, 'order')} it didn't learn from, each predicted as its labels moved on
+      </p>
+      <div className="grid gap-6 sm:grid-cols-2">
+        <MethodBars title="Ready within the likely range" note="Higher is better" rows={inRange} max={100} />
+        <MethodBars title="Average days off the ready date" note="Lower is better" rows={daysOff} max={Math.max(1, ...daysOff.map((row) => row.value))} />
+      </div>
     </div>
   )
 }
 
 export function AccuracyTable({ accuracy }) {
   return (
-    <DataTable
-      rows={accuracy.methods}
-      rowKey={(method) => method.key}
-      columns={[
-        { label: 'Method', value: (method) => (method.inUse ? `${method.label} (in use)` : method.label) },
-        { label: 'Within the likely range', value: (method) => formatPercent(method.withinRangeShare), numeric: true },
-        { label: `Within ${WITHIN_DAYS} days`, value: (method) => formatPercent(method.withinShare), numeric: true },
-        { label: 'Average days off', value: (method) => formatDays(method.averageDaysOff), numeric: true },
-      ]}
-    />
+    <>
+      <DataTable
+        rows={accuracy.methods}
+        rowKey={(method) => method.key}
+        columns={[
+          { label: 'Method', value: (method) => (method.inUse ? `${method.label} (in use)` : method.label) },
+          { label: 'Within the likely range', value: (method) => formatPercent(method.withinRangeShare), numeric: true },
+          { label: `Within ${WITHIN_DAYS} days`, value: (method) => formatPercent(method.withinShare), numeric: true },
+          { label: 'Average days off', value: (method) => formatDays(method.averageDaysOff), numeric: true },
+        ]}
+      />
+
+      {accuracy.labeling?.enough && (
+        <div className="mt-4">
+          <p className="text-sm font-semibold text-gray-800">Ready date, once an order is in labeling</p>
+          <DataTable
+            rows={accuracy.labeling.methods}
+            rowKey={(method) => method.key}
+            columns={[
+              { label: 'Method', value: (method) => (method.inUse ? `${method.label} (in use)` : method.label) },
+              { label: 'Within the likely range', value: (method) => formatPercent(method.withinRangeShare), numeric: true },
+              { label: 'Average days off', value: (method) => formatDays(method.averageDaysOff), numeric: true },
+            ]}
+          />
+        </div>
+      )}
+    </>
   )
 }
 

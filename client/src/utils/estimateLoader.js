@@ -14,6 +14,7 @@ import { estimateContext, sailingFor, sailingRecords, supplierHistories, supplie
 import { buildDeliveries, manilaDate } from './supplierScores.js'
 import { MODEL_KEYS, isOutdatedModel, modelPredictor } from './predictionModel.js'
 import { labelingKindOf, labelingKinds, productsOrderedBy } from './labelingKind.js'
+import { labelingContext, labelingRecords } from './labelingSteps.js'
 import { planContainer } from './containers.js'
 
 // Rows, or none when the table can't be read (no access, or its script not run yet).
@@ -181,6 +182,26 @@ export async function loadLabelingKinds(client) {
 }
 
 
+// Every label's saved steps (db/migrations/026) and the order line each label
+// is for. Empty when 026 isn't run yet, or the reader can't see them (a
+// customer), and the estimates then go by labeling as a whole.
+export async function loadLabelSteps(client) {
+  const [labelHistory, exchanges] = await Promise.all([
+    allRows(() => client.from('label_exchange_history').select('id, exchange_id, to_status, happened_at').order('id')).catch(() => []),
+    allRows(() => client.from('compliance_label_exchanges').select('id, customer_order_item_id').order('id')).catch(() => []),
+  ])
+
+  return { labelHistory, exchanges }
+}
+
+
+// The labels shaped for the estimates (utils/labelingSteps.js), with the orders
+// and lines loadLabelingKinds read.
+function labelingFor(labels, labeling, historyByOrder) {
+  return labelingRecords({ ...labels, items: labeling.items, orders: labeling.orders, historyByOrder, kindOf: labeling.kindOf })
+}
+
+
 // The smallest container that holds a draft's cases (utils/containers.js), or
 // the largest when even that's too small. Null when a product isn't measured.
 async function plannedContainer(client, items, products) {
@@ -279,20 +300,23 @@ async function loadOrderDetails(client, orders) {
 // customer's date and country. history = every status change: the browser reads
 // it through status_history_for_estimates, the server straight from the table.
 export async function estimateOrders(client, orders, history) {
-  const [records, details, models, labeling, arrivals] = await Promise.all([
+  const [records, details, models, labeling, arrivals, labels] = await Promise.all([
     loadSupplierRecords(client),
     loadOrderDetails(client, orders),
     loadModels(client),
     loadLabelingKinds(client),
     loadArrivals(client, history),
+    loadLabelSteps(client),
   ])
 
   const { stageStatistics, historyByOrder } = buildStageStatistics(history, labeling.kindOf)
+  const labelData = labelingFor(labels, labeling, historyByOrder)
 
   const predictions = orders.map((order) => {
     const country = details.locations.find((location) => location.id === order.delivery_location_id)?.country
     // A shipped order's recorded arrival, if any.
     const withArrival = { ...order, ...(arrivals.byOrder[order.id] || {}) }
+    const kind = labeling.kinds.get(order.id) || null
 
     return predictOrder(withArrival, stageStatistics, historyByOrder, estimateContext({
       order: withArrival,
@@ -305,8 +329,13 @@ export async function estimateOrders(client, orders, history) {
       sailing: sailingFor(arrivals.records, country),
       country,
       models,
-      labelingKind: labeling.kinds.get(order.id) || null,
+      labelingKind: kind,
       containerSize: labeling.orders.find((row) => row.id === order.id)?.container_size || null,
+      labelSteps: labelingContext(labelData.statistics, labelData.steps, {
+        orderId: order.id,
+        customerId: labelData.customerOf.get(order.id) || order.customer_id || null,
+        kind,
+      }),
     }))
   })
 
@@ -322,7 +351,7 @@ export async function estimateOrders(client, orders, history) {
 export async function estimateDraft(client, { items = [], deliveryLocationId, requestedShipDate, history = [], customerId = null, containerSize = null }) {
   const productIds = [...new Set(items.map((item) => item.product_id).filter(Boolean))]
 
-  const [records, products, location, models, labeling, arrivals] = await Promise.all([
+  const [records, products, location, models, labeling, arrivals, labels] = await Promise.all([
     loadSupplierRecords(client),
     productIds.length
       ? client.from('products').select('id, supplier_id, cbm, gross_weight_kg').in('id', productIds)
@@ -333,6 +362,7 @@ export async function estimateDraft(client, { items = [], deliveryLocationId, re
     loadModels(client),
     loadLabelingKinds(client),
     loadArrivals(client, history),
+    loadLabelSteps(client),
   ])
 
   // Its labeling kind: new unless the customer has ordered every product before.
@@ -346,6 +376,7 @@ export async function estimateDraft(client, { items = [], deliveryLocationId, re
   const order = { id: 'draft', status: 'pending payment', created_at: new Date().toISOString(), requested_ship_date: requestedShipDate || null }
 
   const { stageStatistics, historyByOrder } = buildStageStatistics(history, labeling.kindOf)
+  const labelData = labelingFor(labels, labeling, historyByOrder)
 
   return predictOrder(order, stageStatistics, historyByOrder, estimateContext({
     order,
@@ -360,6 +391,8 @@ export async function estimateDraft(client, { items = [], deliveryLocationId, re
     models,
     labelingKind,
     containerSize: container,
+    // Its customer's pace at sending designs, from their past orders' labels.
+    labelSteps: labelingContext(labelData.statistics, labelData.steps, { customerId, kind: labelingKind }),
   }))
 }
 

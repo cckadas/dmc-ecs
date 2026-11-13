@@ -183,8 +183,9 @@ export const casesIn = (items = []) => items.reduce((sum, item) => sum + (Number
 // Everything predictOrder's context needs for one order. Missing pieces just
 // leave that part to the status history. labelingKind: utils/labelingKind.js's;
 // containerSize: the container code, when it isn't on the order (a draft);
-// sailing: the days at sea to the order's country, from recorded arrivals.
-export function estimateContext({ order, items, purchaseOrders, poLines, histories, pool = null, supplierNames, sailing = null, country, now, models = null, labelingKind = null, containerSize = null }) {
+// sailing: the days at sea to the order's country, from recorded arrivals;
+// labelSteps: from the labels' saved steps (utils/labelingSteps.js).
+export function estimateContext({ order, items, purchaseOrders, poLines, histories, pool = null, supplierNames, sailing = null, country, now, models = null, labelingKind = null, containerSize = null, labelSteps = null }) {
   const shipped = normalizeStatus(order?.status) === 'shipped'
 
   return {
@@ -195,6 +196,7 @@ export function estimateContext({ order, items, purchaseOrders, poLines, histori
     products: (items || []).length,
     countryName: country || '',
     labelingKind,
+    labelSteps,
     bigContainer: isBigContainer(containerSize || order?.container_size),
     models,
     suppliers: shipped ? [] : orderSuppliers({

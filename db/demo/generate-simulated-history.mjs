@@ -199,6 +199,8 @@ const MADE_UP = [
   { slug: 'duneandpalm', company: 'Dune and Palm Grocers', country: 'United Arab Emirates', location: 'Al Quoz warehouse', address: 'Warehouse 1, Sample Street, Al Quoz, Dubai, United Arab Emirates', phone: '+971 0 000 0606', finished: 11 },
   { slug: 'bayviewmart', company: 'Bayview Asian Mart', country: 'United States', location: 'Daly City store', address: '1 Sample Avenue, Daly City, CA, United States', phone: '+1 000 000 0707', finished: 20 },
   { slug: 'cedarlane', company: 'Cedar Lane Filipino Foods', country: 'United States', location: 'Jersey City warehouse', address: '1 Sample Street, Jersey City, NJ, United States', phone: '+1 000 000 0808', finished: 17 },
+  { slug: 'sampanlane', company: 'Sampan Lane Foods', country: 'Hong Kong', location: 'Kwun Tong warehouse', address: 'Unit 9, Sample Industrial Building, Kwun Tong, Hong Kong', phone: '+852 0000 0909', finished: 7 },
+  { slug: 'junkbay', company: 'Junk Bay Mercantile', country: 'Hong Kong', location: 'Tseung Kwan O store', address: 'Shop 10, Sample Plaza, Tseung Kwan O, Hong Kong', phone: '+852 0000 1010', finished: 5 },
 ].map((customer, index) => ({
   ...customer,
   key: `made-up-${index + 1}`,
@@ -208,16 +210,23 @@ const MADE_UP = [
   createdAt: officeTime(START - whole(10, 40) * DAY),
 }))
 
-// The system's own customer accounts get a few finished orders too, so signing
-// in as them shows a history. Only a few: they get none under way (so they
-// keep their real balances), and the latest months shouldn't miss many orders
-// for it. Their real country isn't known here, so their orders follow Hong
-// Kong's pattern. If there are fewer than two, the SQL gives these orders to
-// made-up customers instead.
-const EXISTING = [
-  { key: 'existing-1', country: 'Hong Kong', finished: 7 },
-  { key: 'existing-2', country: 'Hong Kong', finished: 5 },
-]
+// The system's own customer accounts get none of it: their records stay their
+// own, and the predictions see the made-up history apart from them.
+
+
+// Each label's steps and every payment have random numbers of their own.
+const recordRandom = mulberry32(SEED + 26)
+const span = (low, high) => low + (high - low) * recordRandom()
+const MINUTE = 60 * 1000
+const money = (value) => Math.round(value * 100) / 100
+
+// How long each customer takes to send back its translated designs, as a share
+// of the usual labeling time: some customers are quick, some slow. A slow one
+// makes the whole labeling longer, since the labels can't be printed and applied
+// before its design is in.
+const DESIGN_SHARE = [0.25, 0.55]
+const USUAL_DESIGN_SHARE = (DESIGN_SHARE[0] + DESIGN_SHARE[1]) / 2
+for (const customer of MADE_UP) customer.designShare = span(DESIGN_SHARE[0], DESIGN_SHARE[1])
 
 
 // Containers: the placeholder costs of db/migrations/016, and how many cases an
@@ -253,7 +262,7 @@ const PRODUCTS = SUPPLIERS.flatMap((supplier) => Array.from({ length: PRODUCT_SL
 })))
 
 // The products each customer usually orders.
-for (const customer of [...MADE_UP, ...EXISTING]) customer.usual = shuffle(PRODUCTS).slice(0, whole(4, 7))
+for (const customer of MADE_UP) customer.usual = shuffle(PRODUCTS).slice(0, whole(4, 7))
 
 
 // One order placed at a time: its container and its lines, mostly the
@@ -359,9 +368,10 @@ function deliveries(lines, poTime, { tight = false } = {}) {
 // hours, so a finish on a weekend or an evening counts from the next workday.
 const LABELING_DAYS = { regular: 6.2, big: 13.2, new: 20.2 }
 
-function labelingDays(kind, lines) {
+function labelingDays(kind, lines, customer) {
   const days = LABELING_DAYS[kind] + 0.4 * (lines.length - 3)
-  return Math.max(2, days * Math.max(0.6, 1 + 0.15 * normal()))
+  const pace = 1 - USUAL_DESIGN_SHARE + customer.designShare
+  return Math.max(2, days * pace * Math.max(0.6, 1 + 0.15 * normal()))
 }
 
 
@@ -379,7 +389,7 @@ function finishedOrder(plan) {
     const po = deliveries(lines, ordered)
     const lastArrival = Math.max(...po.parts.map((part) => part.receivedAt))
     const warehouse = lastArrival + between(0.05, 0.25) * DAY
-    const ready = officeTime(warehouse + labelingDays(kind, lines) * DAY)
+    const ready = officeTime(warehouse + labelingDays(kind, lines, customer) * DAY)
     const shipped = officeTime(ready + between(0.2, 1.6) * DAY)
 
     if (shipped < NOW - 0.5 * DAY || attempt > 20) {
@@ -444,7 +454,7 @@ function activeOrder(plan) {
     // tries, the labeling time and PO that start the order nearest that day.
     let ordered = null
     for (let attempt = 0, nearest = Infinity; attempt < 24; attempt++) {
-      const warehouse = step === 4 ? entered : entered - labelingDays(kind, lines) * DAY
+      const warehouse = step === 4 ? entered : entered - labelingDays(kind, lines, customer) * DAY
       let sent = officeTime(warehouse - 35 * DAY)
       const tried = deliveries(lines, sent)
 
@@ -533,7 +543,7 @@ function routineOrder(plan) {
     const po = deliveries(lines, ordered)
     const lastArrival = Math.max(...po.parts.map((part) => part.receivedAt))
     const warehouse = lastArrival + between(0.05, 0.25) * DAY
-    const ready = officeTime(warehouse + labelingDays(kind, lines) * DAY)
+    const ready = officeTime(warehouse + labelingDays(kind, lines, customer) * DAY)
     const shipped = officeTime(ready + between(0.2, 1.6) * DAY)
 
     // It would have shipped by now, or its last delivery only just came in: again.
@@ -565,7 +575,7 @@ function routineOrder(plan) {
 
 const orders = []
 
-if ([...MADE_UP, ...EXISTING].reduce((sum, customer) => sum + customer.finished, 0) !== FINISHED_ORDERS) {
+if (MADE_UP.reduce((sum, customer) => sum + customer.finished, 0) !== FINISHED_ORDERS) {
   throw new Error(`Expected ${FINISHED_ORDERS} finished orders`)
 }
 
@@ -623,11 +633,11 @@ function orderTimes(customer) {
   }
 }
 
-const orderTimesOf = new Map([...MADE_UP, ...EXISTING].map((customer) => [customer.key, orderTimes(customer)]))
+const orderTimesOf = new Map(MADE_UP.map((customer) => [customer.key, orderTimes(customer)]))
 
 // The finished orders, then their products in the order each customer placed
 // them, so each order knows whether it's new to its customer.
-const plans = [...MADE_UP, ...EXISTING]
+const plans = MADE_UP
   .flatMap((customer) => orderTimesOf.get(customer.key).slice(0, customer.finished).map((createdAt) => ({ customer, createdAt })))
   .sort((a, b) => a.createdAt - b.createdAt)
 if (plans.length !== FINISHED_ORDERS) throw new Error(`Expected ${FINISHED_ORDERS} finished orders, planned ${plans.length}`)
@@ -710,7 +720,7 @@ function settleKinds() {
       order.kind = kind
       if (order.status !== 'shipped') continue
 
-      const ready = officeTime(order.times['warehouse preparation'] + labelingDays(kind, order.lines) * DAY)
+      const ready = officeTime(order.times['warehouse preparation'] + labelingDays(kind, order.lines, order.customer) * DAY)
       order.times['ready for shipment'] = ready
       order.times.shipped = officeTime(ready + between(0.2, 1.6) * DAY)
       const over = order.times.shipped - (NOW - 0.5 * DAY)
@@ -738,17 +748,7 @@ const kindMismatches = (() => {
 
 
 // Each label's steps and every payment, with their times (db/migrations/026) ------
-// They have random numbers of their own, so the rest of the history doesn't
-// depend on them.
-
-const recordRandom = mulberry32(SEED + 26)
-const span = (low, high) => low + (high - low) * recordRandom()
-const MINUTE = 60 * 1000
-const money = (value) => Math.round(value * 100) / 100
-
-// The share of an order's labeling time each customer takes to send back its
-// translated design: some customers are quick, some slow.
-for (const customer of [...MADE_UP, ...EXISTING]) customer.designShare = span(0.25, 0.55)
+// They have random numbers of their own (recordRandom, above).
 
 const LABEL_STEPS = [
   { status: 'original label received', by: 'warehouse' },           // the warehouse photographs the original label
@@ -769,12 +769,14 @@ function labelSteps(order) {
   let times
 
   if (end !== undefined) {
-    const total = end - start
-    const received = start + span(0.02, 0.06) * total
-    const forwarded = received + span(0.03, 0.08) * total
-    const designed = forwarded + order.customer.designShare * span(0.85, 1.15) * total
-    const printed = designed + span(0.08, 0.15) * total
-    times = [received, forwarded, designed, printed, end - span(0.01, 0.04) * total]
+    // The labeling without the customer's part, which every customer's order
+    // of this kind takes; the customer's design takes its own share of it.
+    const usual = (end - start) / (1 - USUAL_DESIGN_SHARE + order.customer.designShare)
+    const received = start + span(0.02, 0.06) * usual
+    const forwarded = received + span(0.03, 0.08) * usual
+    const designed = forwarded + order.customer.designShare * span(0.85, 1.15) * usual
+    const printed = designed + span(0.08, 0.15) * usual
+    times = [received, forwarded, designed, printed, end - span(0.01, 0.04) * usual]
   } else {
     // Stopped at a step (the orders at risk): the steps up to it, within the
     // time it has been in the warehouse.
@@ -1079,31 +1081,13 @@ insert into public.delivery_locations (id, profile_id, location_name, recipient_
 values
 ${MADE_UP.map((customer) => `  (${text(customer.locationId)}, ${text(customer.id)}, ${text(customer.location)}, ${text(`${customer.company} receiving`)}, ${text(customer.phone)}, ${text(customer.address)}, ${text(customer.country)}, ${stamp(customer.createdAt)})`).join(',\n')};
 
--- Who each order belongs to: the made-up customers, and up to two of the
--- system's own customer accounts (else made-up ones).
+-- Who each order belongs to: the made-up customers only. The system's own
+-- customer accounts get none of it.
 create temp table sim_customer (key text primary key, id uuid not null, location_id uuid) on commit drop;
 
 insert into sim_customer (key, id, location_id)
 values
 ${MADE_UP.map((customer) => `  (${text(customer.key)}, ${text(customer.id)}, ${text(customer.locationId)})`).join(',\n')};
-
-insert into sim_customer (key, id, location_id)
-select 'existing-' || e.slot, e.id,
-       (select l.id from public.delivery_locations l
-        where l.profile_id = e.id and not coalesce(l.is_archived, false)
-        order by l.created_at, l.id limit 1)
-from (
-  select p.id, row_number() over (order by p.created_at, p.id) as slot
-  from public.profiles p
-  where lower(trim(p.role)) = 'customer' and p.email not like '%@simulated.example.com'
-) e
-where e.slot <= ${EXISTING.length};
-
-insert into sim_customer (key, id, location_id)
-select f.key, m.id, m.location_id
-from (values ('existing-1', 'made-up-1'), ('existing-2', 'made-up-4')) as f(key, fallback)
-join sim_customer m on m.key = f.fallback
-where not exists (select 1 from sim_customer s where s.key = f.key);
 
 
 -- Orders -----------------------------------------------------------------------------
@@ -1315,7 +1299,7 @@ console.log(`  Placed by month: ${Object.entries(placedByMonth).sort().map(([mon
 console.log(`  Recorded arrivals: ${arrivals} of ${finished} shipped orders (the rest still at sea or not recorded yet)`)
 // Each customer's pace: the days between its orders, as they came out.
 console.log('  Days between each customer\'s orders (middle, then the latest six):')
-for (const customer of [...MADE_UP, ...EXISTING]) {
+for (const customer of MADE_UP) {
   const days = orders.filter((order) => order.customer === customer).map((order) => dayOf(order.times['pending payment'])).sort()
   const gaps = days.slice(1).map((day, index) => Math.round((Date.parse(day) - Date.parse(days[index])) / DAY))
   const middle = [...gaps].sort((a, b) => a - b)[Math.floor(gaps.length / 2)]

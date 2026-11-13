@@ -458,6 +458,10 @@ function EstimateLines({ prediction, forStaff }) {
       {/* Staff see the reasons; customers see them in plain words, never a supplier's name. */}
       {forStaff ? (
         <>
+          {/* In labeling: who it's waiting on, from its labels' saved steps. */}
+          {prediction.labelStep && !prediction.riskReasons?.some((reason) => reason.startsWith(prediction.labelStep.text)) && (
+            <p className="text-gray-700">Labeling: {prediction.labelStep.text.charAt(0).toLowerCase()}{prediction.labelStep.text.slice(1)}.</p>
+          )}
           {prediction.riskReasons?.map((reason) => (
             <p key={reason} className="font-medium text-red-700">{reason}</p>
           ))}

@@ -10,7 +10,8 @@
 // Imports carry their .js extension so the maths can be tested in Node.
 // =============================================================================
 
-import { ESTIMATE_STEPS, MIN_RECORDS, blendStep, buildStageStatistics, monthEffects, normalizeStatus, predictOrder, recordShare } from './predictions.js'
+import { ESTIMATE_STEPS, MIN_RECORDS, blendStep, buildStageStatistics, monthEffects, normalizeStatus, predictOrder, recordShare, remainingOfStep } from './predictions.js'
+import { designPaceOf, labelingContext, labelingLeft, labelingStatistics, orderLabeling } from './labelingSteps.js'
 import { estimateContext, supplierHistories, supplierPool } from './estimateInputs.js'
 import { SCORE_WINDOW_DAYS, manilaDate, scoreSuppliers } from './supplierScores.js'
 import { countryName } from './countryPlaces.js'
@@ -289,10 +290,14 @@ export function finishedForAccuracy(orders, historyByOrder) {
 // finished orders; locations: [{ id, country }]; deliveries: buildDeliveries';
 // names: { supplier_id: name }; models: the saved models (estimateLoader's
 // loadModels with inUseOnly false); kinds: each order's labeling kind
-// (utils/labelingKind.js), as a Map
-export function accuracyCheck({ orders = [], history = [], items = [], locations = [], deliveries = [], names = {}, models = null, kinds = null }) {
+// (utils/labelingKind.js), as a Map; labels: the labels' saved steps
+// ({ labelHistory, exchanges, items, orders }, utils/labelingSteps.js), for
+// each customer's pace at sending designs as it was known then
+export function accuracyCheck({ orders = [], history = [], items = [], locations = [], deliveries = [], names = {}, models = null, kinds = null, labels = null }) {
   const { historyByOrder } = buildStageStatistics(history)
   const finished = finishedForAccuracy(orders, historyByOrder)
+  const labelSteps = labels ? orderLabeling({ ...labels, historyByOrder }) : null
+  const customerOf = new Map((labels?.orders || []).map((order) => [order.id, order.customer_id]))
 
   if (finished.length < MIN_ACCURACY_ORDERS) {
     return { enough: false, finished: finished.length, needed: MIN_ACCURACY_ORDERS }
@@ -328,6 +333,14 @@ export function accuracyCheck({ orders = [], history = [], items = [], locations
     const knownThen = deliveries.filter((delivery) => delivery.receivedOn < manilaDate(verifiedAt))
     const shippedOn = manilaDate(shippedAt)
     const sameForAll = manilaDate(verifiedAt + usualDays * DAY)
+    // Its customer's pace at sending designs, from labels finished by then.
+    const labelsThen = labelSteps
+      ? labelingContext(
+        labelingStatistics(labelSteps, { kindOf: kindOf || (() => null), customerOf: (id) => customerOf.get(id) || null, before: verifiedAt }),
+        labelSteps,
+        { customerId: customerOf.get(order.id) || order.customer_id || null, kind: kinds?.get(order.id) || null },
+      )
+      : null
 
     daysOff.average.push(Math.abs(daysBetween(sameForAll, shippedOn)))
     const baselineInRange = between(verifiedAt + usualRange.quick * DAY, shippedOn, verifiedAt + usualRange.slow * DAY)
@@ -346,6 +359,7 @@ export function accuracyCheck({ orders = [], history = [], items = [], locations
         now: verifiedAt,
         models: method === 'model' ? withModel : null,
         labelingKind: kinds?.get(order.id) || null,
+        labelSteps: labelsThen,
       }))
 
       // Too few records then to estimate a step: the baseline's day and range.
@@ -373,6 +387,85 @@ export function accuracyCheck({ orders = [], history = [], items = [], locations
       { key: 'average', label: 'Same for every order', ...summary('average') },
       { key: 'statistics', label: 'Statistics', inUse: !modelInUse, ...summary('statistics') },
       ...(withModel ? [{ key: 'model', label: 'Statistics + model', inUse: modelInUse, ...summary('model') }] : []),
+    ],
+  }
+}
+
+
+// 6b. The ready date once an order is in labeling -----------------------------------------
+// How close it comes, for the newest TEST_SHARE of orders whose labels were all
+// saved step by step. Each is predicted at every moment its labels moved on
+// (all uploaded, sent to the customer, the design in, printed), learning only
+// from orders that had finished labeling by then, two ways:
+//   whole  labeling as a whole: what's left of it for an order in it that long
+//          (how the estimates went before the labels' steps were saved)
+//   steps  the labels' steps: what's left of the piece it's in and the pieces
+//          after it, with its customer's pace at sending designs
+// labels: { labelHistory, exchanges, items, orders } (utils/labelingSteps.js);
+// kinds: each order's labeling kind, as a Map.
+export function labelingCheck({ history = [], labels = null, kinds = null }) {
+  if (!labels) return { enough: false, orders: 0, needed: MIN_ACCURACY_ORDERS }
+
+  const { historyByOrder } = buildStageStatistics(history)
+  const steps = orderLabeling({ ...labels, historyByOrder })
+  const kindOf = kinds?.size ? (orderId) => kinds.get(orderId) || null : () => null
+  const customerOf = new Map((labels.orders || []).map((order) => [order.id, order.customer_id]))
+
+  const complete = [...steps].filter(([, order]) => order.complete).sort((a, b) => a[1].reachedAt[6] - b[1].reachedAt[6])
+  if (complete.length < MIN_ACCURACY_ORDERS) return { enough: false, orders: complete.length, needed: MIN_ACCURACY_ORDERS }
+
+  const testOn = complete.slice(complete.length - Math.max(1, Math.round(complete.length * TEST_SHARE)))
+  // Every order's labeling as a whole (in the warehouse until ready), by when it ended.
+  const wholes = [...steps]
+    .filter(([, order]) => order.reachedAt[6] !== null)
+    .map(([orderId, order]) => ({ kind: kindOf(orderId), endedAt: order.reachedAt[6], days: (order.reachedAt[6] - order.reachedAt[0]) / DAY }))
+    .filter((entry) => entry.days >= 0)
+
+  const results = { whole: [], steps: [] }
+  for (const [orderId, order] of testOn) {
+    const kind = kindOf(orderId)
+
+    for (let position = 1; position <= 4; position++) {
+      const moment = order.reachedAt[position]
+      const actual = (order.reachedAt[6] - moment) / DAY
+
+      // Labeling as a whole, as the estimates went before.
+      const known = wholes.filter((entry) => entry.endedAt < moment)
+      const all = known.map((entry) => entry.days)
+      const own = known.filter((entry) => entry.kind && entry.kind === kind).map((entry) => entry.days)
+      if (all.length < MIN_RECORDS) continue
+      const elapsed = (moment - order.reachedAt[0]) / DAY
+      const fromAll = remainingOfStep(all, elapsed)
+      const fromOwn = own.length ? remainingOfStep(own, elapsed) : null
+      const share = fromOwn ? recordShare(own.length) : 0
+      const whole = Object.fromEntries(['typical', 'quick', 'slow'].map((field) => [field, share * (fromOwn?.[field] ?? 0) + (1 - share) * fromAll[field]]))
+
+      // The labels' steps, with the customer's pace as known then.
+      const statistics = labelingStatistics(steps, { kindOf, customerOf: (id) => customerOf.get(id) || null, before: moment })
+      const pace = designPaceOf(statistics, customerOf.get(orderId)).pace
+      const left = labelingLeft(statistics, { position, positionAt: moment, kind, pace, now: moment })
+      if (!left) continue
+
+      results.whole.push({ off: Math.abs(whole.typical - actual), inRange: whole.quick <= actual && actual <= whole.slow })
+      results.steps.push({ off: Math.abs(left.typical - actual), inRange: left.quick <= actual && actual <= left.slow })
+    }
+  }
+
+  if (results.steps.length < MIN_ACCURACY_ORDERS) return { enough: false, orders: complete.length, needed: MIN_ACCURACY_ORDERS }
+
+  const summary = (list) => ({
+    averageDaysOff: average(list.map((entry) => entry.off)),
+    withinRangeShare: list.filter((entry) => entry.inRange).length / list.length,
+  })
+
+  return {
+    enough: true,
+    orders: complete.length,
+    testedOrders: testOn.length,
+    predictions: results.steps.length,
+    methods: [
+      { key: 'whole', label: 'Labeling as a whole', inUse: false, ...summary(results.whole) },
+      { key: 'steps', label: "Each label's steps", inUse: true, ...summary(results.steps) },
     ],
   }
 }
@@ -472,6 +565,8 @@ export function ordersAhead(predictions = [], customers = {}) {
       shipRange: prediction.shipDateRange || null,
       arrival: prediction.estimatedArrivalDate || null,
       requested: prediction.requestedShipDate || null,
+      // In labeling: who it's waiting on, from its labels' steps.
+      labelNow: prediction.labelStep?.short || null,
       risk: prediction.risk,
       reasons: prediction.riskReasons || [],
       learning: prediction.learning?.text || null,

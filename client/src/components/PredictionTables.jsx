@@ -58,7 +58,10 @@ export function OrdersAheadTable({ orders }) {
                 <p className="font-medium text-gray-800">{order.orderNumber}</p>
                 {order.customer && <p className="text-xs text-gray-500">{order.customer}</p>}
               </td>
-              <td className={CELL}>{STEP_NOW[order.status] || order.status}</td>
+              <td className={CELL}>
+                {STEP_NOW[order.status] || order.status}
+                {order.labelNow && <p className="text-xs text-gray-500">{order.labelNow}</p>}
+              </td>
               <td className={`${CELL} whitespace-nowrap`}>
                 {order.shipDate ? (
                   <>

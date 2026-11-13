@@ -342,8 +342,9 @@ function MethodNote({ data, canTrain, training, onRetrain }) {
         Each estimate adds up the time each step usually takes, learned only from the system's own records
         ({count(data.learnedFrom, 'finished order')} so far), with no numbers typed in by hand. A supplier with few
         deliveries leans on every supplier's, busy months are found in the deliveries, and arrival dates come from
-        the arrivals staff record. A step with too few finished orders has no estimate yet. Where the TensorFlow.js
-        model predicted past orders better, it's used for that step instead.
+        the arrivals staff record. Labeling goes by where an order's labels are once it's in the warehouse, and by how
+        quickly its customer usually sends designs. A step with too few finished orders has no estimate yet. Where the
+        TensorFlow.js model predicted past orders better, it's used for that step instead.
       </p>
 
       <ul className="mt-3 space-y-2">
@@ -428,7 +429,7 @@ function StepsCard({ steps, simulated }) {
 }
 
 
-// How long each step of a compliance label takes, from every label's saved steps.
+// How long each piece of labeling takes, from every finished order's labels.
 function LabelStepsCard({ labelSteps, simulated }) {
   const { available, steps } = labelSteps
   const recorded = steps.some((step) => step.records > 0)
@@ -437,15 +438,15 @@ function LabelStepsCard({ labelSteps, simulated }) {
     <ChartCard
       simulated={simulated}
       title="Labeling steps"
-      question="Which step of a compliance label takes the longest?"
+      question="Who does an order's labeling wait on the longest?"
       table={recorded ? <StepTimesTable steps={steps} counts="label" /> : null}
-      footnote={`From each label's saved steps: the time from one step to the next, so it shows who a label waits on the longest, such as how long customers take to send their translated design. A step needs ${steps[0]?.needed ?? 3} labels before it has numbers. Labels started before their steps were saved have only their start and latest step.`}
+      footnote={`From finished orders' labels, saved step by step: an order is past a step once all its labels are, so each bar is the time from one step to the next. It shows who labeling waits on the longest, such as how long customers take to send their translated design. The estimates go by these same times for an order in labeling. A step needs ${steps[0]?.needed ?? 3} orders before it has numbers; orders whose labels were started before their steps were saved aren't counted.`}
     >
       {!available
         ? <ChartEmpty>Each label step's time is saved once db/migrations/026 has been run in Supabase.</ChartEmpty>
         : recorded
           ? <StepTimesChart steps={steps} counts="label" />
-          : <ChartEmpty>No label has gone from one step to the next since its steps began to be saved.</ChartEmpty>}
+          : <ChartEmpty>No order has finished labeling since its labels' steps began to be saved.</ChartEmpty>}
     </ChartCard>
   )
 }
@@ -662,7 +663,7 @@ function AccuracyCard({ accuracy, simulated }) {
       question="How far off are the estimates, and which method is best?"
       table={accuracy.enough ? <AccuracyTable accuracy={accuracy} /> : null}
       footnote={accuracy.enough
-        ? `Tested on the newest ${accuracy.tested} of ${accuracy.finished} finished orders, each predicted as of the day its payment was verified, learning only from the ${accuracy.learnedFrom} before them. "Same for every order" is the baseline: every order gets the usual ${formatDays(accuracy.usualDays)} from payment to shipping. "Statistics" works it out step by step for each order. Customers see a likely range, so the first chart is how often the real ship date fell inside it. A single date is often off by days, because no one knows at payment which supplier will be late.${accuracy.methods.some((method) => method.key === 'model') ? ' "Statistics + model" adds the TensorFlow.js model, which learned only from records before these orders.' : ''}`
+        ? `Tested on the newest ${accuracy.tested} of ${accuracy.finished} finished orders, each predicted as of the day its payment was verified, learning only from the ${accuracy.learnedFrom} before them. "Same for every order" is the baseline: every order gets the usual ${formatDays(accuracy.usualDays)} from payment to shipping. "Statistics" works it out step by step for each order. Customers see a likely range, so the first chart is how often the real ship date fell inside it. A single date is often off by days, because no one knows at payment which supplier will be late.${accuracy.methods.some((method) => method.key === 'model') ? ' "Statistics + model" adds the TensorFlow.js model, which learned only from records before these orders.' : ''}${accuracy.labeling?.enough ? ` Once an order is in labeling, its ready date goes by each label's saved steps (who it's waiting on, and how long that customer usually takes to send designs). Tested on the newest ${accuracy.labeling.testedOrders} orders whose labels were saved step by step, each predicted every time its labels moved on, against going by labeling as a whole.` : ''}`
         : '"Same for every order" will be the baseline to beat: every order given the usual days from payment to shipping.'}
     >
       {accuracy.enough

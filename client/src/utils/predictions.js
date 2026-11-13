@@ -13,7 +13,9 @@
 //     with few deliveries leans on every supplier's deliveries: its own n
 //     deliveries count for n ÷ (n + 5), everyone's for the rest
 //   - labeling by the kind of order (utils/labelingKind.js), leaning the same
-//     way on every order's labeling while a kind has few
+//     way on every order's labeling while a kind has few. Once an order is in
+//     labeling, by where its labels are, piece by piece; before that, moved by
+//     how quickly its customer usually sends designs (utils/labelingSteps.js)
 //   - busy months, found in the deliveries: a PO sent in a month whose
 //     deliveries took longer than usual gets those extra days
 //   - the sailing time to the customer's country, from recorded arrivals
@@ -165,10 +167,40 @@ export function monthEffects(records = []) {
 
 // What's left of a step the order is already in: how much longer past orders
 // took once they'd been in it this long. Slower than all of them: a day more.
-function remainingOfStep(durations, elapsed) {
+export function remainingOfStep(durations, elapsed) {
   const longer = durations.filter((days) => days > elapsed).map((days) => days - elapsed)
   if (!longer.length) return { typical: 1, quick: 1, slow: 2 }
   return { typical: median(longer), quick: percentile(longer, 0.25), slow: percentile(longer, 0.75) }
+}
+
+// A step's days moved by some days more (or fewer), never under half a day.
+function shiftSpan(span, days) {
+  const typical = Math.max(0.5, span.typical + days)
+  return {
+    ...span,
+    typical,
+    quick: Math.min(Math.max(0.3, span.quick + days), typical),
+    slow: Math.max(typical, span.slow + days),
+  }
+}
+
+const daysText = (days) => (days < 1 ? 'less than a day' : `${Math.round(days)} ${Math.round(days) === 1 ? 'day' : 'days'}`)
+
+// Staff words for where an order in labeling is (utils/labelingSteps.js
+// labelingLeft): who it waits on, for how long, and how long that usually takes.
+function describeLabelPiece(left, labelSteps) {
+  const usual = left.usual?.typical
+  const forCustomer = left.piece.key === 'design' && labelSteps.paceOrders > 0
+  const usually = usual === undefined ? '' : forCustomer ? `; this customer usually takes about ${daysText(usual)}` : `; usually about ${daysText(usual)}`
+
+  return {
+    key: left.piece.key,
+    waitingOn: left.piece.waitingOn,
+    short: left.piece.waiting,
+    daysIn: left.daysIn,
+    usualDays: usual ?? null,
+    text: `${left.piece.waiting} for ${daysText(left.daysIn)}${usually}`,
+  }
 }
 
 
@@ -452,6 +484,9 @@ export function supplierArrivals(suppliers, laneStarts, now, pool = {}, stepDura
 //   sailing       { typical, quick, slow, count, nearest } days at sea to the
 //                 customer's country, from recorded arrivals; none, no arrival date
 //   labelingKind  regular, big or new (utils/labelingKind.js); bigContainer: a 40-ft
+//   labelSteps    from the labels' saved steps (utils/labelingSteps.js
+//                 labelingContext): left(now) for an order in labeling, and
+//                 designExtra, the days its customer's pace adds to labeling
 //   cases, products, countryName  the order's size and country, for the labeling model
 //   models        { supplier, labeling }: the saved models in use, if any
 //   now           the moment to estimate from (default: now)
@@ -535,6 +570,9 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
   // Which way each step was worked out, for staff.
   const methods = { suppliers: 'statistics', labeling: 'statistics' }
   const labelingModel = context.models?.labeling || null
+  const labelSteps = context.labelSteps || null
+  // Where an order in labeling is, piece by piece, for staff.
+  let labelStep = null
 
   const firstStep = ifPaidToday ? 0 : ESTIMATE_STEPS.indexOf(currentStep)
 
@@ -582,9 +620,24 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
         break
       }
 
-      const span = !isCurrent ? whole
+      let span = !isCurrent ? whole
         : whole === full ? remainingFor(step.key, currentStageAge)
           : { typical: Math.max(whole.typical - currentStageAge, 1), quick: Math.max(whole.quick - currentStageAge, 0.5), slow: Math.max(whole.slow - currentStageAge, 2) }
+
+      // Labeling from the labels' saved steps: an order in labeling goes by
+      // where its labels are; any other is moved by how much quicker or slower
+      // its customer usually sends designs.
+      if (step.key === 'labeling' && labelSteps) {
+        const left = isCurrent && labelSteps.left ? labelSteps.left(now) : null
+
+        if (left) {
+          span = { typical: left.typical, quick: left.quick, slow: left.slow }
+          labelStep = describeLabelPiece(left, labelSteps)
+          if (left.usual && left.daysIn > left.usual.slow) reasons.push(`${labelStep.text}.`)
+        } else if (labelSteps.designExtra) {
+          span = shiftSpan(span, labelSteps.designExtra)
+        }
+      }
 
       if (isCurrent && currentStageAge > whole.slow) {
         stuckStep = { key: step.key, label: step.label, days: Math.round(currentStageAge), usualDays: Math.round(whole.typical) }
@@ -691,6 +744,8 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
     stuckStep,
     overdueSuppliers,
     methods,
+    // Staff: where an order in labeling is (it names who it waits on).
+    labelStep,
     customerNote,
     stepsAhead,
     currentStageAge,

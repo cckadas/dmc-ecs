@@ -1,6 +1,6 @@
 import { supabase } from '../supabase'
 import { loadStatusHistory } from './predictionService'
-import { allRows, estimateOrders, loadAllDeliveries, loadArrivals, loadLabelingKinds, loadModels, loadOpenDeliveries } from '../utils/estimateLoader'
+import { allRows, estimateOrders, loadAllDeliveries, loadArrivals, loadLabelSteps, loadLabelingKinds, loadModels, loadOpenDeliveries } from '../utils/estimateLoader'
 import { buildStageStatistics, normalizeStatus } from '../utils/predictions'
 import {
   MIN_ACCURACY_ORDERS,
@@ -11,6 +11,7 @@ import {
   comingUpByWeek,
   finishedForAccuracy,
   headlineNumbers,
+  labelingCheck,
   ordersAhead,
   shippingOnTimeByMonth,
   stepTimes,
@@ -20,7 +21,7 @@ import {
 import { isSimulated } from '../utils/simulated'
 import { demandForecast } from '../utils/demandForecast'
 import { reorderTiming } from '../utils/reorderTiming'
-import { labelStepTimes } from '../utils/labelHistory'
+import { labelingPieceTimes, labelingRecords } from '../utils/labelingSteps'
 
 
 // =============================================================================
@@ -39,10 +40,11 @@ import { labelStepTimes } from '../utils/labelHistory'
 //   weeks       orders ready to ship, by week
 //   reorders    when each customer will likely order next
 //   demand      the demand forecast, with sales by product
-//   accuracy    how close the estimates came on orders they didn't learn from
+//   accuracy    how close the estimates came on orders they didn't learn from,
+//               and the ready date of orders in labeling
 // What the predictions learn from (descriptive):
 //   steps       where the time goes, days at sea by country
-//   labels      how long each label step takes
+//   labels      how long each piece of labeling takes, from the labels' steps
 //   suppliers   on-time rate, lead time and busy months
 //   months      shipping on time, by month
 // And for the Executive Dashboard:
@@ -72,7 +74,7 @@ async function rowsByIds(table, columns, column, ids) {
 
 export async function loadAnalytics(parts = ALL_PARTS) {
   const want = (part) => parts.includes(part)
-  const needOrders = ['ahead', 'orders', 'numbers', 'steps', 'months', 'weeks', 'accuracy', 'demand', 'reorders'].some(want)
+  const needOrders = ['ahead', 'orders', 'numbers', 'steps', 'months', 'weeks', 'accuracy', 'demand', 'reorders', 'labels'].some(want)
 
   const [history, deliveries, suppliers, orders, models] = await Promise.all([
     needOrders ? loadStatusHistory() : [],
@@ -104,6 +106,14 @@ export async function loadAnalytics(parts = ALL_PARTS) {
     ? await loadOpenDeliveries(supabase).catch(() => [])
     : null
 
+  // The labels' steps (db/migrations/026), with every order's kind and lines,
+  // for the accuracy checks and the "Labeling steps" chart.
+  const needLabels = ['accuracy', 'numbers', 'ahead', 'labels'].some(want)
+  const [labeling, labelRows] = needLabels
+    ? await Promise.all([loadLabelingKinds(supabase), loadLabelSteps(supabase)])
+    : [null, null]
+  const labels = labelRows ? { ...labelRows, items: labeling.items, orders: labeling.orders } : null
+
   // The accuracy check needs the finished orders' items and countries, once
   // there are enough of them.
   let accuracy = null
@@ -111,15 +121,17 @@ export async function loadAnalytics(parts = ALL_PARTS) {
     const finished = finishedForAccuracy(allOrders, historyByOrder)
 
     if (finished.length >= MIN_ACCURACY_ORDERS) {
-      const [items, locations, labeling] = await Promise.all([
+      const [items, locations] = await Promise.all([
         rowsByIds('customer_order_items', 'customer_order_id, quantity, products ( supplier_id )', 'customer_order_id', finished.map(({ order }) => order.id)),
         rowsByIds('delivery_locations', 'id, country', 'id', [...new Set(finished.map(({ order }) => order.delivery_location_id).filter(Boolean))]),
-        loadLabelingKinds(supabase),
       ])
-      accuracy = accuracyCheck({ orders: allOrders, history, items, locations, deliveries, names, models, kinds: labeling.kinds })
+      accuracy = accuracyCheck({ orders: allOrders, history, items, locations, deliveries, names, models, kinds: labeling.kinds, labels })
     } else {
       accuracy = { enough: false, finished: finished.length, needed: MIN_ACCURACY_ORDERS }
     }
+
+    // The ready date of orders in labeling, from their labels' steps.
+    if (want('accuracy')) accuracy.labeling = labelingCheck({ history, labels, kinds: labeling.kinds })
   }
 
   // The demand forecast and sales by product: every order's lines and each
@@ -143,13 +155,13 @@ export async function loadAnalytics(parts = ALL_PARTS) {
     reorders = reorderTiming({ orders: allOrders, customers: Object.fromEntries(customers.map((customer) => [customer.id, customer])), items: orderItems })
   }
 
-  // How long each label step takes, from every label's saved steps
-  // (db/migrations/026). Not available until that script has been run.
+  // How long each piece of labeling takes, from every finished order's labels
+  // (db/migrations/026): the same numbers the estimates go by.
   let labelSteps = null
   if (want('labels')) {
-    labelSteps = await allRows(() => supabase.from('label_exchange_history').select('id, exchange_id, to_status, happened_at').order('id'))
-      .then((rows) => ({ available: true, steps: labelStepTimes(rows) }))
-      .catch(() => ({ available: false, steps: labelStepTimes([]) }))
+    const { statistics } = labelingRecords({ ...labels, historyByOrder, kindOf: labeling.kindOf })
+    const available = await supabase.from('label_exchange_history').select('id').limit(1).then(({ error }) => !error)
+    labelSteps = { available, steps: labelingPieceTimes(statistics) }
   }
 
   // Each order under way, with its customer.
