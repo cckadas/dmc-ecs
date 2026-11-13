@@ -225,6 +225,66 @@ function topProducts(sales, limit) {
 
 // Everything the Demand forecast card shows: the months on record and the
 // forecast, in all and by category, the check, and the top products of its first month.
+// This month so far: the cases in orders placed this month that are past their
+// down payment, counted as the months before are, in all ('all') and by
+// category; and the orders placed this month still waiting for it. The
+// forecast's first month is this month, so this is how it's going.
+export function demandThisMonth({ orders = [], items = [], products = [], today = new Date() }) {
+  const month = monthOf(today)
+  const categoryOf = Object.fromEntries(products.map((product) => [product.id, String(product.category || '').trim() || 'Other']))
+  const statusOf = new Map(orders.filter((order) => order.created_at && monthOf(order.created_at) === month).map((order) => [order.id, String(order.status || '').trim().toLowerCase()]))
+  const cases = {}
+  const waiting = { orders: new Set(), cases: 0 }
+
+  for (const item of items) {
+    const status = statusOf.get(item.customer_order_id)
+    if (status === undefined) continue
+    const quantity = Number(item.quantity) || 0
+
+    if (isDemand(status)) {
+      for (const key of ['all', categoryOf[item.product_id] || 'Other']) cases[key] = (cases[key] || 0) + quantity
+    } else if (status === 'pending payment') {
+      waiting.orders.add(item.customer_order_id)
+      waiting.cases += quantity
+    }
+  }
+
+  return { month, cases, waiting: { orders: waiting.orders.size, cases: waiting.cases } }
+}
+
+
+// Sales by product with how often each is ordered (utils/reorderTiming.js
+// productTiming), and a row for each product first ordered this month, which
+// has no full month of sales yet.
+export function withProductTiming(sales = [], timing = null, products = []) {
+  if (!timing) return sales
+  const productOf = Object.fromEntries(products.map((product) => [product.id, product]))
+  const rows = sales.map((row) => ({ ...row, timing: timing.products.get(row.id) || null }))
+  const listed = new Set(rows.map((row) => row.id))
+  const months = rows[0]?.monthly?.map((entry) => entry.month) || []
+
+  for (const [id, entry] of timing.products) {
+    if (listed.has(id) || !entry.thisMonth.orders || !productOf[id]) continue
+    rows.push({
+      id,
+      name: productOf[id].product_name,
+      category: String(productOf[id].category || '').trim() || 'Other',
+      monthly: months.map((month) => ({ month, cases: 0, amount: 0 })),
+      cases: 0,
+      amount: 0,
+      trend: null,
+      share: 0,
+      recentMonthly: 0,
+      forecast: null,
+      newThisMonth: true,
+      timing: entry,
+    })
+  }
+
+  return rows
+}
+
+
 export function demandForecast({ orders = [], items = [], products = [], today = new Date(), topLimit = 10 }) {
   const { months, series } = monthlyDemand({ orders, items, products, today })
   if (!months.length) return { enough: false, months: 0, needed: MIN_MONTHS }
@@ -249,5 +309,6 @@ export function demandForecast({ orders = [], items = [], products = [], today =
     categories,
     topProducts: topProducts(sales, topLimit),
     productSales: sales,
+    thisMonth: demandThisMonth({ orders, items, products, today }),
   }
 }

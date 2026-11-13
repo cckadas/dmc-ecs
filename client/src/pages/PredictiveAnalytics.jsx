@@ -317,7 +317,16 @@ function ProductSalesCard({ demand, showMoney, simulated }) {
         simulated={simulated}
         title="Sales by product"
         question="How much has each product sold, and how much is it expected to sell?"
-        footnote="From the system's own orders past their down payment, by the month they were placed. A product's expected cases are its share of its category over the last 6 months times the category's forecast."
+        footnote={
+          <>
+            From the system's own orders past their down payment, by the month they were placed. A product's expected
+            cases are its share of its category over the last 6 months times the category's forecast. How often: the days
+            between the days a product was in an order (anyone's) over the last 12 months; a product's orders show from
+            the day they're placed, cancelled ones aside. A product's next order can't be told from its own gaps, since
+            several customers order it, each at its own pace, so "Who orders it" gives when each of its customers is
+            likely to order next (as in Customers likely to order next).
+          </>
+        }
       >
         <ProductSales sales={demand.productSales} showMoney={showMoney} />
       </ChartCard>
@@ -610,6 +619,11 @@ function DemandCard({ demand, simulated, wide }) {
   const key = demand.history[category] ? category : 'all'
   const products = demand.topProducts.filter((product) => key === 'all' || product.category === key).slice(0, 5)
   const check = demand.check
+  // This month so far, against the forecast for it (the forecast's first month).
+  const expected = demand.forecast[key]?.[0]
+  const soFar = demand.thisMonth?.cases?.[key] || 0
+  const waiting = key === 'all' ? demand.thisMonth?.waiting : null
+  const monthName = expected ? new Date(`${expected.month}-01T00:00:00Z`).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' }) : null
 
   return (
     <div className={wide ? 'lg:col-span-2' : ''}>
@@ -643,6 +657,13 @@ function DemandCard({ demand, simulated, wide }) {
             ))}
           </select>
         </div>
+
+        {expected && (
+          <p className="mb-2 text-sm text-gray-700">
+            <span className="font-medium">{monthName} so far:</span> {Math.round(soFar).toLocaleString('en-US')} cases ordered, of about {Math.round(expected.cases).toLocaleString('en-US')} expected
+            {waiting?.orders ? ` (${waiting.orders} more ${waiting.orders === 1 ? 'order' : 'orders'} waiting for the down payment)` : ''}.
+          </p>
+        )}
 
         {demand.forecast[key]
           ? <DemandChart history={demand.history[key]} forecast={demand.forecast[key]} />

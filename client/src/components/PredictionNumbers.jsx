@@ -112,7 +112,7 @@ export function AheadNumbers({ ahead }) {
     demandNext && {
       label: 'Expected orders this month',
       value: `about ${cases(demandNext.cases)}`,
-      note: `in ${monthName(demandNext.month)}, likely ${cases(demandNext.quick)} to ${cases(demandNext.slow)}`,
+      note: `in ${monthName(demandNext.month)}, likely ${cases(demandNext.quick)} to ${cases(demandNext.slow)}; ${cases(demandNext.soFar ?? 0)} ordered so far`,
     },
     reorders && {
       label: 'Customers due to order',

@@ -538,7 +538,8 @@ export function aheadNumbers({ predictions = null, deliveries = null, demand = n
       overdue: deliveries.filter((delivery) => delivery.overdueDays > 0).length,
       total: deliveries.length,
     } : null,
-    demandNext: demand?.enough ? demand.forecast?.all?.[0] || null : null,
+    // With what's been ordered so far this month.
+    demandNext: demand?.enough && demand.forecast?.all?.[0] ? { ...demand.forecast.all[0], soFar: demand.thisMonth?.cases?.all ?? 0 } : null,
     reorders: reorders?.enough ? {
       due: reorders.customers.filter((customer) => customer.state === 'due' || customer.state === 'overdue').length,
       soon: reorders.customers.filter((customer) => customer.state === 'soon').length,

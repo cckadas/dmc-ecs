@@ -119,6 +119,103 @@ export function checkReorders(gapsByCustomer) {
 }
 
 
+// How often each product is ordered -----------------------------------------------------
+// The days between the days a product is in an order (anyone's) over the last
+// 12 months: the middle one, and the middle half of them. And who orders it:
+// each customer that ordered it in those months, in how many of its orders.
+// It's a description: a product's next order can't be told from its own gaps,
+// since several customers order it, each at its own pace (on the made-up
+// history no way of reading its gaps came closer than the same gap for every
+// product). Each customer's next order can (reorderTiming, below), so who's
+// likely to order it next comes from its customers.
+// Cancelled orders don't count; an order counts from the day it's placed, so
+// one placed today shows at once.
+//   orders: [{ id, customer_id, status, created_at, order_number }]
+//   items:  [{ customer_order_id, product_id, quantity }]
+// Returns { products: Map of product id → timing }, timing being
+//   orders, customers, cases   in the last 12 months
+//   ordersAll, lastDay         in all, and the day it was last ordered
+//   usual, quick, slow         the middle gap between the days it was ordered
+//                              in the last 12 months, and the middle half of
+//                              them; null with fewer than MIN_RECORDS gaps
+//   gaps                       its gaps in the last 12 months
+//   buyers                     [{ customerId, orders, ofOrders, lastDay }]: each
+//                              customer's orders with it in 12 months, out of
+//                              all its orders then, most first
+//   thisMonth                  { orders, cases } placed this month
+//   list                       its orders, newest first:
+//                              [{ orderId, orderNumber, day, customerId, cases, status }]
+export function productTiming({ orders = [], items = [], now = Date.now() }) {
+  const today = manilaDate(now)
+  const yearAgo = addDays(today, -QUIET_DAYS)
+  const thisMonth = today.slice(0, 7)
+  const orderById = new Map(orders.map((order) => [order.id, order]))
+  const live = (order) => order?.created_at && normalizeStatus(order.status) !== 'cancelled'
+
+  // Each customer's orders in the last 12 months, to say in how many of them a product was.
+  const ordersOfCustomer = new Map()
+  for (const order of orders) {
+    if (!live(order) || !order.customer_id || manilaDate(order.created_at) < yearAgo) continue
+    ordersOfCustomer.set(order.customer_id, (ordersOfCustomer.get(order.customer_id) || 0) + 1)
+  }
+
+  // Each product's orders, with its cases in each.
+  const byProduct = new Map()
+  for (const item of items) {
+    const order = orderById.get(item.customer_order_id)
+    if (!live(order) || !item.product_id) continue
+    if (!byProduct.has(item.product_id)) byProduct.set(item.product_id, new Map())
+    const theirs = byProduct.get(item.product_id)
+    const entry = theirs.get(order.id) || { order, cases: 0 }
+    entry.cases += Number(item.quantity) || 0
+    theirs.set(order.id, entry)
+  }
+
+  // The days between the days each product was ordered: a product's orders as
+  // the orders of a customer that is the product, so the same rules apply.
+  const asOrders = [...byProduct].flatMap(([productId, theirs]) => [...theirs.values()].map(({ order }) => ({ id: order.id, customer_id: productId, status: order.status, created_at: order.created_at })))
+  const gapsByProduct = orderGaps(orderingDays(asOrders))
+  const sum = (list) => list.reduce((total, entry) => total + entry.cases, 0)
+
+  const products = new Map()
+  for (const [productId, theirs] of byProduct) {
+    const list = [...theirs.values()]
+      .map(({ order, cases }) => ({ orderId: order.id, orderNumber: order.order_number || null, day: manilaDate(order.created_at), customerId: order.customer_id || null, cases, status: order.status }))
+      .sort((a, b) => b.day.localeCompare(a.day) || String(b.orderNumber).localeCompare(String(a.orderNumber)))
+    const year = list.filter((entry) => entry.day >= yearAgo)
+    const month = list.filter((entry) => entry.day.slice(0, 7) === thisMonth)
+    const gaps = (gapsByProduct.get(productId) || []).filter((gap) => gap.to >= yearAgo).map((gap) => gap.days)
+    const span = gaps.length >= MIN_RECORDS ? blendStep(gaps) : null
+
+    const buyers = new Map()
+    for (const entry of year) {
+      if (!entry.customerId) continue
+      const buyer = buyers.get(entry.customerId) || { customerId: entry.customerId, orders: 0, ofOrders: ordersOfCustomer.get(entry.customerId) || 0, lastDay: entry.day }
+      buyer.orders += 1
+      if (entry.day > buyer.lastDay) buyer.lastDay = entry.day
+      buyers.set(entry.customerId, buyer)
+    }
+
+    products.set(productId, {
+      orders: year.length,
+      customers: buyers.size,
+      cases: sum(year),
+      ordersAll: list.length,
+      lastDay: list[0].day,
+      usual: span?.typical ?? null,
+      quick: span?.quick ?? null,
+      slow: span?.slow ?? null,
+      gaps: gaps.length,
+      buyers: [...buyers.values()].sort((a, b) => b.orders - a.orders || b.lastDay.localeCompare(a.lastDay)),
+      thisMonth: { orders: month.length, cases: sum(month) },
+      list,
+    })
+  }
+
+  return { products }
+}
+
+
 // Each customer's next order: when it's expected, its likely range, and where
 // that stands today.
 //   orders:    [{ id, customer_id, status, created_at, order_number }]

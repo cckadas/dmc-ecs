@@ -204,9 +204,9 @@ export function ReorderTable({ customers }) {
 
 
 // Sales by product: each product's cases (and, for showMoney, pesos) over the
-// last 12 months, its trend, and its expected cases this month (the forecast's
-// first month is the one under way). Choosing one
-// shows its months and how its forecast comes from its sales.
+// last 12 months, its trend, how often it's ordered, and its expected cases
+// this month (the forecast's first month is the one under way). Choosing one
+// shows its months, how its forecast comes from its sales, and its orders.
 export function ProductSales({ sales, showMoney = false }) {
   const [search, setSearch] = useState('')
   const [showAll, setShowAll] = useState(false)
@@ -245,6 +245,7 @@ export function ProductSales({ sales, showMoney = false }) {
               <th className={`${HEAD} text-right`}>Cases, 12 months</th>
               {showMoney && <th className={`${HEAD} text-right`}>Sales, 12 months</th>}
               <th className={`${HEAD} text-right`}>Last 3 months</th>
+              <th className={HEAD}>How often</th>
               <th className={`${HEAD} text-right`}>Expected this month</th>
             </tr>
           </thead>
@@ -259,7 +260,8 @@ export function ProductSales({ sales, showMoney = false }) {
                 </td>
                 <td className={`${CELL} text-right tabular-nums`}>{cases(product.cases)}</td>
                 {showMoney && <td className={`${CELL} text-right tabular-nums`}>{peso(product.amount)}</td>}
-                <td className={`${CELL} text-right tabular-nums`}>{trendText(product.trend)}</td>
+                <td className={`${CELL} text-right tabular-nums`}>{product.newThisMonth ? 'new this month' : trendText(product.trend)}</td>
+                <td className={CELL}><HowOften timing={product.timing} /></td>
                 <td className={`${CELL} text-right tabular-nums`}>
                   {product.forecast && product.share > 0 ? `about ${cases(product.forecast[0].cases)}` : '—'}
                 </td>
@@ -278,6 +280,21 @@ export function ProductSales({ sales, showMoney = false }) {
     </div>
   )
 }
+
+// How often a product is ordered, in a few words.
+function HowOften({ timing }) {
+  if (!timing) return '—'
+  const times = (count) => `${count} ${count === 1 ? 'order' : 'orders'}`
+  if (!timing.orders) return <span className="text-gray-500">not in 12 months</span>
+
+  return (
+    <>
+      <p className="whitespace-nowrap text-gray-800">{timing.usual === null ? times(timing.orders) : `every ${Math.round(timing.usual)} days`}</p>
+      {timing.usual !== null && <p className="whitespace-nowrap text-xs text-gray-500">{times(timing.orders)} in 12 months</p>}
+    </>
+  )
+}
+
 
 // The last 3 months against the 3 before.
 function trendText(trend) {
@@ -307,8 +324,108 @@ function ProductDetail({ product, showMoney }) {
       <p className="mt-2 text-sm text-gray-700">
         {next && product.share > 0
           ? `How its sales make its forecast: over the last 6 months it was ${sharePercent}% of the ${product.category} cases ordered. ${product.category} is expected to order about ${cases(next.cases / product.share)} cases this month, so about ${cases(next.cases)} of this product (likely ${cases(next.quick)} to ${cases(next.slow)}). The more it sells, the bigger its share, and the more it's expected to sell.`
-          : 'Not ordered in the last 6 months, so it has no share of its category to forecast from.'}
+          : product.newThisMonth
+            ? 'First ordered this month, so it has no full month of sales to forecast from yet.'
+            : 'Not ordered in the last 6 months, so it has no share of its category to forecast from.'}
       </p>
+
+      {product.timing && <ProductOrders timing={product.timing} />}
+    </div>
+  )
+}
+
+
+const STATE_TEXT = { overdue: 'later than usual', due: 'due now', soon: 'soon', later: 'later' }
+
+// A product's orders, newest first; how often it's ordered (the days between
+// the days it's in an order over the last 12 months); and who orders it, with
+// when each of them is likely to order next (Customers likely to order next).
+function ProductOrders({ timing }) {
+  const [showAll, setShowAll] = useState(false)
+  const shown = showAll ? timing.list : timing.list.slice(0, 8)
+  const days = (value) => `${Math.round(value)} ${Math.round(value) === 1 ? 'day' : 'days'}`
+  const count = (number, one, many = `${one}s`) => `${number} ${number === 1 ? one : many}`
+
+  let often = `Not ordered in the last 12 months; last ordered ${dayFormat(timing.lastDay)}.`
+  if (timing.orders) {
+    often = `In ${count(timing.orders, 'order')} from ${count(timing.customers, 'customer')} in the last 12 months, ${cases(timing.cases)} cases in all.`
+    if (timing.usual !== null) {
+      often += ` Usually a new order of it every ${days(timing.usual)} (most gaps between ${days(timing.quick)} and ${days(timing.slow)}).`
+    }
+    often += ` Last ordered ${dayFormat(timing.lastDay)}.`
+  }
+
+  return (
+    <div className="mt-4 border-t border-gray-100 pt-3">
+      <p className="text-sm font-semibold text-gray-800">How often it's ordered</p>
+      <p className="mt-1 text-sm text-gray-700">{often}</p>
+      {timing.thisMonth.orders > 0 && (
+        <p className="text-sm text-gray-700">This month so far: {cases(timing.thisMonth.cases)} cases in {count(timing.thisMonth.orders, 'order')}.</p>
+      )}
+
+      {timing.buyers?.length > 0 && (
+        <>
+          <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-gray-500">Who orders it</p>
+          <TableScroll className="mt-1">
+            <table className="min-w-full">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className={HEAD}>Customer</th>
+                  <th className={HEAD}>In its orders</th>
+                  <th className={HEAD}>Last ordered it</th>
+                  <th className={HEAD}>Its next order expected</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {timing.buyers.map((buyer) => (
+                  <tr key={buyer.customerId}>
+                    <td className={CELL}>{buyer.customer || 'A customer'}</td>
+                    <td className={`${CELL} whitespace-nowrap`}>{buyer.orders} of {buyer.ofOrders} in 12 months</td>
+                    <td className={`${CELL} whitespace-nowrap`}>{dayFormat(buyer.lastDay)}</td>
+                    <td className={`${CELL} whitespace-nowrap`}>
+                      {buyer.nextOrder
+                        ? <>around {dayFormat(buyer.nextOrder.expectedDay)}{STATE_TEXT[buyer.nextOrder.state] ? <span className="text-xs text-gray-500"> · {STATE_TEXT[buyer.nextOrder.state]}</span> : null}</>
+                        : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableScroll>
+        </>
+      )}
+
+      <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-gray-500">Its orders, newest first</p>
+      <TableScroll className="mt-1">
+        <table className="min-w-full">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className={HEAD}>Ordered</th>
+              <th className={HEAD}>Order</th>
+              <th className={HEAD}>Customer</th>
+              <th className={`${HEAD} text-right`}>Cases</th>
+              <th className={HEAD}>Status</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {shown.map((line) => (
+              <tr key={line.orderId}>
+                <td className={`${CELL} whitespace-nowrap`}>{dayFormat(line.day)}</td>
+                <td className={`${CELL} whitespace-nowrap`}>{line.orderNumber || '—'}</td>
+                <td className={CELL}>{line.customer || '—'}</td>
+                <td className={`${CELL} text-right tabular-nums`}>{cases(line.cases)}</td>
+                <td className={CELL}>{line.status}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </TableScroll>
+
+      {timing.list.length > 8 && (
+        <button type="button" onClick={() => setShowAll((all) => !all)} className="mt-2 text-sm font-medium text-[#2D5A42] hover:underline">
+          {showAll ? 'Show the latest 8' : `Show all ${timing.list.length} orders`}
+        </button>
+      )}
     </div>
   )
 }
