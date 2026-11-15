@@ -58,7 +58,7 @@ const OUTPUT = path.join(here, 'simulated_history.sql')
 
 const SEED = 20261108
 const HISTORY_MONTHS = 16
-const FINISHED_ORDERS = 80
+const FINISHED_ORDERS = 118
 const SUPPLIER_SLOTS = 10
 const PRODUCT_SLOTS = 5          // products used from each manufacturer
 const MIN_PO_DAYS = 7            // DMC's minimum for a PO's promised date (client/src/utils/dates.js)
@@ -155,22 +155,36 @@ function officeTime(time, pick = between) {
 
 // Made-up shipping costs.
 const COUNTRIES = {
+  'Hong Kong': { shipping: 60000 },
   Macau: { shipping: 60000 },
   Taiwan: { shipping: 80000 },
   Japan: { shipping: 95000 },
+  Guam: { shipping: 90000 },
   Australia: { shipping: 120000 },
+  'New Zealand': { shipping: 130000 },
   Canada: { shipping: 150000 },
+  'United Kingdom': { shipping: 180000 },
+  Cyprus: { shipping: 175000 },
+  Malta: { shipping: 175000 },
+  Iceland: { shipping: 200000 },
 }
 
 // Made-up days at sea to each country, roughly by distance: the arrivals staff
 // would record on shipped orders (db/migrations/025). The estimates never read
 // these numbers; they learn them back from the recorded arrivals.
 const SAILING = {
-  Macau: [2, 4],
-  Taiwan: [3, 5],
-  Japan: [5, 9],
-  Australia: [10, 16],
-  Canada: [18, 26],
+  'Hong Kong': [5, 7],
+  Macau: [5, 8],
+  Taiwan: [5, 8],
+  Japan: [7, 11],
+  Guam: [8, 12],
+  Australia: [12, 18],
+  'New Zealand': [15, 22],
+  Canada: [20, 28],
+  'United Kingdom': [35, 45],
+  Cyprus: [30, 40],
+  Malta: [32, 42],
+  Iceland: [45, 58],
 }
 
 // The arrivals have random numbers of their own, so the rest of the history
@@ -188,14 +202,23 @@ function arrivalOf(order) {
   return recordedAt <= NOW ? { day: dayOf(arrivedAt), recordedAt } : null
 }
 
-// Five made-up customers, in DMC's markets, each ordering at its own pace:
-// from about every 2½ weeks (Japan) to about every 6 weeks (Canada).
+// One made-up customer in each country DMC ships to (DMC's list, November
+// 2026), each ordering at its own pace: the nearer, busier markets about every
+// 3 to 4 weeks, the far ones every 2 to 3 months. About 10 orders a month in
+// all, as DMC said.
 const MADE_UP = [
-  { slug: 'lotusharbour', company: 'Lotus Harbour Trading', country: 'Macau', location: 'Taipa warehouse', address: 'Unit 1, Sample Industrial Centre, Taipa, Macau', phone: '+853 0000 0101', finished: 15 },
-  { slug: 'jadeharbor', company: 'Jade Harbor Snacks', country: 'Taiwan', location: 'Taoyuan warehouse', address: 'No. 1, Sample Road, Taoyuan, Taiwan', phone: '+886 0 0000 0202', finished: 18 },
-  { slug: 'kiritable', company: 'Kiri Table Foods', country: 'Japan', location: 'Osaka distribution centre', address: '1-1 Sample-cho, Osaka, Japan', phone: '+81 00 0000 0303', finished: 24 },
-  { slug: 'southerncross', company: 'Southern Cross Pantry', country: 'Australia', location: 'Botany warehouse', address: '1 Sample Road, Botany, NSW, Australia', phone: '+61 0 0000 0404', finished: 13 },
-  { slug: 'maplelane', company: 'Maple Lane Filipino Foods', country: 'Canada', location: 'Richmond store', address: '1 Sample Way, Richmond, BC, Canada', phone: '+1 000 000 0505', finished: 10 },
+  { slug: 'bluewharf', company: 'Bluewharf Trading', country: 'Hong Kong', location: 'Kwai Chung warehouse', address: 'Unit 1, Sample Logistics Centre, Kwai Chung, Hong Kong', phone: '+852 0000 0101', finished: 20 },
+  { slug: 'lotusharbour', company: 'Lotus Harbour Trading', country: 'Macau', location: 'Taipa warehouse', address: 'Unit 2, Sample Industrial Centre, Taipa, Macau', phone: '+853 0000 0202', finished: 14 },
+  { slug: 'jadeharbor', company: 'Jade Harbor Snacks', country: 'Taiwan', location: 'Taoyuan warehouse', address: 'No. 3, Sample Road, Taoyuan, Taiwan', phone: '+886 0 0000 0303', finished: 15 },
+  { slug: 'kiritable', company: 'Kiri Table Foods', country: 'Japan', location: 'Osaka distribution centre', address: '4-4 Sample-cho, Osaka, Japan', phone: '+81 00 0000 0404', finished: 16 },
+  { slug: 'mariaspantry', company: 'Marianas Pantry Supply', country: 'Guam', location: 'Tamuning warehouse', address: '5 Sample Street, Tamuning, Guam', phone: '+1 671 000 0505', finished: 8 },
+  { slug: 'southerncross', company: 'Southern Cross Pantry', country: 'Australia', location: 'Botany warehouse', address: '6 Sample Road, Botany, NSW, Australia', phone: '+61 0 0000 0606', finished: 10 },
+  { slug: 'kiwiislands', company: 'Kiwi Islands Grocers', country: 'New Zealand', location: 'Auckland store', address: '7 Sample Street, Auckland, New Zealand', phone: '+64 0 000 0707', finished: 7 },
+  { slug: 'maplelane', company: 'Maple Lane Filipino Foods', country: 'Canada', location: 'Richmond store', address: '8 Sample Way, Richmond, BC, Canada', phone: '+1 000 000 0808', finished: 8 },
+  { slug: 'thameside', company: 'Thameside Filipino Groceries', country: 'United Kingdom', location: 'London store', address: '9 Sample Road, London, United Kingdom', phone: '+44 00 0000 0909', finished: 6 },
+  { slug: 'limassolbay', company: 'Limassol Bay Foods', country: 'Cyprus', location: 'Limassol store', address: '10 Sample Avenue, Limassol, Cyprus', phone: '+357 00 001010', finished: 5 },
+  { slug: 'valletta', company: 'Valletta Harbour Provisions', country: 'Malta', location: 'Valletta store', address: '11 Sample Street, Valletta, Malta', phone: '+356 0000 1111', finished: 5 },
+  { slug: 'northernlights', company: 'Northern Lights Asian Market', country: 'Iceland', location: 'Reykjavik store', address: '12 Sample Street, Reykjavik, Iceland', phone: '+354 000 1212', finished: 4 },
 ].map((customer, index) => ({
   ...customer,
   key: `made-up-${index + 1}`,
