@@ -58,7 +58,7 @@ const OUTPUT = path.join(here, 'simulated_history.sql')
 
 const SEED = 20261108
 const HISTORY_MONTHS = 16
-const FINISHED_ORDERS = 161
+const FINISHED_ORDERS = 80
 const SUPPLIER_SLOTS = 10
 const PRODUCT_SLOTS = 5          // products used from each manufacturer
 const MIN_PO_DAYS = 7            // DMC's minimum for a PO's promised date (client/src/utils/dates.js)
@@ -155,24 +155,22 @@ function officeTime(time, pick = between) {
 
 // Made-up shipping costs.
 const COUNTRIES = {
-  'Hong Kong': { shipping: 60000 },
-  Japan: { shipping: 95000 },
-  Singapore: { shipping: 70000 },
+  Macau: { shipping: 60000 },
   Taiwan: { shipping: 80000 },
-  'United Arab Emirates': { shipping: 125000 },
-  'United States': { shipping: 165000 },
+  Japan: { shipping: 95000 },
+  Australia: { shipping: 120000 },
+  Canada: { shipping: 150000 },
 }
 
 // Made-up days at sea to each country, roughly by distance: the arrivals staff
 // would record on shipped orders (db/migrations/025). The estimates never read
 // these numbers; they learn them back from the recorded arrivals.
 const SAILING = {
-  'Hong Kong': [2, 4],
+  Macau: [2, 4],
   Taiwan: [3, 5],
-  Singapore: [4, 7],
   Japan: [5, 9],
-  'United Arab Emirates': [15, 22],
-  'United States': [22, 38],
+  Australia: [10, 16],
+  Canada: [18, 26],
 }
 
 // The arrivals have random numbers of their own, so the rest of the history
@@ -190,17 +188,14 @@ function arrivalOf(order) {
   return recordedAt <= NOW ? { day: dayOf(arrivedAt), recordedAt } : null
 }
 
+// Five made-up customers, in DMC's markets, each ordering at its own pace:
+// from about every 2½ weeks (Japan) to about every 6 weeks (Canada).
 const MADE_UP = [
-  { slug: 'bluewharf', company: 'Bluewharf Trading', country: 'Hong Kong', location: 'Kwai Chung warehouse', address: 'Unit 1, Sample Logistics Centre, Kwai Chung, Hong Kong', phone: '+852 0000 0101', finished: 29 },
-  { slug: 'lanternstreet', company: 'Lantern Street Provisions', country: 'Hong Kong', location: 'Tsuen Wan store', address: 'Shop 2, Sample Street, Tsuen Wan, Hong Kong', phone: '+852 0000 0202', finished: 12 },
+  { slug: 'lotusharbour', company: 'Lotus Harbour Trading', country: 'Macau', location: 'Taipa warehouse', address: 'Unit 1, Sample Industrial Centre, Taipa, Macau', phone: '+853 0000 0101', finished: 15 },
+  { slug: 'jadeharbor', company: 'Jade Harbor Snacks', country: 'Taiwan', location: 'Taoyuan warehouse', address: 'No. 1, Sample Road, Taoyuan, Taiwan', phone: '+886 0 0000 0202', finished: 18 },
   { slug: 'kiritable', company: 'Kiri Table Foods', country: 'Japan', location: 'Osaka distribution centre', address: '1-1 Sample-cho, Osaka, Japan', phone: '+81 00 0000 0303', finished: 24 },
-  { slug: 'merlionpantry', company: 'Merlion Pantry Co.', country: 'Singapore', location: 'Jurong warehouse', address: '1 Sample Road, Jurong, Singapore', phone: '+65 0000 0404', finished: 15 },
-  { slug: 'jadeharbor', company: 'Jade Harbor Snacks', country: 'Taiwan', location: 'Taoyuan warehouse', address: 'No. 1, Sample Road, Taoyuan, Taiwan', phone: '+886 0 0000 0505', finished: 21 },
-  { slug: 'duneandpalm', company: 'Dune and Palm Grocers', country: 'United Arab Emirates', location: 'Al Quoz warehouse', address: 'Warehouse 1, Sample Street, Al Quoz, Dubai, United Arab Emirates', phone: '+971 0 000 0606', finished: 11 },
-  { slug: 'bayviewmart', company: 'Bayview Asian Mart', country: 'United States', location: 'Daly City store', address: '1 Sample Avenue, Daly City, CA, United States', phone: '+1 000 000 0707', finished: 20 },
-  { slug: 'cedarlane', company: 'Cedar Lane Filipino Foods', country: 'United States', location: 'Jersey City warehouse', address: '1 Sample Street, Jersey City, NJ, United States', phone: '+1 000 000 0808', finished: 17 },
-  { slug: 'sampanlane', company: 'Sampan Lane Foods', country: 'Hong Kong', location: 'Kwun Tong warehouse', address: 'Unit 9, Sample Industrial Building, Kwun Tong, Hong Kong', phone: '+852 0000 0909', finished: 7 },
-  { slug: 'junkbay', company: 'Junk Bay Mercantile', country: 'Hong Kong', location: 'Tseung Kwan O store', address: 'Shop 10, Sample Plaza, Tseung Kwan O, Hong Kong', phone: '+852 0000 1010', finished: 5 },
+  { slug: 'southerncross', company: 'Southern Cross Pantry', country: 'Australia', location: 'Botany warehouse', address: '1 Sample Road, Botany, NSW, Australia', phone: '+61 0 0000 0404', finished: 13 },
+  { slug: 'maplelane', company: 'Maple Lane Filipino Foods', country: 'Canada', location: 'Richmond store', address: '1 Sample Way, Richmond, BC, Canada', phone: '+1 000 000 0505', finished: 10 },
 ].map((customer, index) => ({
   ...customer,
   key: `made-up-${index + 1}`,
@@ -393,7 +388,7 @@ function finishedOrder(plan) {
     const shipped = officeTime(ready + between(0.2, 1.6) * DAY)
 
     if (shipped < NOW - 0.5 * DAY || attempt > 20) {
-      const tight = chance(0.25)
+      const tight = chance(0.15)
       return {
         customer,
         size,
@@ -402,7 +397,7 @@ function finishedOrder(plan) {
         status: 'shipped',
         times: { 'pending payment': t0, submitted, 'payment verified': verified, procurement: ordered, 'warehouse preparation': warehouse, 'ready for shipment': ready, shipped },
         po,
-        requested: addDays(dayOf(t0), tight ? whole(35, 45) : whole(55, 90)),
+        requested: addDays(dayOf(t0), tight ? whole(35, 45) : whole(60, 95)),
         labels: 'applied to units',
       }
     }
@@ -417,20 +412,13 @@ function finishedOrder(plan) {
 
 const ACTIVE = [
   { status: 'pending payment', age: 1.2 },
-  { status: 'pending payment', age: 3.5, tight: true },
-  { status: 'submitted', age: 0.3 },
   { status: 'submitted', age: 3.4 },                                       // stuck in the payment check
-  { status: 'payment verified', age: 2 },
   { status: 'payment verified', age: 11 },                                 // the POs are late going out
-  { status: 'procurement', age: 5 },
-  { status: 'procurement', age: 13 },
+  { status: 'procurement', age: 6 },
   { status: 'procurement', age: 24, overdue: true },                       // a delivery is overdue
-  { status: 'procurement', age: 30, tight: true },
   { status: 'warehouse preparation', age: 2, labels: 'original label received' },
-  { status: 'warehouse preparation', age: 6, labels: 'printed & awaiting application' },
   { status: 'warehouse preparation', age: 30, tight: true, labels: 'awaiting customer translated design' }, // labeling is taking long
   { status: 'ready for shipment', age: 0.4 },
-  { status: 'ready for shipment', age: 2.5 },
 ]
 
 const STEPS = ['pending payment', 'submitted', 'payment verified', 'procurement', 'warehouse preparation', 'ready for shipment', 'shipped']
@@ -522,7 +510,7 @@ function activeOrder(plan) {
     status: plan.status,
     times,
     po,
-    requested: addDays(dayOf(times['pending payment']), plan.tight ? whole(30, 40) : whole(60, 90)),
+    requested: addDays(dayOf(times['pending payment']), plan.tight ? whole(30, 40) : whole(60, 95)),
     labels: plan.labels || (step >= 5 ? 'applied to units' : null),
   }
 }
@@ -560,7 +548,7 @@ function routineOrder(plan) {
       status: reached.at(-1)[0],
       times: Object.fromEntries(reached),
       po: ordered <= NOW ? po : null,
-      requested: addDays(dayOf(t0), chance(0.25) ? whole(35, 45) : whole(55, 90)),
+      requested: addDays(dayOf(t0), chance(0.15) ? whole(35, 45) : whole(60, 95)),
       // Its labels are wherever their steps have got to by today (below).
       labels: ready <= NOW ? 'applied to units' : null,
       labelsDoneAt: ready,
