@@ -62,6 +62,6 @@ app.get('/api/health', (req, res) => {
 app.listen(PORT, () => {
   console.log(`DMC ECS server running on http://localhost:${PORT}`)
 
-  // Hourly staff alerts about late orders and overdue deliveries (alerts.js).
+  // Staff alerts about late orders and overdue deliveries, checked every 5 minutes (alerts.js).
   startPredictionAlerts()
 })

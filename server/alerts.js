@@ -5,7 +5,7 @@ import { allStatusHistory, loadShared } from './estimates.js'
 // =============================================================================
 // Prediction alerts
 //
-// Every hour the server checks the open orders' estimates and the supplier
+// Every 5 minutes the server checks the open orders' estimates and the supplier
 // deliveries, and tells staff through the bell in the top bar when:
 //   - an order may miss the customer's requested ship date  → sales, management
 //   - an order has been in one step much longer than usual   → sales, management
@@ -18,7 +18,9 @@ import { allStatusHistory, loadShared } from './estimates.js'
 // after the date they asked for, never why.
 // =============================================================================
 
-const HOUR = 60 * 60 * 1000
+// Often enough that an alert shows within minutes of what caused it. Each
+// alert still goes out only once, so checking more often sends nothing twice.
+const CHECK_EVERY = 5 * 60 * 1000
 const FIRST_CHECK_AFTER = 60 * 1000          // a minute after the server starts
 
 // The statuses of an order going through DMC's steps (payment check onward).
@@ -249,7 +251,8 @@ const isMissingTable = (error) =>
 
 let waitingNoted = false
 
-// Starts the hourly check. PREDICTION_ALERTS=off in server/.env turns it off.
+// Starts the check, every 5 minutes (one at a time: a check still running is
+// left to finish). PREDICTION_ALERTS=off in server/.env turns it off.
 export function startPredictionAlerts() {
   if (normalize(process.env.PREDICTION_ALERTS) === 'off') {
     console.log('Prediction alerts are off (PREDICTION_ALERTS=off).')
@@ -278,5 +281,5 @@ export function startPredictionAlerts() {
   }
 
   setTimeout(run, FIRST_CHECK_AFTER).unref()
-  setInterval(run, HOUR).unref()
+  setInterval(run, CHECK_EVERY).unref()
 }
