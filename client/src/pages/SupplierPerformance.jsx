@@ -240,6 +240,11 @@ export default function SupplierPerformancePage() {
   const staffRating = performance?.staffRating
   // Its deliveries in date order, for the delivery history chart.
   const pastDeliveries = score ? deliveryHistory(score.deliveries) : []
+  // Its latest deliveries, newest first, with its test runs (received within a
+  // day of the PO): those are listed and marked, never counted.
+  const recentDeliveries = score
+    ? [...score.deliveries, ...(score.tests || [])].sort((a, b) => b.receivedOn.localeCompare(a.receivedOn))
+    : []
   // Some of them are from the made-up demo history.
   const simulated = Boolean(score?.deliveries?.some((delivery) => isSimulated(delivery.poNumber)))
 
@@ -428,7 +433,7 @@ export default function SupplierPerformancePage() {
               {/* =============================================
                   RECENT DELIVERIES
               ============================================= */}
-              {score?.count > 0 ? (
+              {recentDeliveries.length > 0 ? (
                 <div className="mt-6">
                   <h3 className="mb-3 font-semibold text-gray-800">
                     Recent Deliveries
@@ -448,7 +453,7 @@ export default function SupplierPerformancePage() {
                       </thead>
 
                       <tbody className="divide-y divide-gray-100">
-                        {score.deliveries.slice(0, 10).map((delivery) => (
+                        {recentDeliveries.slice(0, 10).map((delivery) => (
                           <tr key={delivery.purchaseOrderId}>
                             <td className="px-4 py-2.5 font-medium text-gray-800">{delivery.poNumber || '—'}</td>
                             <td className="px-4 py-2.5 text-gray-600">{formatDay(delivery.orderedOn)}</td>
@@ -456,7 +461,9 @@ export default function SupplierPerformancePage() {
                             <td className="px-4 py-2.5 text-gray-600">{formatDay(delivery.receivedOn)}</td>
                             <td className="px-4 py-2.5 text-gray-600">{formatDays(delivery.leadDays)}</td>
                             <td className="px-4 py-2.5">
-                              {delivery.onTime === null ? (
+                              {delivery.test ? (
+                                <span className="whitespace-nowrap rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">Test run · not counted</span>
+                              ) : delivery.onTime === null ? (
                                 <span className="text-gray-400">No promised date</span>
                               ) : delivery.onTime ? (
                                 <span className="font-medium text-green-700">On time</span>
@@ -470,9 +477,16 @@ export default function SupplierPerformancePage() {
                     </table>
                   </div>
 
-                  {score.count > 10 && (
+                  {recentDeliveries.length > 10 && (
                     <p className="mt-2 text-xs text-gray-400">
-                      Showing the latest 10 of {score.count} deliveries.
+                      Showing the latest 10 of {recentDeliveries.length} deliveries.
+                    </p>
+                  )}
+
+                  {score.tests?.length > 0 && (
+                    <p className="mt-2 text-xs text-gray-500">
+                      Test run: received within a day of its PO. No supplier delivers that fast, so it isn't counted in the
+                      score, the lead time or the estimates.
                     </p>
                   )}
                 </div>

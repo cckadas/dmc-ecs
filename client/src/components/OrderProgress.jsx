@@ -8,6 +8,7 @@ import { formatDateTime, localDateString } from '../utils/dates'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
 import { PaymentHistory } from './HistoryList'
+import EstimateWorking from './EstimateWorking'
 
 
 const formatDate = (date) =>
@@ -53,7 +54,8 @@ const formatPeso = (value) =>
 // Executive Dashboard), and what is still owed. Needs the order's id, status,
 // created_at, requested_ship_date, delivery_location_id, total_amount,
 // settled_amount, pending_payment_amount, down_payment_amount and expiry_date.
-// forStaff adds the confidence and the reasons, which can name suppliers.
+// forStaff adds the confidence, the reasons and how the date is worked out,
+// which can name suppliers.
 // =============================================
 export default function OrderProgress({ order, forStaff = false }) {
   const { profile } = useAuth()
@@ -240,7 +242,11 @@ function ArrivalRecorder({ order, arrivedOn, shippedOn, onSaved }) {
     setSaving(true)
     try {
       const result = await recordArrival(order.id, day)
-      toast.success(`Arrival recorded: ${formatDay(day)}${result?.days_at_sea !== null && result?.days_at_sea !== undefined ? `, ${result.days_at_sea} days at sea` : ''}.`)
+      const atSea = result?.days_at_sea
+      const known = atSea !== null && atSea !== undefined
+      // The day it shipped: no container arrives that fast, so it's a test run.
+      const test = known && Number(atSea) < 1
+      toast.success(`Arrival recorded: ${formatDay(day)}${known ? `, ${atSea} ${Number(atSea) === 1 ? 'day' : 'days'} at sea` : ''}.${test ? " That's the day it shipped, so it's kept as a test run: the estimates don't learn from it." : ''}`)
       setEditing(false)
       onSaved()
     } catch (error) {
@@ -266,7 +272,8 @@ function ArrivalRecorder({ order, arrivedOn, shippedOn, onSaved }) {
       <p className="text-sm font-medium text-gray-800">Record the container's arrival</p>
       <p className="mt-0.5 text-xs text-gray-500">
         The day it arrived at the customer's port, from the shipping line's notice or the customer. The estimates
-        learn each country's days at sea from these.
+        learn each country's days at sea from these. One recorded for the day it shipped is kept as a test run and
+        isn't learned from.
       </p>
 
       <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -469,6 +476,8 @@ function EstimateLines({ prediction, forStaff }) {
           <p className="text-xs text-gray-500">
             {prediction.confidence}% confidence{prediction.roughEstimate ? ' · rough estimate: few finished orders to learn from yet' : ''}
           </p>
+          {/* Each step still to come, the days it adds and the records they come from. */}
+          <EstimateWorking working={prediction.working} />
         </>
       ) : (
         <>

@@ -17,9 +17,10 @@ export async function loadDeliveries(supplierId) {
 }
 
 
-// One supplier's score, with its recent deliveries.
+// One supplier's score, with its recent deliveries. Its test runs (received
+// within a day of the PO) come along as score.tests: listed, never counted.
 export async function loadSupplierScore(supplierId) {
-  return scoreSupplier(await loadDeliveries(supplierId))
+  return scoreSupplier(await loadAllDeliveries(supabase, supplierId, { withTests: true }))
 }
 
 

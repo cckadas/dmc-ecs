@@ -218,6 +218,7 @@ export default function PredictiveAnalytics() {
                 <p className="mt-1">
                   These charts are descriptive: they show what has happened in the system's records, such as how long each
                   step took and how each supplier delivered. The Predictions tab is worked out from these same records.
+                  Test runs, whatever went from start to finish in under a day, are left out of all of them.
                 </p>
               </div>
 
@@ -247,7 +248,14 @@ function OrdersAheadCard({ orders, simulated }) {
         simulated={simulated}
         title="Orders under way: when they'll ship"
         question="When will each order ship and arrive, and will it make its requested date?"
-        footnote="Each order's dates come from how long each of its remaining steps usually takes, its suppliers' deliveries and the days at sea to its country, all from the system's records. At risk: it's expected after the date the customer asked for, or a step or delivery is running late."
+        footnote={
+          <>
+            Each order's dates come from how long each of its remaining steps usually takes, its suppliers' deliveries and
+            the days at sea to its country, all from the system's records. "How it's worked out" under a ship date shows
+            the days each step adds and the records they come from. At risk: it's expected after the date the customer
+            asked for, or a step or delivery is running late.
+          </>
+        }
       >
         <OrdersAheadTable orders={orders} />
       </ChartCard>
@@ -324,7 +332,8 @@ function ProductSalesCard({ demand, showMoney, simulated }) {
             between the days a product was in an order (anyone's) over the last 12 months; a product's orders show from
             the day they're placed, cancelled ones aside. A product's next order can't be told from its own gaps, since
             several customers order it, each at its own pace, so "Who orders it" gives when each of its customers is
-            likely to order next (as in Customers likely to order next).
+            likely to order next (as in Customers likely to order next). "How long it takes to come in" lists every time
+            the warehouse received the product, from its POs' history.
           </>
         }
       >
@@ -355,6 +364,16 @@ function MethodNote({ data, canTrain, training, onRetrain }) {
         quickly its customer usually sends designs. A step with too few finished orders has no estimate yet. Where the
         TensorFlow.js model predicted past orders better, it's used for that step instead.
       </p>
+
+      {data.tests && (
+        <p className="mt-2">
+          <span className="font-medium text-gray-800">Test runs aren't learned from.</span>{' '}
+          Whatever goes from start to finish in under a day is a test, not real work: an order from its payment being
+          verified to ready for shipment, a supplier delivery from its PO to its goods being in, an order's labeling,
+          or an arrival recorded for the day it shipped. {testRunsSoFar(data.tests)} They still count as orders, in
+          the demand forecast, each product's orders and each customer's next order.
+        </p>
+      )}
 
       <ul className="mt-3 space-y-2">
         <ModelLine label="Supplier delivery timing" row={rows.find((row) => row.key === MODEL_KEYS.supplier)} result={lastRun.find((result) => result.key === MODEL_KEYS.supplier)} available={available} />
@@ -389,6 +408,24 @@ function MethodNote({ data, canTrain, training, onRetrain }) {
       )}
     </div>
   )
+}
+
+
+// How many test runs have been set aside so far, in words.
+function testRunsSoFar(tests) {
+  const parts = [
+    tests.orders ? count(tests.orders, 'order') : null,
+    tests.deliveries ? count(tests.deliveries, 'supplier delivery', 'supplier deliveries') : null,
+    // Orders that weren't test runs themselves, but were labeled in under a day.
+    tests.labeling ? count(tests.labeling, tests.orders ? "more order's labeling" : "order's labeling", tests.orders ? "more orders' labeling" : "orders' labeling") : null,
+    tests.arrivals ? count(tests.arrivals, 'arrival') : null,
+  ].filter(Boolean)
+
+  if (!parts.length) return 'None so far.'
+
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0]
+  const one = parts.length === 1 && /^1 /.test(parts[0])
+  return `So far ${list} ${one ? 'has' : 'have'} been set aside.`
 }
 
 

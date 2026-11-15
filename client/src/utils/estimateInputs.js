@@ -10,7 +10,8 @@
 // Imports carry their .js extension so the server (Node) can load this too.
 // =============================================================================
 
-import { MIN_RECORDS, blendStep, normalizeStatus } from './predictions.js'
+import { MIN_RECORDS, blendStep, isTestOrder, normalizeStatus } from './predictions.js'
+import { TEST_RUN_DAYS } from './testRuns.js'
 import { manilaDate, SCORE_WINDOW_DAYS } from './supplierScores.js'
 import { isBigContainer } from './labelingKind.js'
 import { countryName, nearestCountry } from './countryPlaces.js'
@@ -31,7 +32,7 @@ export function supplierHistories(deliveries = [], today = new Date()) {
   const histories = {}
 
   for (const delivery of deliveries) {
-    if (delivery.receivedOn < since) continue
+    if (delivery.receivedOn < since || delivery.test) continue
     if (!histories[delivery.supplierId]) histories[delivery.supplierId] = { leadDays: [], lateness: [] }
     if (delivery.leadDays >= 0) histories[delivery.supplierId].leadDays.push(delivery.leadDays)
     if (delivery.lateness !== null) histories[delivery.supplierId].lateness.push(delivery.lateness)
@@ -52,6 +53,7 @@ export function supplierPool(deliveries = [], today = new Date()) {
   const pool = { leadDays: [], lateness: [], leadByMonth: [] }
 
   for (const delivery of deliveries) {
+    if (delivery.test) continue
     const settled = delivery.orderedOn && delivery.orderedOn >= monthsSince && delivery.orderedOn <= settledBy
     if (delivery.leadDays >= 0 && settled) {
       pool.leadByMonth.push({ month: Number(String(delivery.orderedOn).slice(5, 7)), days: delivery.leadDays })
@@ -72,11 +74,18 @@ export function supplierPool(deliveries = [], today = new Date()) {
 //   orders:    [{ id, delivery_location_id, arrived_on }]  the arrived ones
 //   locations: [{ id, country }]
 //   history:   status changes
-export function sailingRecords({ orders = [], locations = [], history = [] }) {
+// An arrival recorded for the day its order shipped, or of an order that was a
+// test run, is a test run too (utils/testRuns.js): it's left out, or with
+// withTests comes back marked test, to be shown but not learned from.
+export function sailingRecords({ orders = [], locations = [], history = [] }, { withTests = false } = {}) {
   const countryOf = Object.fromEntries(locations.map((location) => [location.id, location.country]))
   const shippedAt = {}
+  const entriesOf = {}
 
   for (const entry of history) {
+    if (!entriesOf[entry.customer_order_id]) entriesOf[entry.customer_order_id] = []
+    entriesOf[entry.customer_order_id].push(entry)
+
     if (normalizeStatus(entry.new_status) !== 'shipped') continue
     const time = Date.parse(entry.changed_at)
     if (!(shippedAt[entry.customer_order_id] >= time)) shippedAt[entry.customer_order_id] = time
@@ -89,7 +98,11 @@ export function sailingRecords({ orders = [], locations = [], history = [] }) {
     if (!order.arrived_on || !country || !shipped) continue
 
     const days = Math.round((Date.parse(String(order.arrived_on).slice(0, 10)) - Date.parse(manilaDate(shipped))) / DAY)
-    if (days >= 0) records.push({ orderId: order.id, country, days })
+    if (days < 0) continue
+
+    const test = days < TEST_RUN_DAYS || isTestOrder(entriesOf[order.id])
+    if (test && !withTests) continue
+    records.push({ orderId: order.id, country, days, ...(withTests ? { test } : {}) })
   }
 
   return records
@@ -123,8 +136,9 @@ export function sailingFor(records = [], country) {
   const near = nearestCountry(country, withEnough)
   if (!near) return null
 
-  const span = blendStep(own, byCountry.get(countryName(near.country)).days)
-  return span ? { typical: span.typical, quick: span.quick, slow: span.slow, count: own.length, nearest: near.country } : null
+  const nearDays = byCountry.get(countryName(near.country)).days
+  const span = blendStep(own, nearDays)
+  return span ? { typical: span.typical, quick: span.quick, slow: span.slow, count: own.length, nearest: near.country, nearestCount: nearDays.length } : null
 }
 
 

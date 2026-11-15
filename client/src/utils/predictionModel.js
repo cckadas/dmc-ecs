@@ -20,6 +20,7 @@
 // =============================================================================
 
 import { blendStep } from './predictions.js'
+import { TEST_RUN_DAYS, isTestRun } from './testRuns.js'
 import { manilaDate } from './supplierScores.js'
 import { isBigContainer, labelingKinds } from './labelingKind.js'
 
@@ -81,6 +82,8 @@ export function supplierRecords(lines) {
     const orderedOn = manilaDate(po.created_at)
     const promised = String(po.expected_delivery_date).slice(0, 10)
     const receivedAt = Math.max(...theirs.map((line) => Date.parse(line.fully_received_at)))
+    // Received within a day of its PO: a test run, as in the supplier scores.
+    if (isTestRun(po.created_at, receivedAt)) continue
 
     records.push({
       orderId: po.customer_order_id,
@@ -132,7 +135,8 @@ export function labelingRecords({ history = [], orders = [], items = [], locatio
     const startedAt = Date.parse(warehouse.changed_at)
     const knownAt = Date.parse(ready.changed_at)
     const days = (knownAt - startedAt) / DAY
-    if (days <= 0.05 || days > 60) continue
+    // Labeled in under a day: a test run, as in the estimates.
+    if (days < TEST_RUN_DAYS || days > 60) continue
 
     const kind = kinds.get(order.id) || null
     records.push({

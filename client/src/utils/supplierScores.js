@@ -10,9 +10,12 @@
 //   reliability score  = on-time rate (%) − 2 points per average day late
 //
 // Only the last 12 months count, and a supplier needs 3 deliveries for a score.
-// No imports on purpose, like utils/predictions.js, so every page that shows a
-// score gives the same one.
+// A delivery received within a day of its PO is a test run (utils/testRuns.js):
+// no supplier delivers that fast, so it's shown but never counted.
+// Every page that shows a score works it out here, so all give the same one.
 // =============================================================================
+
+import { isTestRun } from './testRuns.js'
 
 const DAY = 1000 * 60 * 60 * 24
 
@@ -54,7 +57,10 @@ const percentile = (values, fraction) => {
 // Purchase order lines, each with its purchase order nested as purchase_orders,
 // into finished deliveries, newest first. A supplier's part of a PO with any
 // line not yet fully received isn't finished, so it isn't counted.
-export function buildDeliveries(lines) {
+// Test runs (received within a day of the PO) are left out, so nothing learns
+// from them; with withTests they come back marked test, for the screens that
+// list deliveries.
+export function buildDeliveries(lines, { withTests = false } = {}) {
   const byDelivery = new Map()
 
   for (const line of lines) {
@@ -71,14 +77,19 @@ export function buildDeliveries(lines) {
   for (const { supplierId, order, receivedAt } of byDelivery.values()) {
     if (receivedAt.includes(null) || !order.created_at) continue
 
+    const lastReceivedAt = Math.max(...receivedAt.map((value) => Date.parse(value)))
+    const test = isTestRun(order.created_at, lastReceivedAt)
+    if (test && !withTests) continue
+
     const orderedOn = manilaDate(order.created_at)
-    const receivedOn = manilaDate(Math.max(...receivedAt.map((value) => Date.parse(value))))
+    const receivedOn = manilaDate(lastReceivedAt)
     const promised = order.expected_delivery_date || null
 
     deliveries.push({
       supplierId,
       purchaseOrderId: order.id,
       poNumber: order.po_number || null,
+      test,
       orderedOn,
       promised,
       receivedOn,
@@ -95,10 +106,12 @@ export function buildDeliveries(lines) {
 }
 
 
-// One supplier's score from its deliveries (from buildDeliveries).
+// One supplier's score from its deliveries (from buildDeliveries). Test runs
+// among them never count; they come back apart, as tests, to be listed.
 export function scoreSupplier(deliveries, { today = new Date() } = {}) {
   const since = manilaDate(today.getTime() - SCORE_WINDOW_DAYS * DAY)
-  const recent = deliveries.filter((delivery) => delivery.receivedOn >= since)
+  const recent = deliveries.filter((delivery) => delivery.receivedOn >= since && !delivery.test)
+  const tests = deliveries.filter((delivery) => delivery.receivedOn >= since && delivery.test)
   const judged = recent.filter((delivery) => delivery.onTime !== null)
   const late = judged.filter((delivery) => !delivery.onTime)
 
@@ -113,6 +126,7 @@ export function scoreSupplier(deliveries, { today = new Date() } = {}) {
 
   return {
     deliveries: recent,
+    tests,
     count: recent.length,
     onTimeCount: judged.length - late.length,
     lateCount: late.length,

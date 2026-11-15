@@ -17,6 +17,8 @@
 //   - how long each customer takes to send its designs, against the usual for
 //     each order's kind: a customer that took half as long again counts as 1.5.
 //     Its own orders count for n ÷ (n + 5), the usual (1) for the rest.
+// An order whose labeling went by in under a day (from the warehouse to ready)
+// was a test run, so neither is learned from it (utils/testRuns.js).
 //
 // The estimates (utils/predictions.js) use it two ways:
 //   - an order in labeling: what's left is what's left of the piece it's in,
@@ -28,6 +30,7 @@
 // =============================================================================
 
 import { MIN_RECORDS, blendStep, normalizeStatus, recordShare, remainingOfStep } from './predictions.js'
+import { isTestRun } from './testRuns.js'
 
 const DAY = 24 * 60 * 60 * 1000
 const MAX_PIECE_DAYS = 120   // longer is a mistake in the records
@@ -142,12 +145,18 @@ export function orderLabeling({ labelHistory = [], exchanges = [], items = [], h
 //   customerOf  order id → customer id
 // pieces: { key: { all: [days], byKind: { regular, big, new } } }
 // designRatios: Map of customer id → [its orders' design days ÷ the usual for their kind]
+// tests: the orders left out as test runs
 export function labelingStatistics(orders, { kindOf = () => null, customerOf = () => null, before = Infinity } = {}) {
   const pieces = Object.fromEntries(LABELING_PIECES.map((piece) => [piece.key, { all: [], byKind: { regular: [], big: [], new: [] } }]))
   const finished = []
+  let tests = 0
 
   for (const [orderId, steps] of orders) {
     if (!steps.complete || steps.reachedAt[6] >= before) continue
+    if (isTestRun(steps.reachedAt[0], steps.reachedAt[6])) {
+      tests++
+      continue
+    }
     const days = LABELING_PIECES.map((_, index) => (steps.reachedAt[index + 1] - steps.reachedAt[index]) / DAY)
     if (days.some((value) => value < 0 || value > MAX_PIECE_DAYS)) continue
 
@@ -159,7 +168,7 @@ export function labelingStatistics(orders, { kindOf = () => null, customerOf = (
     })
   }
 
-  const statistics = { pieces, designRatios: new Map(), orders: finished.length }
+  const statistics = { pieces, designRatios: new Map(), orders: finished.length, tests }
 
   for (const { orderId, kind, design } of finished) {
     const usual = pieceSpan(statistics, 'design', kind)?.typical
@@ -222,6 +231,8 @@ export function labelingLeft(statistics, { position, positionAt, kind = null, pa
 
   const elapsed = Math.max(0, (now - positionAt) / DAY)
   const total = { typical: 0, quick: 0, slow: 0 }
+  // Each piece still to come and the days it adds, for the staff working.
+  const pieces = []
 
   for (let index = position; index < LABELING_PIECES.length; index++) {
     const key = LABELING_PIECES[index].key
@@ -230,10 +241,11 @@ export function labelingLeft(statistics, { position, positionAt, kind = null, pa
     total.typical += span.typical
     total.quick += span.quick
     total.slow += span.slow
+    pieces.push({ key, label: LABELING_PIECES[index].label, days: span.typical, current: index === position, records: statistics.pieces[key].all.length })
   }
 
   const piece = LABELING_PIECES[position]
-  return { ...total, piece, daysIn: elapsed, usual: pieceSpan(statistics, piece.key, kind, pace) }
+  return { ...total, piece, daysIn: elapsed, usual: pieceSpan(statistics, piece.key, kind, pace), pieces }
 }
 
 

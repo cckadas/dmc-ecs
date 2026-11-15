@@ -10,7 +10,8 @@
 // Imports carry their .js extension so the maths can be tested in Node.
 // =============================================================================
 
-import { ESTIMATE_STEPS, MIN_RECORDS, blendStep, buildStageStatistics, monthEffects, normalizeStatus, predictOrder, recordShare, remainingOfStep } from './predictions.js'
+import { ESTIMATE_STEPS, MIN_RECORDS, blendStep, buildStageStatistics, isTestOrder, monthEffects, normalizeStatus, predictOrder, recordShare, remainingOfStep } from './predictions.js'
+import { isTestRun } from './testRuns.js'
 import { designPaceOf, labelingContext, labelingLeft, labelingStatistics, orderLabeling } from './labelingSteps.js'
 import { estimateContext, supplierHistories, supplierPool } from './estimateInputs.js'
 import { SCORE_WINDOW_DAYS, manilaDate, scoreSuppliers } from './supplierScores.js'
@@ -194,15 +195,17 @@ export function busyMonths(deliveries, { today = new Date() } = {}) {
 // 4. Shipping on time, by month -----------------------------------------------------
 // Of the orders shipped each month that had a requested ship date, the share
 // shipped by that date (calendar days in the Philippines). From the first month
-// with one, up to this month, at most 12 months.
+// with one, up to this month, at most 12 months. Test runs (utils/testRuns.js)
+// aren't counted: they'd all be "on time".
 export function shippingOnTimeByMonth(orders, historyByOrder, { today = new Date(), months = 12 } = {}) {
   const counts = new Map()
 
   for (const order of orders) {
     if (!isShipped(order) || !order.requested_ship_date) continue
 
-    const shipped = lastInto(sortedHistory(historyByOrder, order.id), 'shipped')
-    if (!shipped) continue
+    const entries = sortedHistory(historyByOrder, order.id)
+    const shipped = lastInto(entries, 'shipped')
+    if (!shipped || isTestOrder(entries)) continue
 
     const shipDay = manilaDate(shipped.changed_at)
     const month = shipDay.slice(0, 7)
@@ -253,8 +256,8 @@ export function comingUpByWeek(predictions, { now = Date.now(), weeks = WEEKS_AH
 
 
 // 6. Prediction accuracy -------------------------------------------------------------
-// Finished orders: shipped, at least a day after their payment was verified
-// (quicker ones are test runs, as in the estimates). Oldest first.
+// Finished orders: shipped, and not a test run (ready within a day of the
+// payment being verified, as in the estimates: utils/testRuns.js). Oldest first.
 export function finishedForAccuracy(orders, historyByOrder) {
   return orders
     .map((order) => {
@@ -267,7 +270,7 @@ export function finishedForAccuracy(orders, historyByOrder) {
 
       const verifiedAt = Date.parse(verified.changed_at)
       const shippedAt = Date.parse(shipped.changed_at)
-      if ((shippedAt - verifiedAt) / DAY < 1) return null
+      if (isTestOrder(entries) || shippedAt < verifiedAt) return null
 
       return { order, verifiedAt, shippedAt }
     })
@@ -411,13 +414,15 @@ export function labelingCheck({ history = [], labels = null, kinds = null }) {
   const kindOf = kinds?.size ? (orderId) => kinds.get(orderId) || null : () => null
   const customerOf = new Map((labels.orders || []).map((order) => [order.id, order.customer_id]))
 
-  const complete = [...steps].filter(([, order]) => order.complete).sort((a, b) => a[1].reachedAt[6] - b[1].reachedAt[6])
+  // Labeling that went by in under a day was a test run: not learned from, not tested.
+  const real = (order) => !isTestRun(order.reachedAt[0], order.reachedAt[6])
+  const complete = [...steps].filter(([, order]) => order.complete && real(order)).sort((a, b) => a[1].reachedAt[6] - b[1].reachedAt[6])
   if (complete.length < MIN_ACCURACY_ORDERS) return { enough: false, orders: complete.length, needed: MIN_ACCURACY_ORDERS }
 
   const testOn = complete.slice(complete.length - Math.max(1, Math.round(complete.length * TEST_SHARE)))
   // Every order's labeling as a whole (in the warehouse until ready), by when it ended.
   const wholes = [...steps]
-    .filter(([, order]) => order.reachedAt[6] !== null)
+    .filter(([, order]) => order.reachedAt[6] !== null && real(order))
     .map(([orderId, order]) => ({ kind: kindOf(orderId), endedAt: order.reachedAt[6], days: (order.reachedAt[6] - order.reachedAt[0]) / DAY }))
     .filter((entry) => entry.days >= 0)
 
@@ -494,11 +499,11 @@ export function headlineNumbers({ predictions = [], orders = [], historyByOrder 
 
     const shippedAt = Date.parse(shipped.changed_at)
     const days = (shippedAt - Date.parse(paid.changed_at)) / DAY
-    if (shippedAt >= since && days >= 1) spans.push(days)
+    if (shippedAt >= since && days >= 0 && !isTestOrder(entries)) spans.push(days)
   }
 
   const sinceDay = manilaDate(since)
-  const judged = deliveries.filter((delivery) => delivery.receivedOn >= sinceDay && delivery.onTime !== null)
+  const judged = deliveries.filter((delivery) => delivery.receivedOn >= sinceDay && delivery.onTime !== null && !delivery.test)
   const statistics = accuracy?.enough ? accuracy.methods.find((method) => method.inUse) : null
 
   return {
@@ -571,6 +576,8 @@ export function ordersAhead(predictions = [], customers = {}) {
       risk: prediction.risk,
       reasons: prediction.riskReasons || [],
       learning: prediction.learning?.text || null,
+      // How its date is worked out, step by step (utils/estimateWorking.js).
+      working: prediction.working || null,
     }))
     .sort((a, b) => (a.shipDate ? timeOf(a.shipDate) : Infinity) - (b.shipDate ? timeOf(b.shipDate) : Infinity) || a.orderNumber.localeCompare(b.orderNumber))
 }
@@ -584,7 +591,7 @@ export function deliveryHistory(deliveries, { today = new Date(), limit = 30 } =
   const since = manilaDate(timeOf(today) - SCORE_WINDOW_DAYS * DAY)
 
   return deliveries
-    .filter((delivery) => delivery.receivedOn >= since && delivery.lateness !== null)
+    .filter((delivery) => delivery.receivedOn >= since && delivery.lateness !== null && !delivery.test)
     .sort((a, b) => a.receivedOn.localeCompare(b.receivedOn) || String(a.poNumber).localeCompare(String(b.poNumber)))
     .slice(-limit)
     .map(({ purchaseOrderId, poNumber, receivedOn, promised, lateness }) => ({ purchaseOrderId, poNumber, receivedOn, promised, lateness }))

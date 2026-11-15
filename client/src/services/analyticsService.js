@@ -22,6 +22,7 @@ import { isSimulated } from '../utils/simulated'
 import { demandForecast, withProductTiming } from '../utils/demandForecast'
 import { productTiming, reorderTiming } from '../utils/reorderTiming'
 import { labelingPieceTimes, labelingRecords } from '../utils/labelingSteps'
+import { productDeliveries } from '../utils/productDeliveries'
 
 
 // =============================================================================
@@ -40,7 +41,8 @@ import { labelingPieceTimes, labelingRecords } from '../utils/labelingSteps'
 //   weeks       orders ready to ship, by week
 //   reorders    when each customer will likely order next
 //   demand      the demand forecast, with sales by product and each
-//               product's orders and how often it's ordered
+//               product's orders and how often it's ordered (its deliveries
+//               are read when a product is chosen: loadProductDeliveries)
 //   accuracy    how close the estimates came on orders they didn't learn from,
 //               and the ready date of orders in labeling
 // What the predictions learn from (descriptive):
@@ -77,9 +79,11 @@ export async function loadAnalytics(parts = ALL_PARTS) {
   const want = (part) => parts.includes(part)
   const needOrders = ['ahead', 'orders', 'numbers', 'steps', 'months', 'weeks', 'accuracy', 'demand', 'reorders', 'labels'].some(want)
 
-  const [history, deliveries, suppliers, orders, models] = await Promise.all([
+  const [history, everyDelivery, suppliers, orders, models] = await Promise.all([
     needOrders ? loadStatusHistory() : [],
-    loadAllDeliveries(supabase).catch(() => []),
+    // With the test runs (received within a day of the PO), to count them:
+    // nothing below learns from those.
+    loadAllDeliveries(supabase, null, { withTests: true }).catch(() => []),
     supabase.from('suppliers').select('id, supplier_name').order('supplier_name'),
     needOrders
       ? allRows(() => supabase.from('customer_orders').select('id, order_number, status, created_at, requested_ship_date, delivery_location_id, customer_id, container_size').order('id'))
@@ -93,7 +97,10 @@ export async function loadAnalytics(parts = ALL_PARTS) {
   const allOrders = orders
   const supplierList = suppliers.data || []
   const names = Object.fromEntries(supplierList.map((supplier) => [supplier.id, supplier.supplier_name]))
-  const { stageStatistics, historyByOrder, finishedOrders } = buildStageStatistics(history)
+  const deliveries = everyDelivery.filter((delivery) => !delivery.test)
+  const { stageStatistics, historyByOrder, finishedOrders, tests: stepTests } = buildStageStatistics(history)
+  // The recorded arrivals (db/migrations/025), and how many were test runs.
+  const arrivals = needOrders ? await loadArrivals(supabase, history) : { records: [], tests: 0 }
 
   // The estimates of the orders not shipped yet.
   let predictions = []
@@ -204,7 +211,7 @@ export async function loadAnalytics(parts = ALL_PARTS) {
     // What they learn from.
     steps: want('steps') ? stepTimes(stageStatistics) : null,
     // Days at sea by country, from recorded arrivals (db/migrations/025).
-    atSea: want('steps') ? daysAtSea((await loadArrivals(supabase, history)).records) : null,
+    atSea: want('steps') ? daysAtSea(arrivals.records) : null,
     labelSteps,
     onTime: want('suppliers') ? supplierOnTime(deliveries, supplierList) : null,
     leadTimes: want('suppliers') ? supplierLeadTimes(deliveries, supplierList) : null,
@@ -214,9 +221,46 @@ export async function loadAnalytics(parts = ALL_PARTS) {
     // The Executive Dashboard's four numbers.
     numbers: want('numbers') ? headlineNumbers({ predictions, orders: allOrders, historyByOrder, deliveries, accuracy }) : null,
     learnedFrom: finishedOrders,
+    // What wasn't learned from, as test runs (utils/testRuns.js): whatever went
+    // from start to finish in under a day.
+    tests: {
+      orders: stepTests.orders,
+      deliveries: everyDelivery.length - deliveries.length,
+      labeling: stepTests.labeling,
+      arrivals: arrivals.tests,
+    },
     // The saved models: how each did, whether it's in use, when it was trained.
     models: { available: models.available, rows: models.rows },
     // The made-up demo history is in (db/demo/), so the figures aren't DMC's own.
     simulated: allOrders.some((order) => isSimulated(order.order_number)) || deliveries.some((delivery) => isSimulated(delivery.poNumber)),
   }
+}
+
+
+// One product's deliveries (utils/productDeliveries.js): every time it came in,
+// from the POs' history (db/migrations/023), with how long it usually takes
+// from PO to all of it in, and what's still to come. Read when a product is
+// chosen under Sales by product. Staff only: customers can't read POs.
+export async function loadProductDeliveries(productId) {
+  const [lines, events, suppliers] = await Promise.all([
+    allRows(() => supabase
+      .from('purchase_order_items')
+      .select('id, supplier_id, ordered_quantity, received_quantity, fully_received_at, purchase_orders ( id, po_number, created_at, expected_delivery_date )')
+      .eq('product_id', productId)
+      .order('id')),
+    // Without db/migrations/023 there's no history: each line's last receiving is still known.
+    allRows(() => supabase
+      .from('purchase_order_history')
+      .select('id, supplier_id, details, happened_at')
+      .eq('event', 'goods received')
+      .eq('details->>product_id', productId)
+      .order('id')).catch(() => []),
+    supabase.from('suppliers').select('id, supplier_name'),
+  ])
+
+  return productDeliveries({
+    lines,
+    events,
+    suppliers: Object.fromEntries((suppliers.data || []).map((supplier) => [supplier.id, supplier.supplier_name])),
+  })
 }

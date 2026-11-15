@@ -39,8 +39,9 @@ export async function allRows(makeQuery, pageSize = 1000) {
 
 // Every finished delivery (utils/supplierScores.js), for one supplier or all.
 // All lines are loaded, since a delivery counts only once every line from that
-// supplier on the PO is in.
-export async function loadAllDeliveries(client, supplierId) {
+// supplier on the PO is in. Test runs (received within a day of the PO) are
+// left out; withTests brings them too, marked test, for screens that list them.
+export async function loadAllDeliveries(client, supplierId, { withTests = false } = {}) {
   const lines = await allRows(() => {
     let query = client
       .from('purchase_order_items')
@@ -60,7 +61,7 @@ export async function loadAllDeliveries(client, supplierId) {
     return query
   })
 
-  return buildDeliveries(lines)
+  return buildDeliveries(lines, { withTests })
 }
 
 
@@ -244,6 +245,7 @@ async function loadSupplierRecords(client) {
 
 // Every recorded arrival (db/migrations/025): the days at sea by country that
 // the arrival dates are learned from, and each arrived order's arrival, by id.
+// tests: the arrivals left out as test runs (utils/testRuns.js).
 // Empty when 025 isn't run yet; a customer's browser sees only their own.
 export async function loadArrivals(client, history) {
   try {
@@ -261,12 +263,15 @@ export async function loadArrivals(client, history) {
       locations.push(...(data || []))
     }
 
+    const every = sailingRecords({ orders, locations, history }, { withTests: true })
+
     return {
-      records: sailingRecords({ orders, locations, history }),
+      records: every.filter((record) => !record.test).map(({ orderId, country, days }) => ({ orderId, country, days })),
+      tests: every.filter((record) => record.test).length,
       byOrder: Object.fromEntries(orders.map((order) => [order.id, { arrived_on: order.arrived_on, arrival_recorded_at: order.arrival_recorded_at }])),
     }
   } catch {
-    return { records: [], byOrder: {} }
+    return { records: [], tests: 0, byOrder: {} }
   }
 }
 

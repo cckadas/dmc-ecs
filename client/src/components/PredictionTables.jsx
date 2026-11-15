@@ -1,6 +1,8 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 
 import { DemandChart } from './AnalyticsCharts'
+import { EstimateWorkingTable } from './EstimateWorking'
+import ProductDeliveries from './ProductDeliveries'
 import TableScroll from './TableScroll'
 
 
@@ -34,8 +36,11 @@ const CELL = 'px-4 py-2.5 align-top text-sm text-gray-700'
 
 
 // Each order under way: when it should ship and arrive, and whether it's on
-// track for the customer's requested date (staff see why not).
+// track for the customer's requested date (staff see why not). Each opens how
+// its date is worked out: the days every step still to come adds.
 export function OrdersAheadTable({ orders }) {
+  const [openId, setOpenId] = useState(null)
+
   if (!orders.length) return <p className="text-sm text-gray-500">No orders under way.</p>
 
   return (
@@ -53,38 +58,59 @@ export function OrdersAheadTable({ orders }) {
         </thead>
         <tbody className="divide-y divide-gray-100">
           {orders.map((order) => (
-            <tr key={order.id}>
-              <td className={CELL}>
-                <p className="font-medium text-gray-800">{order.orderNumber}</p>
-                {order.customer && <p className="text-xs text-gray-500">{order.customer}</p>}
-              </td>
-              <td className={CELL}>
-                {STEP_NOW[order.status] || order.status}
-                {order.labelNow && <p className="text-xs text-gray-500">{order.labelNow}</p>}
-              </td>
-              <td className={`${CELL} whitespace-nowrap`}>
-                {order.shipDate ? (
-                  <>
-                    <p className="font-medium text-gray-800">{shortDate(order.shipDate)}{order.ifPaidToday ? ' if paid today' : ''}</p>
-                    {order.shipRange && <p className="text-xs text-gray-500">likely {shortDate(order.shipRange.quick)} to {shortDate(order.shipRange.slow)}</p>}
-                  </>
-                ) : '—'}
-              </td>
-              <td className={`${CELL} whitespace-nowrap`}>{order.arrival ? shortDate(order.arrival) : '—'}</td>
-              <td className={`${CELL} whitespace-nowrap`}>{dayFormat(order.requested)}</td>
-              <td className={CELL}>
-                {order.learning ? (
-                  <span className="text-gray-500">{order.learning}</span>
-                ) : order.risk === 'at risk' ? (
-                  <>
-                    <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">At risk</span>
-                    {order.reasons.map((reason) => <p key={reason} className="mt-1 text-xs text-gray-600">{reason}</p>)}
-                  </>
-                ) : (
-                  <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs font-semibold text-[#2D5A42]">On track</span>
-                )}
-              </td>
-            </tr>
+            <Fragment key={order.id}>
+              <tr>
+                <td className={CELL}>
+                  <p className="font-medium text-gray-800">{order.orderNumber}</p>
+                  {order.customer && <p className="text-xs text-gray-500">{order.customer}</p>}
+                </td>
+                <td className={CELL}>
+                  {STEP_NOW[order.status] || order.status}
+                  {order.labelNow && <p className="text-xs text-gray-500">{order.labelNow}</p>}
+                </td>
+                <td className={`${CELL} whitespace-nowrap`}>
+                  {order.shipDate ? (
+                    <>
+                      <p className="font-medium text-gray-800">{shortDate(order.shipDate)}{order.ifPaidToday ? ' if paid today' : ''}</p>
+                      {order.shipRange && <p className="text-xs text-gray-500">likely {shortDate(order.shipRange.quick)} to {shortDate(order.shipRange.slow)}</p>}
+                      {order.working && (
+                        <button
+                          type="button"
+                          aria-expanded={openId === order.id}
+                          onClick={() => setOpenId(openId === order.id ? null : order.id)}
+                          className="mt-1 text-xs font-medium text-[#2D5A42] hover:underline"
+                        >
+                          {openId === order.id ? 'Hide the working' : "How it's worked out"}
+                        </button>
+                      )}
+                    </>
+                  ) : '—'}
+                </td>
+                <td className={`${CELL} whitespace-nowrap`}>{order.arrival ? shortDate(order.arrival) : '—'}</td>
+                <td className={`${CELL} whitespace-nowrap`}>{dayFormat(order.requested)}</td>
+                <td className={CELL}>
+                  {order.learning ? (
+                    <span className="text-gray-500">{order.learning}</span>
+                  ) : order.risk === 'at risk' ? (
+                    <>
+                      <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700">At risk</span>
+                      {order.reasons.map((reason) => <p key={reason} className="mt-1 text-xs text-gray-600">{reason}</p>)}
+                    </>
+                  ) : (
+                    <span className="rounded-full bg-green-50 px-2 py-0.5 text-xs font-semibold text-[#2D5A42]">On track</span>
+                  )}
+                </td>
+              </tr>
+
+              {openId === order.id && order.working && (
+                <tr>
+                  <td colSpan={6} className="bg-gray-50 px-4 py-3">
+                    <p className="mb-1 text-sm font-semibold text-gray-800">{order.orderNumber}: how its date is worked out</p>
+                    <EstimateWorkingTable working={order.working} />
+                  </td>
+                </tr>
+              )}
+            </Fragment>
           ))}
         </tbody>
       </table>
@@ -305,7 +331,8 @@ function trendText(trend) {
 }
 
 
-// One product: its months, its forecast, and how its sales make that forecast.
+// One product: its months, its forecast, how its sales make that forecast, its
+// orders and its deliveries.
 function ProductDetail({ product, showMoney }) {
   const next = product.forecast?.[0]
   const sharePercent = Math.round(product.share * 1000) / 10
@@ -330,6 +357,9 @@ function ProductDetail({ product, showMoney }) {
       </p>
 
       {product.timing && <ProductOrders timing={product.timing} />}
+
+      {/* Every time it came in, read when the product is chosen. */}
+      <ProductDeliveries key={product.id} productId={product.id} />
     </div>
   )
 }
