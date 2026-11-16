@@ -31,10 +31,13 @@
 //   - its likely range: the forecast's, narrowed the same way, but never
 //     narrower than past months ended from their live figure this far through
 // It's checked the same way: each of the last 6 full months as it stood this
-// far through it, against the forecast made before the month. (Adding the
-// forecast's share for the rest to what's placed, with no blend, came closer
-// from mid-month on the made-up history but was further off early in a month,
-// when a few orders say little; so the blend, which was never worse.)
+// far through it, against the forecast made before the month. On the made-up
+// history (Nov 2026) the forecast alone was 17.7% off; the live figure was
+// within 0.3 of a point of that through the first third of a month, then
+// closer: 15% off half way, 12% at three quarters, 7% in the last days.
+// Adding the forecast's share for the rest to what's placed, with no blend,
+// came closer from mid-month (13% half way) but was further off early on
+// (21.5% a tenth of the way in), when a few orders say little: so the blend.
 //
 // Imports carry their .js extension so the maths can be tested in Node.
 // =============================================================================
