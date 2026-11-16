@@ -20,7 +20,8 @@
 //
 // Every simulated record is marked: order numbers start SIM-ORD-, PO numbers
 // SIM-PO-, and the made-up customers' companies end in "(simulated)", with
-// @simulated.example.com emails. They can't sign in: they have no password.
+// @simulated.example.com emails. They can't sign in: they have no password
+// (db/demo/allow_simulated_sign_in.sql gives them one, to look around as them).
 // db/demo/remove_simulated_history.sql takes it all out again.
 //
 // The times follow what DMC staff said their usual times are (Nov 2026), with
@@ -1005,7 +1006,8 @@ const sql = `-- ================================================================
 -- deliveries. The pages say "Simulated data" while any of it is in.
 --
 -- What it adds (${dayOf(START)} to ${TODAY}):
---   ${MADE_UP.length} made-up customers, with a delivery address each (they can't sign in)
+--   ${MADE_UP.length} made-up customers, with a delivery address each (they can't sign in
+--   until db/demo/allow_simulated_sign_in.sql is run)
 --   ${finished} finished orders and ${orders.length - finished} under way, in every step
 --   ${rows.pos.length} purchase orders: ${deliveryCount} supplier deliveries
 --   every status change, payment and label step, with its date and time
@@ -1117,9 +1119,11 @@ ${valuesTable(
   rows.orders,
   (row) => [text(row.id), text(row.customerKey), text(row.number), amount(row.subtotal), amount(row.shipping), text(row.containerSize), amount(row.containerCost), amount(row.total), amount(row.downPayment), amount(row.settled), amount(row.pending), text(row.status), text(row.requested), text(row.arrival?.day ?? null), row.arrival ? stamp(row.arrival.recordedAt) : 'null', ...row.times.map(stamp), stamp(row.balanceSent), stamp(row.balanceVerified)],
 )}
-insert into public.customer_orders (id, customer_id, delivery_location_id, quotation_number, order_number, subtotal, shipping_cost, container_size, container_cost, total_amount, down_payment_amount, settled_amount, pending_payment_amount, status, created_at, requested_ship_date, estimated_ship_date, arrived_on, arrival_recorded_at)
+insert into public.customer_orders (id, customer_id, delivery_location_id, quotation_number, order_number, subtotal, shipping_cost, container_size, container_cost, total_amount, down_payment_amount, settled_amount, pending_payment_amount, status, created_at, requested_ship_date, estimated_ship_date, arrived_on, arrival_recorded_at, expiry_date)
 select o.id, c.id, c.location_id, replace(o.order_number, 'SIM-ORD-', 'SIM-QT-'), o.order_number, o.subtotal, o.shipping, o.container_size, o.container_cost, o.total, o.down_payment, o.settled, o.pending, o.status,
-       o.placed, o.requested, (o.shipped at time zone 'Asia/Manila')::date, o.arrived_on, o.arrival_recorded_at
+       o.placed, o.requested, (o.shipped at time zone 'Asia/Manila')::date, o.arrived_on, o.arrival_recorded_at,
+       -- The day its quotation was valid to (the down payment is due a week after): 5 days after it was placed.
+       (o.placed at time zone 'Asia/Manila')::date + 5
 from sim_order o
 join sim_customer c on c.key = o.customer_key;
 
