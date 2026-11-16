@@ -328,7 +328,8 @@ function ProductSalesCard({ demand, showMoney, simulated }) {
         footnote={
           <>
             From the system's own orders past their down payment, by the month they were placed. A product's expected
-            cases are its share of its category over the last 6 months times the category's forecast. How often: the days
+            cases are its share of its category over the last 6 months times the category's forecast; this month's are
+            live, moved by the product's own cases placed so far (as in the Demand forecast). How often: the days
             between the days a product was in an order (anyone's) over the last 12 months; a product's orders show from
             the day they're placed, cancelled ones aside. A product's next order can't be told from its own gaps, since
             several customers order it, each at its own pace, so "Who orders it" gives when each of its customers is
@@ -660,6 +661,10 @@ function DemandCard({ demand, simulated, wide }) {
   const expected = demand.forecast[key]?.[0]
   const soFar = demand.thisMonth?.cases?.[key] || 0
   const waiting = key === 'all' ? demand.thisMonth?.waiting : null
+  // The month under way is live: moved by what's been placed, which counts the
+  // orders still waiting for their down payment too (utils/demandForecast.js).
+  const live = demand.live
+  const waitingCases = expected?.live ? Math.max(expected.placed - soFar, 0) : 0
   const monthName = expected ? new Date(`${expected.month}-01T00:00:00Z`).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' }) : null
 
   return (
@@ -677,6 +682,17 @@ function DemandCard({ demand, simulated, wide }) {
             with a likely range from how much months have varied. It helps procurement plan supplier orders and the
             warehouse its space.
             {check && ` Checked on the last ${check.tests.length} months, each forecast from the months before it: ${percent(check.forecastOff)} off on average, against ${percent(check.lastMonthOff)} for repeating the month before; ${check.tests.filter((test) => test.inRange).length} of ${check.tests.length} within the likely range.`}
+            {live && (
+              <>
+                {' '}This month's bar is live: it starts as that forecast and moves toward what's actually placed as the
+                month goes on. What's been placed so far, plus the forecast's share for the rest of the month, counts for as
+                much of a month as is usually placed by this day ({percent(live.gone)} today); the forecast made before
+                the month counts for the rest. So a few early or late orders barely move it at the start of a month, and on
+                the last day it's what was ordered.
+                {live.waitDays > 0 && ` An order waiting for its down payment counts as placed while it hasn't waited longer than orders almost always do (${formatDays(live.waitDays)}).`}
+                {live.check && ` Checked this far through each of the last ${live.check.tests.length} months: ${percent(live.check.liveOff)} off on average, against ${percent(live.check.forecastOff)} for the forecast made before the month.`}
+              </>
+            )}
           </>
         }
       >
@@ -697,8 +713,12 @@ function DemandCard({ demand, simulated, wide }) {
 
         {expected && (
           <p className="mb-2 text-sm text-gray-700">
-            <span className="font-medium">{monthName} so far:</span> {Math.round(soFar).toLocaleString('en-US')} cases ordered, of about {Math.round(expected.cases).toLocaleString('en-US')} expected
-            {waiting?.orders ? ` (${waiting.orders} more ${waiting.orders === 1 ? 'order' : 'orders'} waiting for the down payment)` : ''}.
+            <span className="font-medium">{monthName} so far:</span> {Math.round(soFar).toLocaleString('en-US')} cases ordered
+            {waitingCases > 0 ? `, and ${Math.round(waitingCases).toLocaleString('en-US')} more in orders waiting for their down payment` : ''}
+            {expected.live
+              ? `. Usually ${percent(expected.gone)} of a month's cases are placed by now, so the forecast for ${monthName} has moved from about ${Math.round(expected.before.cases).toLocaleString('en-US')} to about ${Math.round(expected.cases).toLocaleString('en-US')}`
+              : `, of about ${Math.round(expected.cases).toLocaleString('en-US')} expected`}
+            {waiting?.orders > 0 && !(waitingCases > 0) ? ` (${waiting.orders} more ${waiting.orders === 1 ? 'order' : 'orders'} waiting for the down payment)` : ''}.
           </p>
         )}
 

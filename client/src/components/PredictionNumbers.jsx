@@ -109,10 +109,11 @@ export function AheadNumbers({ ahead }) {
         ? `supplier deliveries still to come${lateDeliveries.overdue ? `; ${lateDeliveries.overdue} already overdue` : ''}`
         : 'No supplier deliveries still to come',
     },
+    // Live: this month's forecast moves with what's been placed so far.
     demandNext && {
       label: 'Expected orders this month',
       value: `about ${cases(demandNext.cases)}`,
-      note: `in ${monthName(demandNext.month)}, likely ${cases(demandNext.quick)} to ${cases(demandNext.slow)}; ${cases(demandNext.soFar ?? 0)} ordered so far`,
+      note: `in ${monthName(demandNext.month)}, likely ${cases(demandNext.quick)} to ${cases(demandNext.slow)}; ${demandNext.live ? 'live, with ' : ''}${cases(demandNext.soFar ?? 0)} ordered so far`,
     },
     reorders && {
       label: 'Customers due to order',

@@ -336,6 +336,20 @@ function trendText(trend) {
 function ProductDetail({ product, showMoney }) {
   const next = product.forecast?.[0]
   const sharePercent = Math.round(product.share * 1000) / 10
+  // This month is live: the forecast made before it (its share of its
+  // category's), moved by the product's own cases placed so far.
+  const before = next?.before || next
+
+  let forecastText = 'Not ordered in the last 6 months, so it has no share of its category to forecast from.'
+  if (next && product.share > 0) {
+    forecastText = `How its sales make its forecast: over the last 6 months it was ${sharePercent}% of the ${product.category} cases ordered. From past months, ${product.category} was expected to order about ${cases(before.cases / product.share)} cases this month, so about ${cases(before.cases)} of this product.`
+    forecastText += next.live
+      ? ` That figure is live: ${cases(next.placed)} cases of it have been placed so far, and usually ${Math.round(next.gone * 100)}% of a month's cases are placed by now, which makes it about ${cases(next.cases)} (likely ${cases(next.quick)} to ${cases(next.slow)}).`
+      : ` Likely ${cases(next.quick)} to ${cases(next.slow)}.`
+    forecastText += " The more it sells, the bigger its share, and the more it's expected to sell."
+  } else if (product.newThisMonth) {
+    forecastText = 'First ordered this month, so it has no full month of sales to forecast from yet.'
+  }
 
   return (
     <div className="rounded-lg border border-gray-200 p-4">
@@ -348,13 +362,7 @@ function ProductDetail({ product, showMoney }) {
         <DemandChart history={product.monthly} forecast={product.share > 0 ? product.forecast : null} />
       </div>
 
-      <p className="mt-2 text-sm text-gray-700">
-        {next && product.share > 0
-          ? `How its sales make its forecast: over the last 6 months it was ${sharePercent}% of the ${product.category} cases ordered. ${product.category} is expected to order about ${cases(next.cases / product.share)} cases this month, so about ${cases(next.cases)} of this product (likely ${cases(next.quick)} to ${cases(next.slow)}). The more it sells, the bigger its share, and the more it's expected to sell.`
-          : product.newThisMonth
-            ? 'First ordered this month, so it has no full month of sales to forecast from yet.'
-            : 'Not ordered in the last 6 months, so it has no share of its category to forecast from.'}
-      </p>
+      <p className="mt-2 text-sm text-gray-700">{forecastText}</p>
 
       {product.timing && <ProductOrders timing={product.timing} />}
 

@@ -886,21 +886,33 @@ export function AccuracyTable({ accuracy }) {
 
 const casesText = (cases) => `${Math.round(cases).toLocaleString('en-US')} cases`
 
-// The months on record (the last 12) and the forecast, one row each.
+// The months on record (the last 12) and the forecast, one row each. The
+// forecast's first month is the month under way, live: moved by what's been
+// placed so far (utils/demandForecast.js), with the forecast made before it.
 const demandRows = (history = [], forecast = []) => [
   ...history.slice(-12).map((row) => ({ month: row.month, cases: row.cases, forecast: false })),
-  ...(forecast || []).map((row) => ({ month: row.month, cases: row.cases, quick: row.quick, slow: row.slow, forecast: true, range: [row.cases - row.quick, row.slow - row.cases] })),
+  ...(forecast || []).map((row) => ({
+    month: row.month, cases: row.cases, quick: row.quick, slow: row.slow, forecast: true, range: [row.cases - row.quick, row.slow - row.cases],
+    live: Boolean(row.live), placed: row.placed ?? null, before: row.before?.cases ?? null,
+  })),
 ].map((row) => ({ ...row, label: shortMonth(row.month) }))
 
 function DemandTooltip({ active, payload }) {
   const row = active && payload?.[0]?.payload
   if (!row) return null
 
+  const lines = !row.forecast ? ['Ordered (orders past their down payment)']
+    : row.live ? [
+      `Live: likely ${casesText(row.quick)} to ${casesText(row.slow)}`,
+      `${casesText(row.placed)} placed so far; about ${casesText(row.before)} forecast before the month`,
+    ]
+      : [`Forecast: likely ${casesText(row.quick)} to ${casesText(row.slow)}`]
+
   return (
     <TooltipBox
       value={row.forecast ? `About ${casesText(row.cases)}` : casesText(row.cases)}
       name={formatMonth(row.month)}
-      lines={row.forecast ? [`Forecast: likely ${casesText(row.quick)} to ${casesText(row.slow)}`] : ['Ordered (orders past their down payment)']}
+      lines={lines}
     />
   )
 }
@@ -947,7 +959,7 @@ export function DemandTable({ history, forecast }) {
       rows={demandRows(history, forecast)}
       rowKey={(row) => row.month}
       columns={[
-        { label: 'Month', value: (row) => formatMonth(row.month) },
+        { label: 'Month', value: (row) => `${formatMonth(row.month)}${row.live ? ' (live)' : ''}` },
         { label: 'Cases', value: (row) => (row.forecast ? `About ${casesText(row.cases)}` : casesText(row.cases)), numeric: true },
         { label: 'Likely range', value: (row) => (row.forecast ? `${casesText(row.quick)} to ${casesText(row.slow)}` : 'Ordered'), numeric: true },
       ]}

@@ -158,7 +158,9 @@ export async function loadAnalytics(parts = ALL_PARTS) {
       allRows(() => supabase.from('products').select('id, category, product_name').order('id')),
     ])
     orderItems = items
-    demand = demandForecast({ orders: allOrders, items, products })
+    // With every status change, for when each down payment was sent: this
+    // month's forecast is live, moved by what's been placed so far.
+    demand = demandForecast({ orders: allOrders, items, products, history })
 
     if (want('demand') && demand.enough) {
       // Who orders each product, with when each of them is likely to order next.

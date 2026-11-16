@@ -15,18 +15,48 @@
 // the months before it only, against simply repeating the month before. Each
 // product's sales and expected cases come with it (productSales).
 //
+// The month under way is live (liveDemand): its forecast moves toward what has
+// actually been placed as the month goes on.
+//   - placed so far: the cases in this month's orders past their down payment,
+//     and in those still waiting for it (unless one has waited longer than
+//     orders almost ever do)
+//   - the share gone: how much of a month's cases are usually placed by this
+//     far through it, from the months on record (leaning on the plain share
+//     of the month's days gone while those months are few)
+//   - live = (1 − share gone) × the forecast made from the months before
+//          + share gone × (placed so far + that forecast's share for the rest)
+//     So a few early or late orders barely move it at the start of a month,
+//     and on its last day it is what was ordered. It's never under what is
+//     already past its down payment.
+//   - its likely range: the forecast's, narrowed the same way, but never
+//     narrower than past months ended from their live figure this far through
+// It's checked the same way: each of the last 6 full months as it stood this
+// far through it, against the forecast made before the month. (Adding the
+// forecast's share for the rest to what's placed, with no blend, came closer
+// from mid-month on the made-up history but was further off early in a month,
+// when a few orders say little; so the blend, which was never worse.)
+//
 // Imports carry their .js extension so the maths can be tested in Node.
 // =============================================================================
+
+import { recordShare } from './predictions.js'
 
 export const LEVEL_MONTHS = 6       // the recent level: the last 6 full months
 export const FORECAST_MONTHS = 3    // forecast this many months ahead
 export const MIN_MONTHS = 3         // full months of orders needed for a forecast
 export const SEASON_MONTHS = 12     // and this many before seasons are used
 export const TESTED_MONTHS = 6      // the check: the last 6 full months (busy and quiet ones)
+// An order waiting for its down payment still counts as placed while it has
+// waited no longer than 19 in 20 orders did (once 3 waits are on record).
+export const USUAL_WAIT_SHARE = 0.95
+const MIN_WAITS = 3
+
+const DAY = 24 * 60 * 60 * 1000
 
 // Orders that are real demand: past their down payment, not cancelled.
 const NOT_DEMAND = new Set(['', 'draft', 'pending payment', 'payment rejected', 'cancelled'])
-const isDemand = (status) => !NOT_DEMAND.has(String(status || '').trim().toLowerCase())
+const normalize = (status) => String(status || '').trim().toLowerCase()
+const isDemand = (status) => !NOT_DEMAND.has(normalize(status))
 
 const mean = (values) => (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null)
 const percentile = (values, fraction) => {
@@ -253,6 +283,231 @@ export function demandThisMonth({ orders = [], items = [], products = [], today 
 }
 
 
+// =============================================================================
+// The month under way, live
+// =============================================================================
+
+// The first moment of a month (YYYY-MM) in the Philippines.
+const monthStart = (month) => Date.parse(`${month}-01T00:00:00+08:00`)
+
+// The moment a share of the way (0 to 1) through a month.
+const momentIn = (month, fraction) => monthStart(month) + fraction * (monthStart(addMonths(month, 1)) - monthStart(month))
+
+// How far through its month a moment is, from 0 to 1.
+export function monthFraction(today = new Date()) {
+  const month = monthOf(today)
+  const length = monthStart(addMonths(month, 1)) - monthStart(month)
+  return Math.min(Math.max((new Date(today).getTime() - monthStart(month)) / length, 0), 1)
+}
+
+// Every order placed, shaped for asking what was known at a moment: when it
+// was placed, when its down payment was sent (its first status change that
+// counts as demand; null when none was saved), and its cases by product.
+//   history: status changes [{ customer_order_id, new_status, changed_at }]
+export function placements({ orders = [], items = [], products = [], history = [] }) {
+  const sentAt = new Map()
+  for (const entry of history) {
+    if (!isDemand(entry.new_status)) continue
+    const time = Date.parse(entry.changed_at)
+    if (Number.isFinite(time) && !(sentAt.get(entry.customer_order_id) <= time)) sentAt.set(entry.customer_order_id, time)
+  }
+
+  const categoryOf = Object.fromEntries(products.map((product) => [product.id, String(product.category || '').trim() || 'Other']))
+  const linesOf = new Map()
+  for (const item of items) {
+    if (!linesOf.has(item.customer_order_id)) linesOf.set(item.customer_order_id, [])
+    linesOf.get(item.customer_order_id).push({ productId: item.product_id, category: categoryOf[item.product_id] || 'Other', cases: Number(item.quantity) || 0 })
+  }
+
+  return orders
+    .filter((order) => order.created_at && !['cancelled', 'draft', ''].includes(normalize(order.status)))
+    .map((order) => ({
+      id: order.id,
+      month: monthOf(order.created_at),
+      placedAt: Date.parse(order.created_at),
+      sentAt: sentAt.get(order.id) ?? null,
+      demand: isDemand(order.status),
+      rejected: normalize(order.status) === 'payment rejected',
+      lines: linesOf.get(order.id) || [],
+    }))
+}
+
+// How long an order may wait for its down payment and still be expected to
+// send it, as known at a moment: longer than USUAL_WAIT_SHARE of the orders
+// paid by then took. 0 with too few to go by, so no waiting order counts.
+export function usualWait(placed, moment = Infinity) {
+  const waits = placed
+    .filter((order) => order.demand && order.sentAt !== null && order.sentAt < moment)
+    .map((order) => order.sentAt - order.placedAt)
+    .filter((wait) => wait >= 0)
+  return waits.length >= MIN_WAITS ? percentile(waits, USUAL_WAIT_SHARE) : 0
+}
+
+// The cases placed in a month as known at a moment: in orders whose down
+// payment was sent by then, and in orders still waiting for it then, unless
+// they'd waited longer than orders do (wait, from usualWait).
+// Returns { all, categories: { name: cases }, products: Map } with, inside it,
+// waiting: { orders, cases, categories, products }, the part still waiting.
+export function placedBy(placed, month, moment, wait = 0) {
+  const total = { all: 0, categories: {}, products: new Map(), waiting: { orders: 0, cases: 0, categories: {}, products: new Map() } }
+  const add = (into, line) => {
+    into.categories[line.category] = (into.categories[line.category] || 0) + line.cases
+    into.products.set(line.productId, (into.products.get(line.productId) || 0) + line.cases)
+  }
+
+  for (const order of placed) {
+    if (order.month !== month || order.placedAt > moment) continue
+
+    const paid = order.demand && (order.sentAt ?? order.placedAt) <= moment
+    const waiting = !paid && !order.rejected && moment - order.placedAt <= wait
+    if (!paid && !waiting) continue
+
+    for (const line of order.lines) {
+      total.all += line.cases
+      add(total, line)
+      if (waiting) {
+        total.waiting.cases += line.cases
+        add(total.waiting, line)
+      }
+    }
+    if (waiting) total.waiting.orders++
+  }
+
+  return total
+}
+
+// The share of a month's cases usually placed by this far through it: over the
+// first `count` full months, their cases known by then ÷ their cases in all.
+// With few months on record it leans on the plain share of the month's days
+// gone: its n months count for n ÷ (n + 5), as a supplier with few deliveries
+// leans on every supplier's (utils/predictions.js).
+export function shareGone(placed, months, values, count, fraction) {
+  let known = 0
+  let total = 0
+
+  for (let index = 0; index < count; index++) {
+    const moment = momentIn(months[index], fraction)
+    known += placedBy(placed, months[index], moment, usualWait(placed, moment)).all
+    total += values[index]
+  }
+
+  if (!(total > 0)) return fraction
+  const own = recordShare(count)
+  return own * Math.min(known / total, 1) + (1 - own) * fraction
+}
+
+// A month's figure, live: the forecast made from the months before it, moved
+// toward what's been placed. Placed so far plus the forecast's share for the
+// rest of the month counts for the share of a month usually gone by now; the
+// forecast alone for the rest. Never under what's already past its down payment.
+//   before: { month, cases, quick, slow }   the forecast from the months before
+//   placed: its cases placed so far; paid: those past their down payment
+//   strays: { low, high } how far past months ended from their live figure this
+//           far through them (straysOf); the likely range is never narrower
+export function liveMonth(before, { placed = 0, paid = 0 }, gone, strays = null) {
+  const blend = (value) => (1 - gone) * value + gone * (placed + (1 - gone) * value)
+  const cases = Math.max(blend(before.cases), paid)
+  const quick = Math.min(blend(before.quick), strays ? cases * strays.low : Infinity)
+  const slow = Math.max(blend(before.slow), strays ? cases * strays.high : 0)
+
+  return { month: before.month, cases, quick: Math.min(Math.max(quick, paid), cases), slow: Math.max(slow, cases) }
+}
+
+// Each full month as it stood this far through it (a share from 0 to 1): its
+// forecast and its live figure, both from the months before it only, with how
+// it really ended. Oldest first.
+function replayMonths(placed, months, values, fraction) {
+  const rows = []
+
+  for (let index = MIN_MONTHS; index < values.length; index++) {
+    const [before] = forecastSeries(months.slice(0, index), values.slice(0, index), 1) || []
+    if (!before || !(values[index] > 0)) continue
+
+    const moment = momentIn(months[index], fraction)
+    const known = placedBy(placed, months[index], moment, usualWait(placed, moment))
+    const so = { placed: known.all, paid: known.all - known.waiting.cases }
+    const gone = shareGone(placed, months, values, index, fraction)
+    rows.push({ month: months[index], actual: values[index], before, so, gone, live: liveMonth(before, so, gone).cases })
+  }
+
+  return rows
+}
+
+// How far months ended from their live figure: the lower and upper quarters of
+// (how it ended ÷ its live figure), as the forecast's own range is made. Null
+// with fewer than MIN_MONTHS months to go by.
+function straysOf(rows) {
+  if (rows.length < MIN_MONTHS) return null
+  const ratios = rows.map((row) => (row.live > 0 ? row.actual / row.live : 1))
+  return { low: Math.min(percentile(ratios, 0.25), 1), high: Math.max(percentile(ratios, 0.75), 1) }
+}
+
+// The check: each of the last TESTED_MONTHS full months as it stood this far
+// through it (a share from 0 to 1), learning only from the months before it,
+// against the forecast made before the month. Average share off of each.
+export function checkLiveMonth(placed, months, values, fraction) {
+  const rows = replayMonths(placed, months, values, fraction)
+  const tests = rows.slice(-TESTED_MONTHS).map((row) => {
+    // Its likely range, from the months before it.
+    const live = liveMonth(row.before, row.so, row.gone, straysOf(rows.filter((earlier) => earlier.month < row.month)))
+    return { month: row.month, actual: row.actual, forecast: row.before.cases, live: live.cases, placed: row.so.placed, inRange: row.actual >= live.quick && row.actual <= live.slow }
+  })
+
+  if (!tests.length) return null
+  const off = (predicted, actual) => Math.abs(predicted - actual) / actual
+
+  return {
+    tests,
+    liveOff: mean(tests.map((test) => off(test.live, test.actual))),
+    forecastOff: mean(tests.map((test) => off(test.forecast, test.actual))),
+    inRangeShare: tests.filter((test) => test.inRange).length / tests.length,
+  }
+}
+
+// The month under way, live, in all ('all') and by category.
+//   forecasts: forecastSeries by key, made from the full months: their first
+//              month is the one under way
+// Returns null without a forecast to start from; else
+//   month, fraction (how far through it), gone (the share usually placed by now)
+//   placed    placedBy, now: what's been placed, in all and by category and product
+//   strays    how far past months ended from their live figure this far through
+//   waitDays  how long an order waiting for its down payment still counts
+//   forecast  { key: { month, cases, quick, slow, before, placed, gone, live: true } }
+//   check     checkLiveMonth, this far through the month
+export function liveDemand({ orders = [], items = [], products = [], history = [], months = [], values = [], forecasts = {}, today = new Date() }) {
+  const month = monthOf(today)
+  if (!forecasts.all?.length || forecasts.all[0].month !== month) return null
+
+  const placed = placements({ orders, items, products, history })
+  const now = new Date(today).getTime()
+  const fraction = monthFraction(today)
+  const wait = usualWait(placed, now)
+  const known = placedBy(placed, month, now, wait)
+  const gone = shareGone(placed, months, values, months.length, fraction)
+  const strays = straysOf(replayMonths(placed, months, values, fraction))
+
+  const forecast = {}
+  for (const [key, series] of Object.entries(forecasts)) {
+    if (!series?.length) continue
+    const so = key === 'all'
+      ? { placed: known.all, paid: known.all - known.waiting.cases }
+      : { placed: known.categories[key] || 0, paid: (known.categories[key] || 0) - (known.waiting.categories[key] || 0) }
+    forecast[key] = { ...liveMonth(series[0], so, gone, strays), before: series[0], placed: so.placed, gone, live: true }
+  }
+
+  return {
+    month,
+    fraction,
+    gone,
+    placed: known,
+    strays,
+    waitDays: wait / DAY,
+    forecast,
+    check: checkLiveMonth(placed, months, values, fraction),
+  }
+}
+
+
 // Sales by product with how often each is ordered (utils/reorderTiming.js
 // productTiming), and a row for each product first ordered this month, which
 // has no full month of sales yet.
@@ -285,7 +540,13 @@ export function withProductTiming(sales = [], timing = null, products = []) {
 }
 
 
-export function demandForecast({ orders = [], items = [], products = [], today = new Date(), topLimit = 10 }) {
+// history (optional): every status change, for when each down payment was sent;
+// without it an order counts from the moment it was placed, and none waiting
+// for its down payment counts.
+// The forecast's first month is the month under way, live (liveDemand): each
+// key's first entry, and each product's, carries `before` (the forecast made
+// from the months before), `placed` (its cases placed so far) and `live: true`.
+export function demandForecast({ orders = [], items = [], products = [], history = [], today = new Date(), topLimit = 10 }) {
   const { months, series } = monthlyDemand({ orders, items, products, today })
   if (!months.length) return { enough: false, months: 0, needed: MIN_MONTHS }
 
@@ -298,6 +559,20 @@ export function demandForecast({ orders = [], items = [], products = [], today =
 
   const sales = productSales({ orders, items, products, months, forecasts })
 
+  // The month under way, live: in all, by category, and for each product from
+  // its own cases placed so far.
+  const live = liveDemand({ orders, items, products, history, months, values: series.all, forecasts, today })
+  if (live) {
+    for (const [key, entry] of Object.entries(live.forecast)) forecasts[key] = [entry, ...forecasts[key].slice(1)]
+
+    for (const row of sales) {
+      if (!row.forecast?.length) continue
+      const placed = live.placed.products.get(row.id) || 0
+      const so = { placed, paid: placed - (live.placed.waiting.products.get(row.id) || 0) }
+      row.forecast = [{ ...liveMonth(row.forecast[0], so, live.gone, live.strays), before: row.forecast[0], placed, gone: live.gone, live: true }, ...row.forecast.slice(1)]
+    }
+  }
+
   return {
     enough: months.length >= MIN_MONTHS,
     months: months.length,
@@ -306,6 +581,9 @@ export function demandForecast({ orders = [], items = [], products = [], today =
     history: Object.fromEntries(Object.entries(series).map(([key, values]) => [key, months.map((month, index) => ({ month, cases: values[index] }))])),
     forecast: forecasts,
     check: forecasts.all ? checkForecast(months, series.all) : null,
+    // The month under way: how far through it, the share usually placed by
+    // now, what's been placed, and how the live figure has checked out.
+    live: live ? { month: live.month, fraction: live.fraction, gone: live.gone, waiting: { orders: live.placed.waiting.orders, cases: live.placed.waiting.cases }, waitDays: live.waitDays, check: live.check } : null,
     categories,
     topProducts: topProducts(sales, topLimit),
     productSales: sales,
