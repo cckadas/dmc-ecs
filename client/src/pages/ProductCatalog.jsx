@@ -63,7 +63,7 @@ export default function ProductCatalogPage() {
 
   // Staff see whichever supplier a product comes from. Customers see only the
   // manufacturer: a distributor is DMC's own sourcing, which stays private.
-  const showsSupplier = ['admin', 'sales', 'procurement'].includes(profile?.role)
+  const showsSupplier = ['admin', 'management', 'sales', 'procurement'].includes(profile?.role)
   // Staff can look up every transaction a product is in (quotations, orders,
   // purchase orders). Customers can't: those are other customers' and DMC's own.
   const seesTransactions = ['admin', 'sales', 'procurement', 'management', 'warehouse'].includes(profile?.role)

@@ -166,10 +166,11 @@ export const NAV_SECTIONS = [
     title: 'MASTER DATA',
     items: [
       {
+        // Management only looks: the catalog, and every transaction a product is in.
         label: 'Products',
         path: 'product-catalog',
         icon: faBagShopping,
-        roles: ['admin', 'sales', 'procurement'],
+        roles: ['admin', 'management', 'sales', 'procurement'],
       },
       {
         label: 'Customers',
