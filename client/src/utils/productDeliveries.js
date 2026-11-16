@@ -32,8 +32,9 @@ const daysBetween = (fromDay, toDay) => Math.round((Date.parse(toDay) - Date.par
 //              [{ id, supplier_id, details: { item_id, before, after, ordered, filled_in }, happened_at }]
 //   suppliers: { supplier id: name }
 // Returns:
-//   received  each receiving, newest first: { id, at, poNumber, supplier, cases,
-//             soFar, ordered, kind: 'full' | 'part' | 'correction', promised,
+//   received  each receiving, newest first: { id, lineId (its PO line), at,
+//             poNumber, supplier, cases, soFar, ordered,
+//             kind: 'full' | 'part' | 'correction', promised,
 //             daysAfterPromise (below 0 when early), test }
 //   usual     days from PO to all of it in, over the last 12 months: the middle
 //             value with the quicker and slower quarters; null with fewer than 3 POs
@@ -54,6 +55,7 @@ export function productDeliveries({ lines = [], events = [], suppliers = {}, tod
 
     return {
       id,
+      lineId: line.id,
       at,
       poNumber: po.po_number || null,
       supplier: suppliers[line.supplier_id] || null,

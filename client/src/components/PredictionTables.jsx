@@ -3,6 +3,7 @@ import { Fragment, useState } from 'react'
 import { DemandChart } from './AnalyticsCharts'
 import { EstimateWorkingTable } from './EstimateWorking'
 import ProductDeliveries from './ProductDeliveries'
+import ProductTransactions from './ProductTransactions'
 import TableScroll from './TableScroll'
 
 
@@ -339,6 +340,8 @@ function ProductDetail({ product, showMoney }) {
   // This month is live: the forecast made before it (its share of its
   // category's), moved by the product's own cases placed so far.
   const before = next?.before || next
+  // Every record it's on, in a window (as on the Products page).
+  const [showTransactions, setShowTransactions] = useState(false)
 
   let forecastText = 'Not ordered in the last 6 months, so it has no share of its category to forecast from.'
   if (next && product.share > 0) {
@@ -353,10 +356,26 @@ function ProductDetail({ product, showMoney }) {
 
   return (
     <div className="rounded-lg border border-gray-200 p-4">
-      <p className="text-sm font-semibold text-gray-800">{product.name || 'A product'}</p>
-      <p className="text-xs text-gray-500">
-        {product.category} · {cases(product.cases)} cases in the last 12 months{showMoney ? ` · ${peso(product.amount)} in sales` : ''}
-      </p>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-gray-800">{product.name || 'A product'}</p>
+          <p className="text-xs text-gray-500">
+            {product.category} · {cases(product.cases)} cases in the last 12 months{showMoney ? ` · ${peso(product.amount)} in sales` : ''}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setShowTransactions(true)}
+          className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-medium text-gray-600 transition hover:border-[#B8D5C3] hover:text-[#2D5A42]"
+        >
+          Every transaction with it
+        </button>
+      </div>
+
+      {showTransactions && (
+        <ProductTransactions productId={product.id} name={product.name} onClose={() => setShowTransactions(false)} />
+      )}
 
       <div className="mt-3">
         <DemandChart history={product.monthly} forecast={product.share > 0 ? product.forecast : null} />

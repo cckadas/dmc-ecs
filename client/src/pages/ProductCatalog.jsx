@@ -4,12 +4,13 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPen, faTrash, faXmark, faPlus, faImage } from '@fortawesome/free-solid-svg-icons'
+import { faPen, faTrash, faXmark, faPlus, faImage, faClockRotateLeft } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 
 import RoleActivityBadge from '../components/RoleActivityBadge'
 import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
+import ProductTransactions from '../components/ProductTransactions'
 import { getMinimumOrderQuantities, getProductManufacturers } from '../services/pricingService'
 import { bySize, groupByFamily, sizeNames } from '../utils/productGroups'
 
@@ -63,6 +64,9 @@ export default function ProductCatalogPage() {
   // Staff see whichever supplier a product comes from. Customers see only the
   // manufacturer: a distributor is DMC's own sourcing, which stays private.
   const showsSupplier = ['admin', 'sales', 'procurement'].includes(profile?.role)
+  // Staff can look up every transaction a product is in (quotations, orders,
+  // purchase orders). Customers can't: those are other customers' and DMC's own.
+  const seesTransactions = ['admin', 'sales', 'procurement', 'management', 'warehouse'].includes(profile?.role)
 
   const [products, setProducts] = useState([])
   const [search, setSearch] = useState('')
@@ -78,6 +82,7 @@ export default function ProductCatalogPage() {
   const [availabilities, setAvailabilities] = useState([])
   const [minimums, setMinimums] = useState({})
   const [sizeNameOf, setSizeNameOf] = useState({})
+  const [transactionsOf, setTransactionsOf] = useState(null)
 
 
   // =============================================
@@ -569,7 +574,7 @@ export default function ProductCatalogPage() {
                 Availability
               </th>
 
-              {profile?.role === 'admin' && (
+              {seesTransactions && (
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
                   Actions
                 </th>
@@ -689,12 +694,18 @@ export default function ProductCatalogPage() {
                     </td>
 
 
-                    {/* ACTIONS */}
-                    {profile?.role === 'admin' && (
+                    {/* ACTIONS — every transaction it's in, for staff; edit and delete, for the admin */}
+                    {seesTransactions && (
                       <td className="px-5 py-3">
                         <div className="flex items-center justify-start gap-2">
-                          <IconButton icon={faPen} title="Edit Product" color="amber" disabled={false} onClick={() => handleEditProduct(product)}/>
-                          <IconButton icon={faTrash} title="Delete Product" color="red" disabled={false} onClick={() => handleDeleteProduct(product)}/>
+                          <IconButton icon={faClockRotateLeft} title="Transactions with this product" color="blue" disabled={false} onClick={() => setTransactionsOf(product)}/>
+
+                          {profile?.role === 'admin' && (
+                            <>
+                              <IconButton icon={faPen} title="Edit Product" color="amber" disabled={false} onClick={() => handleEditProduct(product)}/>
+                              <IconButton icon={faTrash} title="Delete Product" color="red" disabled={false} onClick={() => handleDeleteProduct(product)}/>
+                            </>
+                          )}
                         </div>
                       </td>
                     )}
@@ -703,7 +714,7 @@ export default function ProductCatalogPage() {
               }))
             ) : (
               <tr>
-                <td colSpan={ profile?.role === 'admin' ? 9 : 8} className="py-10 text-center text-sm text-gray-500">
+                <td colSpan={seesTransactions ? 9 : 8} className="py-10 text-center text-sm text-gray-500">
                   No products found.
                 </td>
               </tr>
@@ -712,6 +723,17 @@ export default function ProductCatalogPage() {
 
         </table>
       </TableScroll>
+
+
+      {/* A PRODUCT'S TRANSACTIONS */}
+      {transactionsOf && (
+        <ProductTransactions
+          key={transactionsOf.id}
+          productId={transactionsOf.id}
+          name={transactionsOf.family || transactionsOf.product_name}
+          onClose={() => setTransactionsOf(null)}
+        />
+      )}
 
 
       {/* ADD PRODUCT MODAL */}
