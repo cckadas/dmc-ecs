@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
-import { createNotification } from '../services/notificationService'
 import { sendPurchaseOrderEmails, sendPaymentProof } from '../services/emailService'
 import { MIN_PO_DELIVERY_DAYS, formatDateTime, localDateString } from '../utils/dates'
 import { progressStepTimes } from '../utils/purchaseOrderHistory'
@@ -461,151 +460,49 @@ export default function PurchaseOrdersPage() {
 
     setCreatingPO(true)
 
-    // Set once the PO and its items are saved. Any failure after that point
-    // must not read as "nothing happened", or the user retries and creates a
-    // duplicate PO.
-    let createdPoNumber = null
-
-
     try {
       // -------------------------------------------------
-      // INSERT PURCHASE ORDER MAIN
+      // CREATE THE PURCHASE ORDER, IN ONE STEP
       //
-      // The database gives it the next number (PO-2026-00001), so two POs created
-      // at the same moment can't get the same one.
+      // The database makes the PO and its lines from the customer order
+      // itself (each product from its own supplier, at that supplier's
+      // current price-list price), moves the order to procurement, records it
+      // and tells the customer: all of it, or none of it. An order that
+      // already has a PO is refused, so two people (or two clicks) can't
+      // order the same goods twice (db/migrations/027).
       // -------------------------------------------------
-      const {data: purchaseOrder, error: purchaseOrderError} = await supabase
-        .from('purchase_orders')
-        .insert({
-          expected_delivery_date: expectedDeliveryDate,
-          customer_order_id: customerOrderId,
-          status: 'sent to supplier'
-        })
-        .select()
-        .single()
+      const { data: created, error: createError } = await supabase.rpc('create_purchase_order', {
+        p_customer_order_id: customerOrderId,
+        p_expected_delivery_date: expectedDeliveryDate,
+        // The total this form showed. A supplier price changed since is
+        // refused, rather than ordered at a price nobody saw.
+        p_expected_total: items.reduce((total, item) => total + Number(item.ordered_quantity) * Number(item.unit_price), 0),
+      })
 
-      if (purchaseOrderError) {
-        throw purchaseOrderError
-      }
-
-
-      // -------------------------------------------------
-      // PREPARE PURCHASE ORDER ITEMS
-      // -------------------------------------------------
-      const purchaseOrderItems =
-        items.map((item) => ({
-          purchase_order_id: purchaseOrder.id,
-          product_id: item.product_id,
-          supplier_id: item.supplier_id,
-          ordered_quantity: Number(item.ordered_quantity),
-          received_quantity: 0,
-          unit_price: Number(item.unit_price),
-          status: 'sent to supplier'
-        }))
-
-
-      // -------------------------------------------------
-      // INSERT PURCHASE ORDER ITEMS
-      // -------------------------------------------------
-      const {error: itemsError} = await supabase
-        .from('purchase_order_items')
-        .insert(
-          purchaseOrderItems
-        )
-
-
-      if (itemsError) {
-        await supabase
-          .from('purchase_orders')
-          .delete()
-          .eq('id', purchaseOrder.id)
-
-        throw itemsError
-      }
-
-      createdPoNumber = purchaseOrder.po_number
-
-
-      // -------------------------------------------------
-      // UPDATE CUSTOMER ORDER STATUS
-      // -------------------------------------------------
-      const {error: customerOrderError} = await supabase
-        .from('customer_orders')
-        .update({ status: 'procurement' })
-        .eq('id', customerOrderId)
-
-
-      if (customerOrderError) {
-        throw customerOrderError
-      }
-
-      const { error: historyError } = await supabase
-        .from('customer_order_status_history')
-        .insert({
-          customer_order_id: customerOrderId,
-          previous_status: 'payment verified',
-          new_status: 'procurement',
-          changed_at: new Date().toISOString()
-        })
-
-      if (historyError) {
-        throw historyError
+      if (createError) {
+        throw createError
       }
 
 
       // =============================================
-      // GET CUSTOMER ID
-      // =============================================
-      const { data: customerOrder, error: customerError } = await supabase
-        .from('customer_orders')
-        .select('customer_id, order_number')
-        .eq('id', customerOrderId)
-        .single()
-
-      if (customerError) {
-        throw customerError
-      }
-
-      if (!customerOrder?.customer_id) {
-        throw new Error('Customer ID not found for this order.')
-      }
-
-
-      // =============================================
-      // NOTIFY CUSTOMER AND EMAIL SUPPLIERS
+      // EMAIL SUPPLIERS
       //
-      // Both happen after the PO is saved, so a failure here is a warning,
-      // not a failed PO.
+      // After the PO is saved, so a failure here is a warning, not a failed PO.
       // =============================================
-      const followUpProblems = []
+      let emailProblem = null
 
       try {
-        await createNotification({
-          userId: customerOrder.customer_id,
-          role: 'customer',
-          title: `${customerOrder.order_number} is now in procurement`,
-          message: `Your order ${customerOrder.order_number} status is now "Procurement". Please check your order details for more information.`,
-          type: 'info',
-          relatedCustomerOrderId: customerOrderId,
-          link: '/my-orders',
-        })
-      } catch (notificationError) {
-        console.error('Customer notification error:', notificationError)
-        followUpProblems.push('the customer was not notified')
-      }
-
-      try {
-        await sendPurchaseOrderEmails(purchaseOrder.id)
+        await sendPurchaseOrderEmails(created.purchase_order_id)
       } catch (emailError) {
         console.error('Purchase order email error:', emailError)
-        followUpProblems.push(`supplier emails were not sent (${emailError.message})`)
+        emailProblem = `supplier emails were not sent (${emailError.message})`
       }
 
 
-      toast.success( `Purchase Order ${purchaseOrder.po_number} created successfully.`)
+      toast.success(`Purchase Order ${created.po_number} created successfully.`)
 
-      if (followUpProblems.length > 0) {
-        toast.info(`Note: ${followUpProblems.join('; ')}.`)
+      if (emailProblem) {
+        toast.info(`Note: ${emailProblem}.`)
       }
 
       setShowAddModal(false)
@@ -615,17 +512,20 @@ export default function PurchaseOrdersPage() {
     catch (error) {
       console.error('Create purchase order error:', error)
 
-      if (createdPoNumber) {
-        // The PO was saved before this step failed. Close the form so the
-        // same PO isn't submitted again as a duplicate.
-        toast.error(`Purchase Order ${createdPoNumber} was created, but a later step failed: ${error.message}`)
+      if (error?.code === 'PGRST202' || /create_purchase_order/.test(error?.message || '')) {
+        // Script 027 not run yet: say so plainly.
+        toast.error('Creating purchase orders needs db/migrations/027 to be run first.')
+      } else if (error?.code === 'P0001') {
+        // Refused by a rule, e.g. the order already has a PO. This form is out
+        // of date, so close it and show the purchase orders as they are now.
+        toast.error(error.message)
         setShowAddModal(false)
         await loadPurchaseOrders()
       } else {
-        toast.error( error.message || 'Failed to create purchase order.')
+        toast.error(error.message || 'Failed to create purchase order.')
       }
     }
-    
+
     finally {
       setCreatingPO(false)
     }

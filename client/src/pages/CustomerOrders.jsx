@@ -6,14 +6,29 @@ import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faFolderOpen, faXmark, faCreditCard, faCircleCheck, faCircleXmark, faTrash } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
-import { createNotification } from '../services/notificationService'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
 import OrderProgress from '../components/OrderProgress'
-import { recordStatusChange, predictOrders } from '../services/predictionService'
+import { predictOrders } from '../services/predictionService'
 import ShipDateSummary from '../components/ShipDateSummary'
 import TableScroll from '../components/TableScroll'
+
+
+// What to tell the reviewer when a payment check is refused.
+function paymentReviewError(error, action) {
+  // Script 027 not run yet: say so plainly.
+  if (error?.code === 'PGRST202' || /review_order_payment/.test(error?.message || '')) {
+    return 'Checking payments needs db/migrations/027 to be run first.'
+  }
+
+  // A rule's own words, e.g. the payment was already checked by someone else.
+  if (error?.code === 'P0001' && error.message) {
+    return error.message
+  }
+
+  return `Failed to ${action} payment.`
+}
 
 
 export default function CustomerOrdersPage() {
@@ -28,10 +43,14 @@ export default function CustomerOrdersPage() {
   const [loading, setLoading] = useState(true)
   const [selectedPayment, setSelectedPayment] = useState(null)
   const [showPaymentModal, setShowPaymentModal] = useState(false)
+  // True while a payment check is being saved, so it can't be clicked twice.
+  const [reviewingPayment, setReviewingPayment] = useState(false)
 
 
   // =============================================
   // LOAD ALL CUSTOMER ORDERS
+  //
+  // Returns the orders too, for a caller that needs the latest of one.
   // =============================================
   async function loadCustomerOrders() {
     setLoading(true)
@@ -156,6 +175,8 @@ export default function CustomerOrdersPage() {
     predictOrders(formattedOrders)
       .then((list) => setEstimates(Object.fromEntries(list.map((prediction) => [prediction.id, prediction]))))
       .catch((error) => console.error('Failed to estimate ship dates:', error))
+
+    return formattedOrders
   }
 
 
@@ -175,7 +196,6 @@ export default function CustomerOrdersPage() {
     const action = approve ? 'accept' : 'reject'
     const isFirstPayment = order.status === 'submitted'
     const pendingAmount = Number(order.pending_payment_amount || 0)
-    const settledAmount = Number(order.settled_amount || 0)
     const amountText = `₱ ${pendingAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
 
     if (pendingAmount <= 0 && !isFirstPayment) {
@@ -218,83 +238,74 @@ export default function CustomerOrdersPage() {
 
 
     // =============================================
-    // UPDATE CUSTOMER ORDER
+    // CHECK THE PAYMENT, IN ONE STEP
+    //
+    // The database counts the amount as paid (or drops it), moves a first
+    // payment's order to payment verified or payment rejected, records it and
+    // tells the customer: all of it, or none of it. It acts only on the
+    // payment shown here (this amount and these proofs), so one already
+    // checked by someone else, or sent again by the customer since, is
+    // refused, and nothing is recorded or sent twice (db/migrations/027).
     // =============================================
-    const updateData = approve
-      ? {
-          settled_amount: settledAmount + pendingAmount,
-          pending_payment_amount: 0,
-          rejection_reason: null,
-          ...(isFirstPayment && { status: 'payment verified' }),
-        }
-      : {
-          pending_payment_amount: 0,
-          rejection_reason: rejectionReason,
-          // A rejected balance proof is cleared so the customer uploads a
-          // new one; a rejected first payment ends the order's payment stage.
-          ...(isFirstPayment ? { status: 'payment rejected' } : { payment_proof_complete: null }),
-        }
+    setReviewingPayment(true)
 
-    // Guards: act only on the payment that was on screen, not one that
-    // changed since.
-    let query = supabase
-      .from('customer_orders')
-      .update(updateData)
-      .eq('id', order.id)
-      .eq('pending_payment_amount', pendingAmount)
-
-    if (isFirstPayment) {
-      query = query.eq('status', 'submitted')
-    }
-
-    const { error } = await query
-
-    if (error) {
-      console.error('Failed to update payment status:', error)
-      toast.error(`Failed to ${action} payment.`)
-      return
-    }
-
-
-    // =============================================
-    // UPDATE SELECTED PAYMENT IMMEDIATELY
-    // =============================================
-    setSelectedPayment((prev) => ({ ...prev, ...updateData }))
-
-
-    if (isFirstPayment) {
-      await recordStatusChange(order.id, 'submitted', approve ? 'payment verified' : 'payment rejected')
-    }
-
-
-    // =============================================
-    // TELL THE CUSTOMER
-    // A notification failing doesn't undo the review.
-    // =============================================
     try {
-      await createNotification({
-        userId: order.customer_id,
-        role: 'customer',
-        title: approve
-          ? `${order.order_number} - Payment verified`
-          : `${order.order_number} - Payment rejected`,
-        message: approve
-          ? `Your payment of ${amountText} for order ${order.order_number} has been verified.`
-          : `Your payment of ${amountText} for order ${order.order_number} was rejected: ${rejectionReason}`,
-        type: approve ? 'success' : 'error',
-        relatedCustomerOrderId: order.id,
-        link: '/payments',
+      const { data: reviewed, error } = await supabase.rpc('review_order_payment', {
+        p_customer_order_id: order.id,
+        p_approve: approve,
+        p_expected_amount: pendingAmount,
+        p_expected_proof_dp: order.payment_proof_dp ?? null,
+        p_expected_proof_complete: order.payment_proof_complete ?? null,
+        p_rejection_reason: rejectionReason,
       })
-    } catch (notificationError) {
-      console.error('Failed to notify customer:', notificationError)
+
+      if (error) {
+        console.error('Failed to review payment:', error)
+        toast.error(paymentReviewError(error, action))
+
+        // Refused by a rule: the payment in this window is out of date.
+        if (error.code === 'P0001') {
+          const latest = (await loadCustomerOrders())?.find((row) => row.id === order.id)
+          const anotherWaiting = latest && (latest.status === 'submitted' || Number(latest.pending_payment_amount || 0) > 0)
+
+          if (latest && !anotherWaiting) {
+            // Already checked by someone else: show it as it is now.
+            setSelectedPayment((prev) => (prev?.id === order.id ? latest : prev))
+          } else {
+            // The customer sent another payment since. Close the window, so the
+            // new one is opened and looked at before anyone approves it.
+            setShowPaymentModal(false)
+            setSelectedPayment(null)
+          }
+        }
+
+        return
+      }
+
+
+      // =============================================
+      // UPDATE SELECTED PAYMENT IMMEDIATELY
+      // =============================================
+      setSelectedPayment((prev) => (prev?.id === order.id
+        ? {
+            ...prev,
+            status: reviewed.status,
+            settled_amount: reviewed.settled_amount,
+            pending_payment_amount: reviewed.pending_payment_amount,
+            rejection_reason: reviewed.rejection_reason,
+            payment_proof_complete: reviewed.payment_proof_complete,
+          }
+        : prev))
+
+
+      // =============================================
+      // SUCCESS
+      // =============================================
+      toast.success(isRejecting ? 'Payment has been rejected successfully.' : 'Payment has been accepted successfully.')
+      await loadCustomerOrders()
+    } finally {
+      setReviewingPayment(false)
     }
-
-
-    // =============================================
-    // SUCCESS
-    // =============================================
-    toast.success(isRejecting ? 'Payment has been rejected successfully.' : 'Payment has been accepted successfully.')
-    await loadCustomerOrders()
   }
 
 
@@ -578,6 +589,7 @@ export default function CustomerOrdersPage() {
             setSelectedPayment(null)
           }}
           onReview={reviewPayment}
+          reviewing={reviewingPayment}
         />
       )}
     </div>
@@ -874,7 +886,7 @@ function CustomerOrderModal({ order, estimate, onClose }) {
 // =====================================================
 // PAYMENT MODAL
 // =====================================================
-function PaymentModal({ order, estimate, onClose, onReview }) {
+function PaymentModal({ order, estimate, onClose, onReview, reviewing }) {
   const settledAmount = Number(order.settled_amount || 0)
   const pendingAmount = Number(order.pending_payment_amount || 0)
 
@@ -1163,6 +1175,7 @@ function PaymentModal({ order, estimate, onClose, onReview }) {
               <button
                 type="button"
                 onClick={() => onReview(order, false)}
+                disabled={reviewing}
                 className="flex items-center gap-2 rounded-md border border-red-600 bg-red-600 px-5 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <FontAwesomeIcon icon={faCircleXmark} />
@@ -1172,6 +1185,7 @@ function PaymentModal({ order, estimate, onClose, onReview }) {
               <button
                 type="button"
                 onClick={() => onReview(order, true)}
+                disabled={reviewing}
                 className="flex items-center gap-2 rounded-md border border-green-600 bg-green-600 px-5 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <FontAwesomeIcon icon={faCircleCheck} />
