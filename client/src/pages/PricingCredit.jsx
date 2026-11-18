@@ -8,6 +8,7 @@ import IconButton from '../components/IconButton'
 import { getMarkups, getContainerSizes, getContainerFillPercent, pricingErrorMessage } from '../services/pricingService'
 import { getCreditLimit, saveCreditLimit, formatPeso, creditErrorMessage } from '../services/creditService'
 import TableScroll from '../components/TableScroll'
+import { COUNTRY_NAMES, countryKey } from '../utils/countryPlaces'
 
 
 const th = 'px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600'
@@ -128,7 +129,8 @@ function MarkupsSection() {
       )
 
     if (error) {
-      toast.error(error.message)
+      // The database's own rule: one row per country, however it's spelled (032).
+      toast.error(error.code === '23505' ? `${name} already has its rates. Change them in its row instead.` : error.message)
       return false
     }
 
@@ -139,6 +141,13 @@ function MarkupsSection() {
 
 
   async function addMarkup() {
+    // A country picked from the list, and only one that has no rates yet.
+    const existing = markups.find((markup) => countryKey(markup.country) === countryKey(newCountry))
+    if (existing) {
+      toast.error(`${existing.country} already has its rates. Change them in its row instead.`)
+      return
+    }
+
     if (await saveMarkup(newCountry, newPercent, newShipping)) {
       setNewCountry('')
       setNewPercent('')
@@ -258,13 +267,21 @@ function MarkupsSection() {
 
             <tr className="border-t border-gray-200 bg-gray-50 text-sm">
               <td className="px-5 py-3">
-                <input
-                  type="text"
+                {/* Picked, not typed, so a country can't be added twice under
+                    another spelling ("Hongkong" next to "Hong Kong"). */}
+                <select
                   value={newCountry}
                   onChange={(e) => setNewCountry(e.target.value)}
-                  placeholder="Country, e.g. Japan"
+                  aria-label="Country to add"
                   className={`${input} w-48`}
-                />
+                >
+                  <option value="">Choose a country</option>
+                  {COUNTRY_NAMES
+                    .filter((name) => !markups.some((markup) => countryKey(markup.country) === countryKey(name)))
+                    .map((name) => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                </select>
               </td>
 
               <td className="px-5 py-3">

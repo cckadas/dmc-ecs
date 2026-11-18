@@ -1,6 +1,7 @@
 import { supabase } from '../supabase'
 import { planContainer } from '../utils/containers'
 import { withNewColumns } from '../utils/newColumns'
+import { countryKey } from '../utils/countryPlaces'
 
 
 // =============================================================================
@@ -121,12 +122,12 @@ export async function getContainerFillPercent() {
 }
 
 
+// The country's own rates, matched by its letters as the database does (032),
+// or Default's.
 function findMarkup(markups, country) {
-  const normalise = (value) => (value || '').trim().toLowerCase()
-
   return (
-    markups.find((markup) => normalise(markup.country) === normalise(country)) ||
-    markups.find((markup) => normalise(markup.country) === 'default') ||
+    (countryKey(country) && markups.find((markup) => countryKey(markup.country) === countryKey(country))) ||
+    markups.find((markup) => countryKey(markup.country) === 'default') ||
     null
   )
 }

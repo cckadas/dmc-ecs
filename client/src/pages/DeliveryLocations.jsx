@@ -9,6 +9,7 @@ import { useToast } from "../context/ToastContext"
 
 import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
+import { COUNTRY_NAMES, listedCountry } from '../utils/countryPlaces'
 
 
 export default function DeliveryLocationsPage() {
@@ -273,7 +274,8 @@ function DeliveryLocationModal({ onClose, onSubmit, location }) {
     recipient_name: location?.recipient_name || '',
     contact_number: location?.contact_number || '',
     address: location?.address || '',
-    country: location?.country || '',
+    // As the list writes it (" Hong Kong" -> "Hong Kong"); kept as typed if it isn't listed.
+    country: listedCountry(location?.country) || location?.country || '',
   })
 
 
@@ -363,15 +365,23 @@ function DeliveryLocationModal({ onClose, onSubmit, location }) {
                 Country
               </label>
 
-              <input
-                type="text"
+              {/* Picked, not typed: the quotation's markup and shipping cost go by
+                  this country, so it must be spelled as DMC's rates are. */}
+              <select
                 name="country"
                 value={form.country}
                 onChange={handleChange}
-                placeholder="Enter country"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
                 required
-              />
+              >
+                <option value="">Choose a country</option>
+                {form.country && !COUNTRY_NAMES.includes(form.country) && (
+                  <option value={form.country}>{form.country} (as typed before)</option>
+                )}
+                {COUNTRY_NAMES.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
             </div>
 
             <div className="sm:col-span-2">

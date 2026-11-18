@@ -206,3 +206,34 @@ export function nearestCountry(raw, candidates = []) {
 
   return best
 }
+
+
+// =============================================================================
+// Picking a country from a list instead of typing it
+//
+// Typed freely, one country could be spelled two ways: "Hongkong" next to
+// "Hong Kong" made a second markup row, and a delivery location spelled
+// differently from its markup row paid Default's rates. The screens pick
+// countries from this list; the database holds to the same rule
+// (db/migrations/032).
+// =============================================================================
+
+// The same country however it's spaced, punctuated or capitalised: only the
+// letters count ("Hong Kong", "hongkong", "HONG-KONG"). The database's key too.
+export const countryKey = (raw) => String(raw || '').toLowerCase().replace(/[^a-z]/g, '')
+
+const titleCase = (name) =>
+  name.split(' ').map((word) => word.split('-').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join('-')).join(' ')
+
+const BY_KEY = Object.fromEntries(Object.keys(PLACES).map((name) => [countryKey(name), name]))
+
+// Every country known here, as it's written, A to Z.
+export const COUNTRY_NAMES = Object.keys(PLACES).map(titleCase).sort((a, b) => a.localeCompare(b))
+
+// How a typed country is written in the list ("hongkong", "HK", " Hong Kong" ->
+// "Hong Kong"), or null when it isn't in it.
+export function listedCountry(raw) {
+  const name = countryName(raw)
+  const known = PLACES[name] ? name : BY_KEY[countryKey(name)]
+  return known ? titleCase(known) : null
+}
