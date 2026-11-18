@@ -577,16 +577,18 @@ function CreditSection() {
 
       const [customersResult, ordersResult] = await Promise.all([
         supabase.from('profiles').select('id, name, company').eq('role', 'customer'),
-        supabase.from('customer_orders').select('customer_id, total_amount, settled_amount'),
+        supabase.from('customer_orders').select('customer_id, total_amount, settled_amount, status'),
       ])
 
       if (customersResult.error) throw customersResult.error
       if (ordersResult.error) throw ordersResult.error
 
-      // The same sum the database uses: what is still owed on every order.
+      // The same sum the database uses: what is still owed on every order,
+      // cancelled ones aside (db/migrations/028).
       const owed = {}
 
       for (const order of ordersResult.data || []) {
+        if (String(order.status || '').trim().toLowerCase() === 'cancelled') continue
         const unpaid = Math.max(Number(order.total_amount || 0) - Number(order.settled_amount || 0), 0)
         owed[order.customer_id] = (owed[order.customer_id] || 0) + unpaid
       }

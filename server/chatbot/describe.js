@@ -11,6 +11,11 @@ export const NOTHING_PAID = 'PHP 0.00'
 export function describePayment(payment) {
   const parts = []
 
+  // DMC's rule: not paid within 7 days after the deadline, so it was cancelled.
+  if (payment.cancelled) {
+    return `this order was cancelled${payment.cancelledOn ? ` on ${payment.cancelledOn}` : ''} because its down payment wasn't received${payment.downPaymentLastDay ? ` by ${payment.downPaymentLastDay}` : ' in time'}; nothing is owed for it and it can no longer be paid. To order these products, send a new quotation request`
+  }
+
   if (payment.fullyPaid) {
     parts.push('fully paid')
   } else if (payment.awaitingVerification) {
@@ -19,7 +24,11 @@ export function describePayment(payment) {
     parts.push(`down payment verified; balance of ${payment.balanceDue} still to pay`)
   } else {
     parts.push(`down payment of ${payment.downPaymentRequired} due${payment.downPaymentDeadline ? ` by ${payment.downPaymentDeadline}` : ''}`)
-    if (payment.downPaymentOverdue) parts.push('this is overdue, but it can still be paid')
+    if (payment.downPaymentTooLate) {
+      parts.push(`the last day to pay was ${payment.downPaymentLastDay}, so it can no longer be paid and the order is being cancelled`)
+    } else if (payment.downPaymentOverdue) {
+      parts.push(`this is overdue: it can still be paid until ${payment.downPaymentLastDay}; if it isn't, the order will be cancelled on ${payment.cancelledIfUnpaidOn}`)
+    }
   }
 
   if (payment.lastRejectionReason) {

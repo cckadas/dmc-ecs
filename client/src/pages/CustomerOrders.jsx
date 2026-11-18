@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faFolderOpen, faXmark, faCreditCard, faCircleCheck, faCircleXmark, faTrash } from '@fortawesome/free-solid-svg-icons'
+import { faFolderOpen, faXmark, faCreditCard, faCircleCheck, faCircleXmark } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 
 import IconButton from '../components/IconButton'
@@ -13,6 +13,8 @@ import OrderProgress from '../components/OrderProgress'
 import { predictOrders } from '../services/predictionService'
 import ShipDateSummary from '../components/ShipDateSummary'
 import TableScroll from '../components/TableScroll'
+import DownPaymentDeadline from '../components/DownPaymentDeadline'
+import { CANCELLATION_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
 
 
 // What to tell the reviewer when a payment check is refused.
@@ -55,7 +57,9 @@ export default function CustomerOrdersPage() {
   async function loadCustomerOrders() {
     setLoading(true)
 
-    const { data, error } = await supabase
+    // When and why an order was cancelled: asked again without them until
+    // db/migrations/028 is run.
+    const { data, error } = await withNewColumns((withCancellation) => supabase
       .from('customer_orders')
       .select(`
         id,
@@ -75,6 +79,7 @@ export default function CustomerOrdersPage() {
         settled_amount,
         pending_payment_amount,
         expiry_date,
+        ${columnsIf(withCancellation, CANCELLATION_COLUMNS)}
         payment_bank,
         payment_proof_dp,
         payment_proof_complete,
@@ -95,7 +100,7 @@ export default function CustomerOrdersPage() {
           )
         )
       `)
-      .order('created_at', { ascending: false })
+      .order('created_at', { ascending: false }), CANCELLATION_COLUMNS)
 
 
     if (error) {
@@ -309,88 +314,9 @@ export default function CustomerOrdersPage() {
   }
 
 
-  // =============================================
-  // DELETE REJECTED CUSTOMER ORDER
-  // =============================================
-  async function deleteCustomerOrder(order) {
-
-    if (!order?.id) {
-      toast.error('Missing customer order.')
-      return
-    }
-
-    if (order.status !== 'payment rejected') {
-      toast.error('Only rejected payments can be deleted.')
-      return
-    }
-
-    const confirmed = window.confirm(
-      `Are you sure you want to permanently delete order ${order.order_number || ''}?\n\n` +
-      'This will also delete all items belonging to this customer order.\n\n' +
-      'This action cannot be undone.'
-    )
-
-    if (!confirmed) {
-      return
-    }
-
-    setLoading(true)
-
-    try {
-
-      // =============================================
-      // DELETE CUSTOMER ORDER ITEMS
-      // =============================================
-      const { error: itemsError } = await supabase
-        .from('customer_order_items')
-        .delete()
-        .eq('customer_order_id', order.id)
-
-      if (itemsError) {
-        throw itemsError
-      }
-
-
-      // =============================================
-      // DELETE CUSTOMER ORDER
-      // =============================================
-      const { error: orderError } = await supabase
-        .from('customer_orders')
-        .delete()
-        .eq('id', order.id)
-        .eq('status', 'payment rejected')
-
-      if (orderError) {
-        throw orderError
-      }
-
-
-      // =============================================
-      // CLOSE MODALS IF NECESSARY
-      // =============================================
-      setShowModal(false)
-      setSelectedOrder(null)
-      setShowPaymentModal(false)
-      setSelectedPayment(null)
-
-
-      // =============================================
-      // SUCCESS
-      // =============================================
-      toast.success('Rejected customer order deleted successfully.')
-      await loadCustomerOrders()
-
-    }
-
-    catch (error) {
-      console.error('Failed to delete rejected customer order:', error)
-      toast.error(error.message || 'Failed to delete customer order.')
-    }
-
-    finally {
-      setLoading(false)
-    }
-  }
+  // No order is deleted. One whose down payment never comes, including one
+  // whose payment was rejected and never sent again, is cancelled by the
+  // database 7 days after its deadline and kept on record (db/migrations/028).
 
 
   // =============================================
@@ -530,6 +456,8 @@ export default function CustomerOrdersPage() {
                         Payment to verify
                       </p>
                     )}
+
+                    <DownPaymentDeadline order={order} forStaff className="mt-1 max-w-[16rem]" />
                   </td>
 
                   {/* DATE */}
@@ -545,12 +473,14 @@ export default function CustomerOrdersPage() {
                       <IconButton icon={faFolderOpen} title="View Purchase Order" color="blue" disabled={false} onClick={() => openOrderModal(order)}/>
 
                       {/* PAYMENT */}
-                      <IconButton icon={faCreditCard} title={order.status === 'pending payment' ? 'Payment Not Yet Available' : 'View Payment'} color="green" disabled={order.status === 'pending payment'} onClick={() => openPaymentModal(order)}/>                      
-                      
-                      {/* DELETE REJECTED ORDER */}
-                      {order.status === 'payment rejected' && (
-                        <IconButton icon={faTrash} title="Delete Rejected Order" color="red" disabled={false} onClick={() => deleteCustomerOrder(order)}/>
-                      )}
+                      {(() => {
+                        // A cancelled order shows its payment only if one was ever sent.
+                        const noPaymentSent = order.status === 'pending payment'
+                          || (order.status === 'cancelled' && !order.payment_proof_dp && !order.payment_proof_complete)
+                        return (
+                          <IconButton icon={faCreditCard} title={noPaymentSent ? 'Payment Not Yet Available' : 'View Payment'} color="green" disabled={noPaymentSent} onClick={() => openPaymentModal(order)}/>
+                        )
+                      })()}
 
                     </div>
                   </td>

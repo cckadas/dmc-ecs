@@ -129,6 +129,11 @@ export default function BillingsPage() {
     const total = Number(order.total_amount || 0)
     const settled = Number(order.settled_amount || 0)
 
+    // Its down payment never came (db/migrations/028): nothing is owed.
+    if (String(order.status || '').trim().toLowerCase() === 'cancelled') {
+      return 'cancelled'
+    }
+
     if (total > 0 && settled >= total) {
       return 'fully paid'
     }
@@ -168,6 +173,9 @@ export default function BillingsPage() {
   // CALCULATE REMAINING BALANCE
   // =====================================================
   function getRemainingBalance(order) {
+    // A cancelled order owes nothing (db/migrations/028).
+    if (String(order.status || '').trim().toLowerCase() === 'cancelled') return 0
+
     const total = Number(order.total_amount || 0)
     const settled = Number(order.settled_amount || 0)
 
@@ -316,9 +324,13 @@ export default function BillingsPage() {
 
                       {/* BALANCE */}
                       <td className="px-5 py-4">
-                        <span className={balance > 0 ? 'font-semibold text-amber-600' : 'font-semibold text-green-600'}>
-                          {formatCurrency(balance)}
-                        </span>
+                        {getPaymentStatus(order) === 'cancelled' ? (
+                          <span className="text-sm text-gray-400">None (cancelled)</span>
+                        ) : (
+                          <span className={balance > 0 ? 'font-semibold text-amber-600' : 'font-semibold text-green-600'}>
+                            {formatCurrency(balance)}
+                          </span>
+                        )}
                       </td>
 
                       {/* PAYMENT STATUS */}

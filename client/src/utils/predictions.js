@@ -586,6 +586,15 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
     }
   }
 
+  // Cancelled (its down payment never came): nothing ahead to estimate, and
+  // not "at risk" either.
+  if (currentStatus === 'cancelled') {
+    return {
+      ...order, currentStatus, cancelled: true, estimatedReadyDate: null, estimatedShipDate: null, confidence: 0,
+      risk: 'cancelled', riskReason: null, riskReasons: [], requestedShipDate,
+    }
+  }
+
   const ifPaidToday = currentStatus === 'pending payment' || currentStatus === 'payment rejected'
   const currentStep = STEP_BY_STATUS[currentStatus]
 

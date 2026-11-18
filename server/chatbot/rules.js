@@ -62,7 +62,7 @@ export const PORTAL_FAQ = [
   },
   {
     topic: 'Payment deadline',
-    answer: 'The down payment is due 7 days after the quotation expires. A missed deadline does not cancel what is owed; the order shows as overdue and can still be paid. The balance can be paid at any stage until the order is fully paid.',
+    answer: 'The down payment is due 7 days after the quotation expires. DMC sends a reminder 2 days before the deadline and on the day. After the deadline it can still be paid for 7 more days; if it still has not been paid by then, the order is cancelled. A cancelled order stays on record, no longer counts toward the credit limit, and can no longer be paid: to order the products, send a new quotation request. The balance has no deadline: it can be paid at any stage until the order is fully paid.',
   },
   {
     topic: 'Rejected payments',

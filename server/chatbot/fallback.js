@@ -67,17 +67,20 @@ const STATUS_TEXT = {
   Procurement: 'DMC is sourcing your products',
   'Warehouse preparation': 'being prepared in DMC\'s warehouse',
   'Ready for shipment': 'ready for shipment',
+  Cancelled: 'cancelled',
 }
 
 function statusLine(order) {
   if (order.shippedOn) return `${order.orderNumber}: shipped on ${order.shippedOn}.`
   const p = order.progress
+  if (p.status === 'Cancelled') return `${order.orderNumber}: ${describePayment(order.payment)}.`
   const next = p.nextStep ? ` Next: ${p.nextStep}.` : ''
   return `${order.orderNumber}: ${p.step ? `${p.step}, ` : ''}${STATUS_TEXT[p.status] || p.status}.${next}`
 }
 
 function readinessLine(order) {
   if (order.shippedOn) return `${order.orderNumber}: already shipped on ${order.shippedOn}.`
+  if (order.progress.status === 'Cancelled') return `${order.orderNumber}: cancelled, so it won't ship.`
 
   const e = order.estimatedShipment
   if (e) {

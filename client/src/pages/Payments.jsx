@@ -12,6 +12,10 @@ import { recordStatusChange } from '../services/predictionService'
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
 import TableScroll from '../components/TableScroll'
+import { CANCELLATION_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
+import DownPaymentDeadline from '../components/DownPaymentDeadline'
+import { deadlineNote } from '../utils/deadlineNote'
+import { downPaymentStatus, formatDay } from '../utils/paymentDeadline'
 
 
 export default function PaymentsPage() {
@@ -34,7 +38,9 @@ export default function PaymentsPage() {
 
     setLoading(true)
 
-    const { data, error } = await supabase
+    // When and why an order was cancelled: asked again without them until
+    // db/migrations/028 is run.
+    const { data, error } = await withNewColumns((withCancellation) => supabase
       .from('customer_orders')
       .select(`
         id,
@@ -54,6 +60,7 @@ export default function PaymentsPage() {
         payment_proof_dp,
         payment_proof_complete,
         expiry_date,
+        ${columnsIf(withCancellation, CANCELLATION_COLUMNS)}
         rejection_reason,
         created_at,
 
@@ -74,6 +81,7 @@ export default function PaymentsPage() {
       .eq('customer_id', profile.id)
       // Every stage: an unpaid balance counts toward the credit limit until
       // it is paid, so the customer must be able to pay it at any point.
+      // Cancelled orders are listed too, with when and why.
       .in('status', [
         'pending payment',
         'submitted',
@@ -82,9 +90,10 @@ export default function PaymentsPage() {
         'procurement',
         'warehouse preparation',
         'ready for shipment',
-        'shipped'
+        'shipped',
+        'cancelled'
       ])
-      .order('created_at', { ascending: false })
+      .order('created_at', { ascending: false }), CANCELLATION_COLUMNS)
 
     if (error) {
       console.error(error)
@@ -102,6 +111,7 @@ export default function PaymentsPage() {
       'warehouse preparation': 6,
       'ready for shipment': 7,
       'shipped': 8,
+      'cancelled': 9,
     }
 
     const sortedPayments = (data || []).sort((a, b) => {
@@ -241,7 +251,10 @@ export default function PaymentsPage() {
                   const pendingAmount = Number(payment.pending_payment_amount || 0)
                   const remainingBalance = Math.max(totalAmount - settledAmount, 0)
 
-                  const expiryDate = new Date(new Date(payment.expiry_date).setDate(new Date(payment.expiry_date).getDate() + 7))
+                  // The down payment's deadline (db/migrations/028): after it, 7
+                  // more days to pay; after those the order is cancelled.
+                  const deadline = downPaymentStatus(payment)
+                  const tooLate = ['closed', 'cancelled'].includes(deadline.state)
 
 
                   return (
@@ -274,8 +287,13 @@ export default function PaymentsPage() {
                       </td>
 
                       {/* REMAINING BALANCE */}
+                      {/* A cancelled order owes nothing (it no longer counts toward the credit limit). */}
                       <td className="px-5 py-3">
-                        {remainingBalance > 0 ? (
+                        {tooLate && deadline.state === 'cancelled' ? (
+                          <span className="text-sm text-gray-400">
+                            None (cancelled)
+                          </span>
+                        ) : remainingBalance > 0 ? (
                           <span className="font-semibold text-amber-700">
                             ₱ {remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                           </span>
@@ -293,35 +311,37 @@ export default function PaymentsPage() {
 
                       {/* DUE DATE */}
                       <td className="px-5 py-3">
-                        {(() => {
-                          const today = new Date()
-                          const dueDate = new Date(new Date(payment.expiry_date).setDate(new Date(payment.expiry_date).getDate() + 7))
-
-                          today.setHours(0, 0, 0, 0)
-                          dueDate.setHours(0, 0, 0, 0)
-
-                          const daysUntilDue = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24))
-                          const isDueSoon = daysUntilDue <= 3
-
-                          return (
-                            <span className={`inline-flex items-center rounded-md border px-2.5 py-1 font-semibold ${isDueSoon ? 'border-red-200 bg-red-50 text-red-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
-                              {dueDate.toLocaleDateString()}
-                            </span>
-                          )
-                        })()}
+                        {/* The down payment's deadline; none once it's paid (the balance has none). */}
+                        {deadline.deadline && deadline.state !== 'paid' ? (
+                          <span className={`inline-flex items-center rounded-md border px-2.5 py-1 font-semibold ${
+                            ['due soon', 'due today', 'overdue', 'closed'].includes(deadline.state)
+                              ? 'border-red-200 bg-red-50 text-red-800'
+                              : ['cancelled', 'checking'].includes(deadline.state)
+                                ? 'border-gray-200 bg-gray-50 text-gray-600'
+                                : 'border-amber-200 bg-amber-50 text-amber-800'
+                          }`}>
+                            {formatDay(deadline.deadline)}
+                          </span>
+                        ) : (
+                          <span className="text-sm text-gray-400">-</span>
+                        )}
                       </td>
 
                       {/* ACTION */}
                       <td className="px-5 py-3">
-                        {/* A missed deadline doesn't cancel what is owed: the
-                            order stays payable and counts toward the credit limit. */}
-                        {expiryDate < new Date() && settledAmount <= 0 && (
-                          <span className="mr-2 text-sm font-medium text-red-600">
-                            Overdue
-                          </span>
+                        {/* Past the deadline: the last day to pay and the day it's
+                            cancelled; or when and why it was cancelled. */}
+                        {['due today', 'overdue', 'closed', 'cancelled'].includes(deadline.state) && (
+                          <DownPaymentDeadline order={payment} className="mb-1 max-w-[18rem]" />
                         )}
 
-                        {isSubmitted || pendingAmount > 0 ? (
+                        {tooLate ? (
+
+                          <span className="text-sm text-gray-400">
+                            Can no longer be paid
+                          </span>
+
+                        ) : isSubmitted || pendingAmount > 0 ? (
 
                           <span className="text-sm font-medium text-yellow-600">
                             Awaiting payment verification
@@ -381,6 +401,7 @@ export default function PaymentsPage() {
             await loadPayments()
             toast.success('Payment submitted successfully.')
           }}
+          onRefused={loadPayments}
         />
       )}
 
@@ -395,7 +416,7 @@ export default function PaymentsPage() {
 // =====================================================
 // PAYMENT MODAL
 // =====================================================
-function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
+function PaymentModal({ payment, onClose, onPaymentSubmitted, onRefused }) {
 
   const totalAmountDue = Number(payment.total_amount || 0)
   const currentSettledAmount = Number(payment.settled_amount || 0)
@@ -407,14 +428,19 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
   // least 50%), then the full remaining balance.
   const isFirstPayment = currentSettledAmount <= 0
 
-  const today = new Date()
-  const expiryDate = new Date(new Date(payment.expiry_date).setDate(new Date(payment.expiry_date).getDate() + 7))
+  // The down payment's deadline (db/migrations/028). The balance has none.
+  const deadline = downPaymentStatus(payment)
+  const deadlineWords = deadlineNote(payment)
+  const isExpiringSoon = ['due soon', 'due today', 'overdue', 'closed'].includes(deadline.state)
 
-  today.setHours(0, 0, 0, 0)
-  expiryDate.setHours(0, 0, 0, 0)
-
-  const daysUntilExpiry = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24))
-  const isExpiringSoon = daysUntilExpiry <= 3
+  // Too late for the down payment: the order is being cancelled. The database
+  // refuses it too, even if this page was opened before.
+  const tooLateMessage = !isFirstPayment ? null
+    : deadline.state === 'cancelled'
+      ? `${payment.order_number} was cancelled, so it can't be paid any more. To order these products, please send a new quotation request.`
+      : deadline.state === 'closed'
+        ? `The last day to pay the down payment for ${payment.order_number} was ${formatDay(deadline.lastDay)}, so it can't be paid any more and the order is being cancelled. To order these products, please send a new quotation request.`
+        : null
 
   const [selectedBank, setSelectedBank] = useState(payment.payment_bank || '')
   const [paymentAmount, setPaymentAmount] = useState('')
@@ -427,6 +453,11 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
   // PAYMENT CONFIRMATION
   // =====================================================
   async function confirmPayment() {
+
+    if (tooLateMessage) {
+      alert(tooLateMessage)
+      return
+    }
 
     if (!selectedBank) {
       alert('Please select a bank.')
@@ -561,6 +592,14 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
             filePath
           ])
 
+        // A rule's own words, e.g. the last day to pay has passed.
+        if (updateError.code === 'P0001' && updateError.message) {
+          alert(updateError.message)
+          await onRefused?.()
+          onClose()
+          return
+        }
+
         alert('Failed to save payment information.')
         return
       }
@@ -688,14 +727,20 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted }) {
             </div>
 
             {/* DUE DATE */}
-            <div className={`flex flex-col justify-center rounded-md border p-2 ${isExpiringSoon ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>
+            <div className={`flex flex-col justify-center rounded-md border p-2 ${deadline.state === 'paid' ? 'border-gray-200 bg-gray-50' : isExpiringSoon ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>
               <p className={`text-xs font-semibold uppercase ${isExpiringSoon ? 'text-red-600' : 'text-amber-600'}`}>
                 Due Date
               </p>
 
-              <p className={`mt-1 font-semibold ${isExpiringSoon ? 'text-red-800' : 'text-amber-800'}`}>
-                {expiryDate.toLocaleDateString()}
+              <p className={`mt-1 font-semibold ${deadline.state === 'paid' ? 'text-gray-600' : isExpiringSoon ? 'text-red-800' : 'text-amber-800'}`}>
+                {deadline.state === 'paid' ? 'Down payment received' : deadline.deadline ? formatDay(deadline.deadline) : '-'}
               </p>
+
+              {deadline.state === 'paid' ? (
+                <p className="mt-1 text-xs text-gray-500">The balance has no deadline.</p>
+              ) : ['due today', 'overdue', 'closed', 'cancelled'].includes(deadline.state) && deadlineWords ? (
+                <p className="mt-1 text-xs font-medium text-red-700">{deadlineWords.text}</p>
+              ) : null}
             </div>
           </div>
 

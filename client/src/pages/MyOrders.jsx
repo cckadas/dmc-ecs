@@ -13,6 +13,8 @@ import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
 import ShipDateSummary from '../components/ShipDateSummary'
 import LabelDesignsNote from '../components/LabelDesignsNote'
+import DownPaymentDeadline from '../components/DownPaymentDeadline'
+import { CANCELLATION_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
 import { loadMyEstimates } from '../services/predictionService'
 
 
@@ -39,7 +41,9 @@ export default function MyOrdersPage() {
 
     setLoading(true)
 
-    const { data, error } = await supabase
+    // When and why an order was cancelled: asked again without them until
+    // db/migrations/028 is run.
+    const { data, error } = await withNewColumns((withCancellation) => supabase
       .from('customer_orders')
       .select(`
         id,
@@ -58,6 +62,7 @@ export default function MyOrdersPage() {
         settled_amount,
         pending_payment_amount,
         expiry_date,
+        ${columnsIf(withCancellation, CANCELLATION_COLUMNS)}
         payment_proof_dp,
         payment_proof_complete,
         pfi_file_path,
@@ -84,7 +89,7 @@ export default function MyOrdersPage() {
       .eq('customer_id', profile.id)
       .order('created_at', {
         ascending: false,
-      })
+      }), CANCELLATION_COLUMNS)
 
     if (error) {
       toast.error('Failed to load your orders.')
@@ -213,6 +218,7 @@ export default function MyOrdersPage() {
                   {/* STATUS */}
                   <td className="px-5 py-3">
                     <StatusBadge status={order.status}/>
+                    <DownPaymentDeadline order={order} className="mt-1 max-w-[16rem]" />
                   </td>
 
 

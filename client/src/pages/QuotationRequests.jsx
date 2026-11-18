@@ -257,7 +257,8 @@ export default function QuotationRequestsPage() {
         ),
 
         customer_orders (
-          order_number
+          order_number,
+          status
         ),
 
         quotation_items (
@@ -967,7 +968,11 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
                 <p className="text-sm text-gray-500">
                   {quotation.status === 'approved' && `This quotation was approved${order?.order_number ? ` and became order ${order.order_number}` : ''}.`}
                   {quotation.status === 'rejected' && 'This quotation was rejected.'}
-                  {quotation.status === 'cancelled' && 'The order made from this quotation was deleted.'}
+                  {quotation.status === 'cancelled' && (
+                    order?.order_number
+                      ? `The order made from this quotation, ${order.order_number}, was cancelled: its down payment wasn't received in time.`
+                      : 'The order made from this quotation was deleted.'
+                  )}
                 </p>
               </div>
 

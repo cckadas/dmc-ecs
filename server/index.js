@@ -11,6 +11,7 @@ import chatRouter from './routes/chat.js'
 import estimatesRouter from './routes/estimates.js'
 import { requireRole } from './auth.js'
 import { startPredictionAlerts } from './alerts.js'
+import { startPaymentDeadlines } from './paymentDeadlines.js'
 
 const app = express()
 
@@ -64,4 +65,7 @@ app.listen(PORT, () => {
 
   // Staff alerts about late orders and overdue deliveries, checked every 5 minutes (alerts.js).
   startPredictionAlerts()
+
+  // Down payment reminders, and cancelling orders not paid 7 days after the deadline (paymentDeadlines.js).
+  startPaymentDeadlines()
 })

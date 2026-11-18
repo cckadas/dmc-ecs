@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '../supabaseAdmin.js'
 import { customerViewOf } from '../estimates.js'
 import { describePayment } from './describe.js'
+import { CANCELLATION_COLUMNS, columnsIf, withNewColumns } from '../../client/src/utils/newColumns.js'
 
 
 // =============================================================================
@@ -164,17 +165,20 @@ export async function buildCustomerContext(customerId, message) {
 
   const [profiles, orders, requests, history, settings] = await Promise.all([
     must(supabaseAdmin.from('profiles').select('name, company').eq('id', customerId).limit(1), 'profile'),
+    // When and why an order was cancelled: asked again without them until
+    // db/migrations/028 is run.
     must(
-      supabaseAdmin
+      withNewColumns((withCancellation) => supabaseAdmin
         .from('customer_orders')
         .select(`
           id, order_number, quotation_number, status, created_at, requested_ship_date, delivery_location_id, expiry_date,
+          ${columnsIf(withCancellation, CANCELLATION_COLUMNS)}
           total_amount, down_payment_amount, settled_amount, pending_payment_amount, rejection_reason,
           pfi_file_path, pack_list_path, cert_shipment_path, cert_clearance_path,
           customer_order_items ( id, quantity, unit_price, subtotal, products ( product_name, family, pack_size, unit ) )
         `)
         .eq('customer_id', customerId)
-        .order('created_at', { ascending: false }),
+        .order('created_at', { ascending: false }), CANCELLATION_COLUMNS),
       'orders'
     ),
     must(
@@ -245,14 +249,21 @@ export async function buildCustomerContext(customerId, message) {
     const total = Number(order.total_amount || 0)
     const settled = Number(order.settled_amount || 0)
     const pending = Number(order.pending_payment_amount || 0)
+    // DMC's rule (db/migrations/028): the down payment is due 7 days after the
+    // quotation expires, can still be paid for 7 days after that, and the order
+    // is cancelled the day after.
     const deadline = order.expiry_date ? addDays(order.expiry_date, 7) : null
+    const lastDay = deadline ? addDays(deadline, 7) : null
+    const cancelOn = lastDay ? addDays(lastDay, 1) : null
+    const cancelled = status === 'cancelled'
+    const nothingSent = settled <= 0 && pending <= 0
     const orderHistory = stats ? (stats.historyByOrder[order.id] || []) : []
     const items = (order.customer_order_items || []).slice(0, MAX_ITEMS)
 
     // As on the Payments page: a rejected down payment sets the order's
     // status; a rejected balance payment only leaves its reason. Either way it
     // no longer applies once a new payment is awaiting verification.
-    const rejected = pending <= 0 && (status === 'payment rejected' || (settled > 0 && Boolean(order.rejection_reason)))
+    const rejected = !cancelled && pending <= 0 && (status === 'payment rejected' || (settled > 0 && Boolean(order.rejection_reason)))
 
     const labels = items.map((item) => {
       const exchange = labelExchanges.find((entry) => entry.customer_order_item_id === item.id)
@@ -261,7 +272,13 @@ export async function buildCustomerContext(customerId, message) {
 
     let progressInfo = { status: label(status) }
 
-    if (progress) {
+    if (cancelled) {
+      progressInfo = {
+        status: 'Cancelled',
+        cancelledOn: formatTimestamp(order.cancelled_at),
+        reason: order.cancellation_reason || null,
+      }
+    } else if (progress) {
       const done = progress.stepsDone(status)
       const dates = progress.stepDates(order, orderHistory)
       progressInfo = {
@@ -300,8 +317,13 @@ export async function buildCustomerContext(customerId, message) {
       balanceDue: peso(Math.max(total - settled, 0)),
       fullyPaid: total > 0 && settled >= total,
       downPaymentDeadline: deadline ? formatDateOnly(deadline) : null,
+      downPaymentLastDay: lastDay ? formatDateOnly(lastDay) : null,
+      cancelledIfUnpaidOn: cancelOn ? formatDateOnly(cancelOn) : null,
       // A payment already sent isn't late while DMC checks it.
-      downPaymentOverdue: Boolean(deadline && deadline < today && settled <= 0 && pending <= 0),
+      downPaymentOverdue: Boolean(!cancelled && deadline && deadline < today && nothingSent),
+      downPaymentTooLate: Boolean(!cancelled && lastDay && lastDay < today && nothingSent),
+      cancelled,
+      cancelledOn: cancelled ? formatTimestamp(order.cancelled_at) : null,
       lastRejectionReason: rejected ? order.rejection_reason || 'No reason was given.' : null,
     }
     payment.inShort = describePayment(payment)

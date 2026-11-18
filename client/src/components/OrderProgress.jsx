@@ -9,6 +9,8 @@ import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
 import { PaymentHistory } from './HistoryList'
 import EstimateWorking from './EstimateWorking'
+import { deadlineNote } from '../utils/deadlineNote'
+import { downPaymentDates, formatDay as formatDeadlineDay } from '../utils/paymentDeadline'
 
 
 const formatDate = (date) =>
@@ -53,7 +55,8 @@ const formatPeso = (value) =>
 // the estimated ship date and its likely range (the same estimate as the
 // Executive Dashboard), and what is still owed. Needs the order's id, status,
 // created_at, requested_ship_date, delivery_location_id, total_amount,
-// settled_amount, pending_payment_amount, down_payment_amount and expiry_date.
+// settled_amount, pending_payment_amount, down_payment_amount and expiry_date,
+// and for a cancelled order cancelled_at and cancellation_reason.
 // forStaff adds the confidence, the reasons and how the date is worked out,
 // which can name suppliers.
 // =============================================
@@ -67,6 +70,12 @@ export default function OrderProgress({ order, forStaff = false }) {
 
   useEffect(() => {
     let active = true
+
+    // A cancelled order has no steps ahead to estimate.
+    if ((order.status || '').trim().toLowerCase() === 'cancelled') {
+      setLoading(false)
+      return undefined
+    }
 
     loadOrderProgress(order, { forStaff })
       .then((result) => {
@@ -89,6 +98,37 @@ export default function OrderProgress({ order, forStaff = false }) {
   const expected = expectedDates(prediction, shipped)
   const canRecordArrival = forStaff && shipped && RECORDS_ARRIVALS.includes(profile?.role?.toLowerCase())
   const seesPayments = forStaff && SEES_PAYMENTS.includes(profile?.role?.toLowerCase())
+
+  // Its down payment never came: cancelled, and kept on record (db/migrations/028).
+  if (status === 'cancelled') {
+    return (
+      <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4">
+        <h3 className="mb-2 text-sm font-semibold text-gray-800">
+          Order Progress
+        </h3>
+
+        <p className="text-sm font-medium text-red-800">
+          Cancelled{order.cancelled_at ? ` on ${formatDateTime(order.cancelled_at)}` : ''}
+        </p>
+
+        {order.cancellation_reason && (
+          <p className="mt-1 text-sm text-red-700">{order.cancellation_reason}</p>
+        )}
+
+        <p className="mt-1 text-sm text-gray-600">
+          {forStaff
+            ? "It's kept on record, and no longer counts toward the customer's credit limit."
+            : 'Nothing is owed for it. To order these products, please send a new quotation request.'}
+        </p>
+
+        {seesPayments && (
+          <div className="mt-4">
+            <PaymentHistory orderId={order.id} reloadKey={`${order.status}:${order.settled_amount}:${order.pending_payment_amount}`} />
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="mb-6 rounded-lg border border-gray-200 p-4">
@@ -178,7 +218,7 @@ export default function OrderProgress({ order, forStaff = false }) {
         )}
 
         <p className="text-gray-700">
-          <PaymentLine order={order} />
+          <PaymentLine order={order} forStaff={forStaff} />
         </p>
       </div>
 
@@ -493,7 +533,7 @@ function EstimateLines({ prediction, forStaff }) {
 
 
 // Payment, separate from the steps: the balance can be paid at any stage.
-function PaymentLine({ order }) {
+function PaymentLine({ order, forStaff = false }) {
   const total = Number(order.total_amount || 0)
   const settled = Number(order.settled_amount || 0)
   const pending = Number(order.pending_payment_amount || 0)
@@ -508,14 +548,19 @@ function PaymentLine({ order }) {
     return <><span className="font-medium">Payment:</span> down payment received ✓ · balance {formatPeso(balance)} due{awaiting}</>
   }
 
-  let dueText = ''
-  if (order.expiry_date) {
-    const due = new Date(`${order.expiry_date}T00:00:00`)
-    due.setDate(due.getDate() + 7)
-    dueText = ` by ${formatDate(due)}`
-  }
+  // The deadline, and once it has passed, the last day to pay and the day the
+  // order is cancelled (db/migrations/028).
+  const dates = downPaymentDates(order)
+  const dueText = dates ? ` by ${formatDeadlineDay(dates.deadline)}` : ''
+  const note = pending > 0 ? null : deadlineNote(order, { forStaff })
+  const late = note && note.tone === 'red' && !/^Down payment due by/.test(note.text)
 
-  return <><span className="font-medium">Payment:</span> down payment of {formatPeso(order.down_payment_amount)} due{dueText}{awaiting}</>
+  return (
+    <>
+      <span className="font-medium">Payment:</span> down payment of {formatPeso(order.down_payment_amount)} due{dueText}{awaiting}
+      {late && <span className="block text-red-700">{note.text}</span>}
+    </>
+  )
 }
 
 
