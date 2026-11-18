@@ -15,6 +15,7 @@ import ShipDateSummary from '../components/ShipDateSummary'
 import TableScroll from '../components/TableScroll'
 import DownPaymentDeadline from '../components/DownPaymentDeadline'
 import { CANCELLATION_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
+import { ALL, filterOrders, showChoices, sortOrders } from '../utils/orderStatusSort'
 
 
 // What to tell the reviewer when a payment check is refused.
@@ -47,6 +48,10 @@ export default function CustomerOrdersPage() {
   const [showPaymentModal, setShowPaymentModal] = useState(false)
   // True while a payment check is being saved, so it can't be clicked twice.
   const [reviewingPayment, setReviewingPayment] = useState(false)
+  // Which orders the list shows (all, payments to check, or one status) and
+  // how it's sorted (by status, or by date).
+  const [show, setShow] = useState(ALL)
+  const [sortBy, setSortBy] = useState('status')
 
 
   // =============================================
@@ -347,6 +352,12 @@ export default function CustomerOrdersPage() {
   }, [profile?.id])
 
 
+  const choices = showChoices(orders)
+  // A status no order has any more (e.g. its last one just moved on) shows all.
+  const showing = choices.some((choice) => choice.value === show) ? show : ALL
+  const shownOrders = sortOrders(filterOrders(orders, showing), sortBy)
+
+
   // =============================================
   // MAIN CONTENT
   // =============================================
@@ -362,6 +373,44 @@ export default function CustomerOrdersPage() {
         <p className="mt-1 text-gray-500">
           View and manage customer orders.
         </p>
+      </div>
+
+
+      {/* SHOW AND SORT BY STATUS */}
+      <div className="mb-4 flex flex-wrap items-end gap-4">
+        <label className="flex flex-col gap-1 text-sm text-gray-600">
+          Show
+          <select
+            value={showing}
+            onChange={(event) => setShow(event.target.value)}
+            className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800"
+          >
+            {choices.map((choice) => (
+              <option key={choice.value} value={choice.value}>
+                {choice.label} ({choice.count})
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex flex-col gap-1 text-sm text-gray-600">
+          Sort by
+          <select
+            value={sortBy}
+            onChange={(event) => setSortBy(event.target.value)}
+            className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800"
+          >
+            <option value="status">Status (the order's steps, newest first in each)</option>
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+          </select>
+        </label>
+
+        {!loading && (
+          <p className="pb-2 text-sm text-gray-500">
+            Showing {shownOrders.length} of {orders.length} {orders.length === 1 ? 'order' : 'orders'}
+          </p>
+        )}
       </div>
 
 
@@ -417,9 +466,9 @@ export default function CustomerOrdersPage() {
                 </td>
               </tr>
 
-            ) : orders.length > 0 ? (
+            ) : shownOrders.length > 0 ? (
 
-              orders.map((order) => (
+              shownOrders.map((order) => (
                 <tr key={order.id} className="border-t border-gray-200 text-sm hover:bg-gray-50">
 
                   {/* ORDER NUMBER */}
@@ -489,7 +538,7 @@ export default function CustomerOrdersPage() {
             ) : (
               <tr>
                 <td colSpan="8" className="py-10 text-center text-sm text-gray-500">
-                  No customer orders found.
+                  {orders.length > 0 ? 'No orders with this status.' : 'No customer orders found.'}
                 </td>
               </tr>
             )}
