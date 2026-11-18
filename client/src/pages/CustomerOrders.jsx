@@ -48,6 +48,9 @@ export default function CustomerOrdersPage() {
   const [showPaymentModal, setShowPaymentModal] = useState(false)
   // True while a payment check is being saved, so it can't be clicked twice.
   const [reviewingPayment, setReviewingPayment] = useState(false)
+  // Sales and admin check payments; management sees the page view only
+  // (review_order_payment in db/migrations/027 refuses anyone else).
+  const checksPayments = ['admin', 'sales'].includes(String(profile?.role || '').trim().toLowerCase())
   // Which orders the list shows (all, payments to check, or one status) and
   // how it's sorted (by status, or by date).
   const [show, setShow] = useState(ALL)
@@ -371,7 +374,7 @@ export default function CustomerOrdersPage() {
         </h1>
 
         <p className="mt-1 text-gray-500">
-          View and manage customer orders.
+          {checksPayments ? 'View and manage customer orders.' : 'View customer orders and their payments (view only).'}
         </p>
       </div>
 
@@ -569,6 +572,7 @@ export default function CustomerOrdersPage() {
           }}
           onReview={reviewPayment}
           reviewing={reviewingPayment}
+          canCheck={checksPayments}
         />
       )}
     </div>
@@ -865,13 +869,15 @@ function CustomerOrderModal({ order, estimate, onClose }) {
 // =====================================================
 // PAYMENT MODAL
 // =====================================================
-function PaymentModal({ order, estimate, onClose, onReview, reviewing }) {
+function PaymentModal({ order, estimate, onClose, onReview, reviewing, canCheck = true }) {
   const settledAmount = Number(order.settled_amount || 0)
   const pendingAmount = Number(order.pending_payment_amount || 0)
 
   // The first payment is reviewed while the order is submitted; a balance
   // payment is reviewed whenever one is waiting, whatever the order's stage.
-  const canReview = order.status === 'submitted' || pendingAmount > 0
+  const waitingForCheck = order.status === 'submitted' || pendingAmount > 0
+  // Only sales and admin approve or reject; management only looks.
+  const canReview = canCheck && waitingForCheck
 
 
   // =============================================
@@ -998,7 +1004,7 @@ function PaymentModal({ order, estimate, onClose, onReview, reviewing }) {
                 {pendingAmount > 0 && (
                   <div className="rounded-md border border-yellow-200 bg-yellow-50 p-3 md:col-span-2">
                     <p className="text-xs font-semibold uppercase text-yellow-700">
-                      Awaiting your verification
+                      {canCheck ? 'Awaiting your verification' : 'Awaiting sales\' verification'}
                     </p>
 
                     <p className="mt-1 text-lg font-bold text-yellow-900">
@@ -1006,7 +1012,9 @@ function PaymentModal({ order, estimate, onClose, onReview, reviewing }) {
                     </p>
 
                     <p className="mt-1 text-xs text-yellow-800">
-                      Open the proof below and approve only if it shows exactly this amount received. Until then it doesn't count as paid.
+                      {canCheck
+                        ? "Open the proof below and approve only if it shows exactly this amount received. Until then it doesn't count as paid."
+                        : "Sales checks it against the proof below. Until then it doesn't count as paid."}
                     </p>
                   </div>
                 )}
@@ -1148,6 +1156,10 @@ function PaymentModal({ order, estimate, onClose, onReview, reviewing }) {
           >
             Cancel
           </button>
+
+          {waitingForCheck && !canCheck && (
+            <p className="order-first mr-auto text-sm text-gray-500">View only: sales approves or rejects payments.</p>
+          )}
 
           {canReview && (
             <>

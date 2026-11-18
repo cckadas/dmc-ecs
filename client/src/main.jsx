@@ -6,6 +6,11 @@ import App from "./App.jsx"
 
 import { AuthProvider } from "./context/AuthContext"
 import { ToastProvider } from "./context/ToastContext.jsx"
+import { keepNumbersFromScrolling } from "./utils/noScrollNumbers"
+
+
+// The mouse wheel never changes a number box: numbers are typed.
+keepNumbersFromScrolling()
 
 
 ReactDOM.createRoot(

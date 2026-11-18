@@ -73,7 +73,8 @@ export const NAV_SECTIONS = [
         label: 'Customer Orders',
         path: 'customer-orders',
         icon: faCartShopping,
-        roles: ['admin', 'sales'],
+        // Management: view only (no checking payments).
+        roles: ['admin', 'sales', 'management'],
       },
       {
         label: 'Billings',
