@@ -793,8 +793,8 @@ function ShipEstimateCheck({ estimate, preferredDate }) {
 
 function QuotationModal({ request, creating, onClose, onSubmit }) {
   // Fixed, like the prices: the country's shipping cost, and the cost of the
-  // container the order needs (the smallest that holds it, or a bigger one if
-  // the customer wants to upgrade).
+  // container the order needs: the smallest that holds it, worked out from each
+  // product's volume and weight per case. Nobody picks it (DMC, Nov 2026).
   const [shipping, setShipping] = useState({ cost: null, source: '' })
   const [containers, setContainers] = useState(null)
   const [containerCode, setContainerCode] = useState('')
@@ -1166,8 +1166,7 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                   </h3>
 
                   <div className="rounded-lg bg-gray-50 p-5">
-                    {/* The smallest container that holds the order is chosen for you; only a
-                        bigger one can be picked, when the customer wants to upgrade. */}
+                    {/* The smallest container that holds the order, chosen by the system. */}
                     <div className="mb-3 text-sm">
                       <div className="flex items-center justify-between gap-3">
                         <span className="font-medium text-gray-700">
@@ -1177,17 +1176,9 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                         {loadingPrices ? (
                           <span className="font-medium text-gray-800">Loading...</span>
                         ) : containers?.smallest ? (
-                          <select
-                            value={containerCode}
-                            onChange={(e) => setContainerCode(e.target.value)}
-                            className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm outline-none focus:border-[#2D5A42] focus:ring-1 focus:ring-[#2D5A42]"
-                          >
-                            {containers.options.map((option) => (
-                              <option key={option.code} value={option.code} disabled={!option.fits}>
-                                {option.name}{option.fits ? '' : ' (too small)'}
-                              </option>
-                            ))}
-                          </select>
+                          <span className="font-medium text-gray-800" title="The smallest container that holds the order, from each product's volume and weight per case">
+                            {containers.smallest.name}
+                          </span>
                         ) : (
                           <span className="font-medium text-gray-800">-</span>
                         )}
@@ -1203,7 +1194,7 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
 
                       {container && firstSize && containers.smallest.code !== firstSize.code && (
                         <p className="mt-1 text-right text-xs font-medium text-amber-700">
-                          Too big for a {firstSize.name}. Check the customer wants the {container.name}, or ask them to reduce the quantity.
+                          Too big for a {firstSize.name}, so it goes in a {container.name}.
                         </p>
                       )}
 

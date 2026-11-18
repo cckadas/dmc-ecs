@@ -186,6 +186,11 @@ function MarkupsSection() {
         Every quotation price is the supplier price plus the markup for the delivery country, and each quotation pays that country's fixed shipping cost, however much it holds. Countries that aren't listed use the Default row. Sales can't change quotation prices or shipping, so these rates are the only way to change what customers pay.
       </p>
 
+      <p className="mb-3 text-sm text-gray-500">
+        <span className="mr-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">Simulated</span>
+        rates are made up until DMC gives its own: Hong Kong's 25%, and 1 point more for every 2,000 km a country is farther from Manila than Hong Kong (up to 30%). Saving a country's rates makes them DMC's own.
+      </p>
+
       {loadError && (
         <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
           <p className="text-sm text-amber-800">{loadError}</p>
@@ -212,6 +217,7 @@ function MarkupsSection() {
                   <td className="px-5 py-3 font-medium text-gray-800">
                     {markup.country}
                     {isDefault && <span className="ml-2 text-xs text-gray-500">(used for unlisted countries)</span>}
+                    {markup.is_simulated && <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">Simulated</span>}
                   </td>
 
                   <td className="px-5 py-3">

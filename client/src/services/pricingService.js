@@ -1,5 +1,6 @@
 import { supabase } from '../supabase'
 import { planContainer } from '../utils/containers'
+import { withNewColumns } from '../utils/newColumns'
 
 
 // =============================================================================
@@ -81,10 +82,12 @@ export async function getProductManufacturers() {
 
 
 export async function getMarkups() {
-  const { data, error } = await supabase
+  // is_simulated: rates worked out by distance until DMC gives its own
+  // (db/migrations/030); asked again without it until that script is run.
+  const { data, error } = await withNewColumns((withSimulated) => supabase
     .from('market_markups')
-    .select('country, markup_percent, shipping_cost')
-    .order('country')
+    .select(`country, markup_percent, shipping_cost${withSimulated ? ', is_simulated' : ''}`)
+    .order('country'), ['is_simulated'])
 
   if (error) throw error
 
