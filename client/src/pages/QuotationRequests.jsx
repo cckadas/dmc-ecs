@@ -15,6 +15,8 @@ import { previewMyEstimate } from '../services/predictionService'
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
 import TableScroll from '../components/TableScroll'
+import ListControls from '../components/ListControls'
+import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, showChoices, showingOf, statusLabel } from '../utils/listControls'
 
 
 export default function QuotationRequestsPage() {
@@ -25,6 +27,10 @@ export default function QuotationRequestsPage() {
   const [products, setProducts] = useState([])
   const [showModal, setShowModal] = useState(false)
   const [requests, setRequests] = useState([])
+  // Show (a request status), Sort by and Search, above the list.
+  const [show, setShow] = useState(ALL)
+  const [sortBy, setSortBy] = useState('status')
+  const [search, setSearch] = useState('')
   const [showQuotationModal, setShowQuotationModal] = useState(false)
   const [selectedQuotation, setSelectedQuotation] = useState(null)
   const [loadingQuotation, setLoadingQuotation] = useState(false)
@@ -412,6 +418,26 @@ export default function QuotationRequestsPage() {
   // =============================================
   // MAIN CONTENT
   // =============================================
+  // The list as chosen above it. A priced request is waiting for the customer.
+  const REQUEST_ORDER = ['awaiting pricing', 'priced & sent to customer', 'approved', 'rejected', 'cancelled']
+  const requestList = {
+    statusOf: (request) => request.status,
+    order: REQUEST_ORDER,
+    labelOf: (status) => (status === 'priced & sent to customer' ? 'Waiting for your answer' : statusLabel(status)),
+    allLabel: 'All requests',
+  }
+  const choices = showChoices(requests, requestList)
+  const showing = showingOf(choices, show)
+  const shownRequests = applySort(
+    applySearch(applyShow(requests, showing, requestList), search, (request) => [request.quotation_reference, ...(request.quotation_request_items || []).map((item) => item.products?.product_name)].join(' ')),
+    sortBy,
+    {
+      status: byStatus((request) => request.status, REQUEST_ORDER, (request) => request.created_at),
+      newest: byNewest((request) => request.created_at),
+      oldest: byOldest((request) => request.created_at),
+    }
+  )
+
   return (
     <div>
 
@@ -452,6 +478,26 @@ export default function QuotationRequestsPage() {
       )}
 
 
+      <ListControls
+        choices={choices}
+        show={showing}
+        onShow={setShow}
+        sorts={[
+          { value: 'status', label: 'Status (awaiting pricing first, newest first in each)' },
+          { value: 'newest', label: 'Newest first' },
+          { value: 'oldest', label: 'Oldest first' },
+        ]}
+        sortBy={sortBy}
+        onSort={setSortBy}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="Reference or product"
+        shown={shownRequests.length}
+        total={requests.length}
+        noun={requests.length === 1 ? 'request' : 'requests'}
+      />
+
+
       {/* Table */}
       <TableScroll className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
@@ -485,8 +531,8 @@ export default function QuotationRequestsPage() {
 
 
           <tbody>
-            {requests.length > 0 ? (
-              requests.map((request) => (
+            {shownRequests.length > 0 ? (
+              shownRequests.map((request) => (
                 <tr
                   key={request.id}
                   className="border-t border-gray-200 text-sm hover:bg-gray-50"
@@ -548,7 +594,7 @@ export default function QuotationRequestsPage() {
                   colSpan="6"
                   className="py-10 text-center text-sm text-gray-500"
                 >
-                  No quotation requests found.
+                  {requests.length > 0 ? 'Nothing matches what is chosen above.' : 'No quotation requests found.'}
                 </td>
               </tr>
             )}

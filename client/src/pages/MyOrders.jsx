@@ -16,6 +16,9 @@ import LabelDesignsNote from '../components/LabelDesignsNote'
 import DownPaymentDeadline from '../components/DownPaymentDeadline'
 import { CANCELLATION_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
 import { loadMyEstimates } from '../services/predictionService'
+import ListControls from '../components/ListControls'
+import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, showChoices, showingOf } from '../utils/listControls'
+import { STATUS_ORDER } from '../utils/orderStatusSort'
 
 
 export default function MyOrdersPage() {
@@ -23,6 +26,10 @@ export default function MyOrdersPage() {
   const { toast } = useToast()
 
   const [orders, setOrders] = useState([])
+  // Show (a status), Sort by and Search, above the list.
+  const [show, setShow] = useState(ALL)
+  const [sortBy, setSortBy] = useState('status')
+  const [search, setSearch] = useState('')
   const [selectedOrder, setSelectedOrder] = useState(null)
   const [showModal, setShowModal] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -129,6 +136,19 @@ export default function MyOrdersPage() {
   // =============================================
   // MAIN CONTENT
   // =============================================
+  const orderList = { statusOf: (order) => order.status, order: STATUS_ORDER, allLabel: 'All orders' }
+  const choices = showChoices(orders, orderList)
+  const showing = showingOf(choices, show)
+  const shownOrders = applySort(
+    applySearch(applyShow(orders, showing, orderList), search, (order) => [order.order_number, order.quotation_number].join(' ')),
+    sortBy,
+    {
+      status: byStatus((order) => order.status, STATUS_ORDER, (order) => order.created_at),
+      newest: byNewest((order) => order.created_at),
+      oldest: byOldest((order) => order.created_at),
+    }
+  )
+
   return (
     <div>
 
@@ -142,6 +162,27 @@ export default function MyOrdersPage() {
           Track your orders and see where each one is in the process.
         </p>
       </div>
+
+
+      <ListControls
+        choices={choices}
+        show={showing}
+        onShow={setShow}
+        sorts={[
+          { value: 'status', label: 'Status (the order\'s steps, newest first in each)' },
+          { value: 'newest', label: 'Newest first' },
+          { value: 'oldest', label: 'Oldest first' },
+        ]}
+        sortBy={sortBy}
+        onSort={setSortBy}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="Order or quotation number"
+        shown={shownOrders.length}
+        total={orders.length}
+        noun={orders.length === 1 ? 'order' : 'orders'}
+        loading={loading}
+      />
 
 
       {/* TABLE */}
@@ -190,8 +231,8 @@ export default function MyOrdersPage() {
                 </td>
               </tr>
 
-            ) : orders.length > 0 ? (
-              orders.map((order) => (
+            ) : shownOrders.length > 0 ? (
+              shownOrders.map((order) => (
                 <tr
                   key={order.id}
                   className="border-t border-gray-200 text-sm hover:bg-gray-50"
@@ -238,7 +279,7 @@ export default function MyOrdersPage() {
             ) : (
               <tr>
                 <td colSpan="6" className="py-10 text-center text-sm text-gray-500">
-                  You have no customer orders.
+                  {orders.length > 0 ? 'Nothing matches what is chosen above.' : 'You have no customer orders.'}
                 </td>
               </tr>
 

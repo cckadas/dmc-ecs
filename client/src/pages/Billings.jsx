@@ -8,6 +8,8 @@ import { faFileInvoice } from '@fortawesome/free-solid-svg-icons'
 import StatusBadge from '../components/StatusBadge'
 import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
+import ListControls from '../components/ListControls'
+import { ALL, applySearch, applyShow, applySort, byHighest, byNewest, byOldest, byStatus, showChoices, showingOf } from '../utils/listControls'
 
 
 export default function BillingsPage() {
@@ -15,6 +17,10 @@ export default function BillingsPage() {
   const { toast } = useToast()
 
   const [orders, setOrders] = useState([])
+  // Show (a payment status), Sort by and Search, above the list.
+  const [show, setShow] = useState(ALL)
+  const [sortBy, setSortBy] = useState('status')
+  const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
 
 
@@ -203,6 +209,24 @@ export default function BillingsPage() {
   // =====================================================
   // MAIN CONTENT
   // =====================================================
+  // The list as chosen above it: unpaid first, then down payment received,
+  // fully paid, cancelled.
+  const BILLING_ORDER = ['unpaid', 'down payment received', 'fully paid', 'cancelled']
+  const billingList = { statusOf: getPaymentStatus, order: BILLING_ORDER }
+  const choices = showChoices(orders, billingList)
+  const showing = showingOf(choices, show)
+  const shownOrders = applySort(
+    applySearch(applyShow(orders, showing, billingList), search, (order) =>
+      [order.order_number, order.quotation_number, order.customer?.name, order.customer?.company].join(' ')),
+    sortBy,
+    {
+      status: byStatus(getPaymentStatus, BILLING_ORDER, (order) => order.created_at),
+      balance: byHighest(getRemainingBalance),
+      newest: byNewest((order) => order.created_at),
+      oldest: byOldest((order) => order.created_at),
+    }
+  )
+
   return (
     <div>
 
@@ -218,6 +242,28 @@ export default function BillingsPage() {
           View and track customer order billing and payment information.
         </p>
       </div>
+
+
+      <ListControls
+        choices={choices}
+        show={showing}
+        onShow={setShow}
+        sorts={[
+          { value: 'status', label: 'Status (unpaid first, newest first in each)' },
+          { value: 'balance', label: 'Balance (highest first)' },
+          { value: 'newest', label: 'Newest first' },
+          { value: 'oldest', label: 'Oldest first' },
+        ]}
+        sortBy={sortBy}
+        onSort={setSortBy}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="Order number or customer"
+        shown={shownOrders.length}
+        total={orders.length}
+        noun={orders.length === 1 ? 'order' : 'orders'}
+        loading={loading}
+      />
 
 
       {/* =================================================
@@ -272,9 +318,9 @@ export default function BillingsPage() {
                   </td>
                 </tr>
 
-              ) : orders.length > 0 ? (
+              ) : shownOrders.length > 0 ? (
 
-                orders.map((order) => {
+                shownOrders.map((order) => {
 
                   const balance =  getRemainingBalance(order)
 
@@ -372,7 +418,7 @@ export default function BillingsPage() {
               ) : (
                 <tr>
                   <td colSpan="8" className="py-10 text-center text-sm text-gray-500">
-                    No customer orders found.
+                    {orders.length > 0 ? 'Nothing matches what is chosen above.' : 'No customer orders found.'}
                   </td>
                 </tr>
               )}

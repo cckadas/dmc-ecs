@@ -12,6 +12,8 @@ import TableScroll from '../components/TableScroll'
 import WarehouseCapacityBanner from '../components/WarehouseCapacityBanner'
 import { casesThatFit, suggestRacks, formatCbm, summarizeCapacity } from '../utils/warehouseCapacity'
 import { loadExpectedDeliveries } from '../services/predictionService'
+import ListControls from '../components/ListControls'
+import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, bySoonest, showChoices, showingOf } from '../utils/listControls'
 
 
 // =============================================
@@ -103,6 +105,10 @@ export default function ReceivingPage() {
   const { toast } = useToast()
 
   const [purchaseOrders, setPurchaseOrders] = useState([])
+  // Show (a delivery status), Sort by and Search, above the list.
+  const [show, setShow] = useState(ALL)
+  const [sortBy, setSortBy] = useState('status')
+  const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [warehouseRacks, setWarehouseRacks] = useState([])
   const [loadingRacks, setLoadingRacks] = useState(false)
@@ -317,6 +323,23 @@ export default function ReceivingPage() {
   }, [])
 
 
+  // The list as chosen above it.
+  const PO_ORDER = ['sent to supplier', 'awaiting delivery', 'partially delivered', 'fully delivered']
+  const poList = { statusOf: (po) => po.status, order: PO_ORDER, allLabel: 'All purchase orders' }
+  const choices = showChoices(purchaseOrders, poList)
+  const showing = showingOf(choices, show)
+  const shownPurchaseOrders = applySort(
+    applySearch(applyShow(purchaseOrders, showing, poList), search, (po) => [po.po_number, po.customer_orders?.order_number, po.customer_orders?.profile?.name, po.customer_orders?.profile?.company].join(' ')),
+    sortBy,
+    {
+      status: byStatus((po) => po.status, PO_ORDER, (po) => po.created_at),
+      expected: bySoonest((po) => po.expected_delivery_date),
+      newest: byNewest((po) => po.created_at),
+      oldest: byOldest((po) => po.created_at),
+    }
+  )
+
+
   // =====================================================
   // MAIN CONTENT
   // =====================================================
@@ -342,6 +365,28 @@ export default function ReceivingPage() {
       <ExpectedDeliveries racks={warehouseRacks} />
 
 
+      <ListControls
+        choices={choices}
+        show={showing}
+        onShow={setShow}
+        sorts={[
+          { value: 'status', label: 'Status (still to come first, newest first in each)' },
+          { value: 'expected', label: 'Expected delivery (soonest first)' },
+          { value: 'newest', label: 'Newest first' },
+          { value: 'oldest', label: 'Oldest first' },
+        ]}
+        sortBy={sortBy}
+        onSort={setSortBy}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="PO or order number, customer"
+        shown={shownPurchaseOrders.length}
+        total={purchaseOrders.length}
+        noun={purchaseOrders.length === 1 ? 'purchase order' : 'purchase orders'}
+        loading={loading}
+      />
+
+
       {/* =================================================
           PURCHASE ORDERS
       ================================================= */}
@@ -351,20 +396,20 @@ export default function ReceivingPage() {
           Loading purchase orders...
         </div>
 
-      ) : purchaseOrders.length === 0 ? (
+      ) : shownPurchaseOrders.length === 0 ? (
 
         <div className="rounded-xl border border-gray-200 bg-white py-12 text-center shadow-sm">
           <FontAwesomeIcon icon={faBoxesPacking} className="mb-3 h-8 w-8 text-gray-300"/>
 
           <p className="text-sm text-gray-500">
-            No purchase orders found.
+            {purchaseOrders.length > 0 ? 'Nothing matches what is chosen above.' : 'No purchase orders found.'}
           </p>
         </div>
 
       ) : (
 
         <div className="space-y-6">
-          {purchaseOrders.map((po) => {
+          {shownPurchaseOrders.map((po) => {
             const items =po.purchase_order_items || []
 
             // -------------------------------------------------

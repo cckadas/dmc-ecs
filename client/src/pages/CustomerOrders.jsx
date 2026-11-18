@@ -16,6 +16,8 @@ import TableScroll from '../components/TableScroll'
 import DownPaymentDeadline from '../components/DownPaymentDeadline'
 import { CANCELLATION_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
 import { ALL, filterOrders, showChoices, sortOrders } from '../utils/orderStatusSort'
+import ListControls from '../components/ListControls'
+import { applySearch } from '../utils/listControls'
 
 
 // What to tell the reviewer when a payment check is refused.
@@ -55,6 +57,7 @@ export default function CustomerOrdersPage() {
   // how it's sorted (by status, or by date).
   const [show, setShow] = useState(ALL)
   const [sortBy, setSortBy] = useState('status')
+  const [search, setSearch] = useState('')
 
 
   // =============================================
@@ -358,7 +361,11 @@ export default function CustomerOrdersPage() {
   const choices = showChoices(orders)
   // A status no order has any more (e.g. its last one just moved on) shows all.
   const showing = choices.some((choice) => choice.value === show) ? show : ALL
-  const shownOrders = sortOrders(filterOrders(orders, showing), sortBy)
+  const shownOrders = sortOrders(
+    applySearch(filterOrders(orders, showing), search, (order) =>
+      [order.order_number, order.quotation_number, order.customer?.name, order.customer?.company].join(' ')),
+    sortBy
+  )
 
 
   // =============================================
@@ -379,42 +386,26 @@ export default function CustomerOrdersPage() {
       </div>
 
 
-      {/* SHOW AND SORT BY STATUS */}
-      <div className="mb-4 flex flex-wrap items-end gap-4">
-        <label className="flex flex-col gap-1 text-sm text-gray-600">
-          Show
-          <select
-            value={showing}
-            onChange={(event) => setShow(event.target.value)}
-            className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800"
-          >
-            {choices.map((choice) => (
-              <option key={choice.value} value={choice.value}>
-                {choice.label} ({choice.count})
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="flex flex-col gap-1 text-sm text-gray-600">
-          Sort by
-          <select
-            value={sortBy}
-            onChange={(event) => setSortBy(event.target.value)}
-            className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800"
-          >
-            <option value="status">Status (the order's steps, newest first in each)</option>
-            <option value="newest">Newest first</option>
-            <option value="oldest">Oldest first</option>
-          </select>
-        </label>
-
-        {!loading && (
-          <p className="pb-2 text-sm text-gray-500">
-            Showing {shownOrders.length} of {orders.length} {orders.length === 1 ? 'order' : 'orders'}
-          </p>
-        )}
-      </div>
+      {/* SHOW, SORT BY AND SEARCH */}
+      <ListControls
+        choices={choices}
+        show={showing}
+        onShow={setShow}
+        sorts={[
+          { value: 'status', label: "Status (the order's steps, newest first in each)" },
+          { value: 'newest', label: 'Newest first' },
+          { value: 'oldest', label: 'Oldest first' },
+        ]}
+        sortBy={sortBy}
+        onSort={setSortBy}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="Order number or customer"
+        shown={shownOrders.length}
+        total={orders.length}
+        noun={orders.length === 1 ? 'order' : 'orders'}
+        loading={loading}
+      />
 
 
       {/* TABLE */}
@@ -541,7 +532,7 @@ export default function CustomerOrdersPage() {
             ) : (
               <tr>
                 <td colSpan="8" className="py-10 text-center text-sm text-gray-500">
-                  {orders.length > 0 ? 'No orders with this status.' : 'No customer orders found.'}
+                  {orders.length > 0 ? 'Nothing matches what is chosen above.' : 'No customer orders found.'}
                 </td>
               </tr>
             )}

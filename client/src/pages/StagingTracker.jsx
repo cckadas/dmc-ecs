@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import ListControls from '../components/ListControls'
+import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, showChoices, showingOf } from '../utils/listControls'
 import { supabase } from '../supabase'
 import { useToast } from '../context/ToastContext'
 import { createNotification } from '../services/notificationService'
@@ -78,6 +80,10 @@ export default function StagingTrackerPage() {
   const { toast } = useToast()
 
   const [customerOrders, setCustomerOrders] = useState([])
+  // Show (a status), Sort by and Search, above the list.
+  const [show, setShow] = useState(ALL)
+  const [sortBy, setSortBy] = useState('status')
+  const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
 
 
@@ -713,6 +719,22 @@ export default function StagingTrackerPage() {
   }, [])
 
 
+  // The list as chosen above it.
+  const STAGING_ORDER = ['warehouse preparation', 'ready for shipment']
+  const stagingList = { statusOf: (group) => group.customer_order?.status, order: STAGING_ORDER, allLabel: 'All orders' }
+  const choices = showChoices(customerOrders, stagingList)
+  const showing = showingOf(choices, show)
+  const shownGroups = applySort(
+    applySearch(applyShow(customerOrders, showing, stagingList), search, (group) => [group.customer_order?.order_number, group.customer_order?.quotation_number, group.customer_order?.profile?.name, group.customer_order?.profile?.company].join(' ')),
+    sortBy,
+    {
+      status: byStatus((group) => group.customer_order?.status, STAGING_ORDER, (group) => group.customer_order?.created_at),
+      newest: byNewest((group) => group.customer_order?.created_at),
+      oldest: byOldest((group) => group.customer_order?.created_at),
+    }
+  )
+
+
   // =====================================================
   // MAIN CONTENT
   // =====================================================
@@ -734,6 +756,27 @@ export default function StagingTrackerPage() {
 
 
 
+      <ListControls
+        choices={choices}
+        show={showing}
+        onShow={setShow}
+        sorts={[
+          { value: 'status', label: 'Status (warehouse preparation first)' },
+          { value: 'newest', label: 'Newest first' },
+          { value: 'oldest', label: 'Oldest first' },
+        ]}
+        sortBy={sortBy}
+        onSort={setSortBy}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="Order number or customer"
+        shown={shownGroups.length}
+        total={customerOrders.length}
+        noun={customerOrders.length === 1 ? 'order' : 'orders'}
+        loading={loading}
+      />
+
+
       {/* =================================================
           LOADING
       ================================================= */}
@@ -743,7 +786,7 @@ export default function StagingTrackerPage() {
           Loading staging orders...
         </div>
 
-      ) : customerOrders.length === 0 ? (
+      ) : shownGroups.length === 0 ? (
 
         /* =================================================
            EMPTY STATE
@@ -752,7 +795,7 @@ export default function StagingTrackerPage() {
           <FontAwesomeIcon icon={faBoxOpen} className="mb-3 h-8 w-8 text-gray-300"/>
 
           <p className="text-sm text-gray-500">
-            No customer order items are ready for staging.
+            {customerOrders.length > 0 ? 'Nothing matches what is chosen above.' : 'No customer order items are ready for staging.'}
           </p>
         </div>
 
@@ -762,7 +805,7 @@ export default function StagingTrackerPage() {
            CUSTOMER ORDERS
         ================================================= */
         <div className="space-y-6">
-          {customerOrders.map((orderGroup) => {
+          {shownGroups.map((orderGroup) => {
 
               const customerOrder =  orderGroup.customer_order
               const items = orderGroup.items || []

@@ -188,7 +188,7 @@ function MarkupsSection() {
 
       <p className="mb-3 text-sm text-gray-500">
         <span className="mr-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">Simulated</span>
-        rates are made up until DMC gives its own: Hong Kong's 25%, and 1 point more for every 2,000 km a country is farther from Manila than Hong Kong (up to 30%). Saving a country's rates makes them DMC's own.
+        rates are made up until DMC gives its own, from how far each country is from Manila: the markup is Hong Kong's 25% plus 1 point, and the shipping cost Hong Kong's ₱120,000 plus ₱10,000, for every 2,000 km farther than Hong Kong (up to 30% and ₱170,000). Saving a country's rates makes them DMC's own.
       </p>
 
       {loadError && (

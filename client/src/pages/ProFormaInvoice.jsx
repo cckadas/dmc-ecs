@@ -16,6 +16,8 @@ import { previewEstimate } from '../services/predictionService'
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
 import TableScroll from '../components/TableScroll'
+import ListControls from '../components/ListControls'
+import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, showChoices, showingOf } from '../utils/listControls'
 
 
 export default function ProFormaInvoicePage() {
@@ -24,6 +26,10 @@ export default function ProFormaInvoicePage() {
 
   const [showModal, setShowModal] = useState(false)
   const [requests, setRequests] = useState([])
+  // Show (a request status), Sort by and Search, above the list.
+  const [show, setShow] = useState(ALL)
+  const [sortBy, setSortBy] = useState('status')
+  const [search, setSearch] = useState('')
   const [currentRequest, setCurrentRequest] = useState(null)
   const [currentQuotation, setCurrentQuotation] = useState(null)
   const [creatingQuotation, setCreatingQuotation] = useState(false)
@@ -314,6 +320,23 @@ export default function ProFormaInvoicePage() {
   // =============================================
   // MAIN CONTENT
   // =============================================
+  // The list as chosen above it. By status: awaiting pricing first, the one
+  // waiting longest first.
+  const REQUEST_ORDER = ['awaiting pricing', 'priced & sent to customer', 'approved', 'rejected', 'cancelled']
+  const requestList = { statusOf: (request) => request.status, order: REQUEST_ORDER, allLabel: 'All requests' }
+  const choices = showChoices(requests, requestList)
+  const showing = showingOf(choices, show)
+  const byWaiting = byOldest((request) => request.created_at)
+  const shownRequests = applySort(
+    applySearch(applyShow(requests, showing, requestList), search, (request) => [request.quotation_reference, request.profiles?.name, request.profiles?.company].join(' ')),
+    sortBy,
+    {
+      status: (a, b) => byStatus((request) => request.status, REQUEST_ORDER, () => null)(a, b) || byWaiting(a, b),
+      oldest: byWaiting,
+      newest: byNewest((request) => request.created_at),
+    }
+  )
+
   return (
     <div>
 
@@ -329,6 +352,26 @@ export default function ProFormaInvoicePage() {
           </p>
         </div>
       </div>
+
+
+      <ListControls
+        choices={choices}
+        show={showing}
+        onShow={setShow}
+        sorts={[
+          { value: 'status', label: 'Status (awaiting pricing first, waiting longest first)' },
+          { value: 'oldest', label: 'Oldest first (waiting longest)' },
+          { value: 'newest', label: 'Newest first' },
+        ]}
+        sortBy={sortBy}
+        onSort={setSortBy}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="Reference or customer"
+        shown={shownRequests.length}
+        total={requests.length}
+        noun={requests.length === 1 ? 'request' : 'requests'}
+      />
 
 
       {/* Table */}
@@ -368,8 +411,8 @@ export default function ProFormaInvoicePage() {
 
 
           <tbody>
-            {requests.length > 0 ? (
-              requests.map((request) => (
+            {shownRequests.length > 0 ? (
+              shownRequests.map((request) => (
                 <tr
                   key={request.id}
                   className="border-t border-gray-200 text-sm hover:bg-gray-50"
@@ -415,7 +458,7 @@ export default function ProFormaInvoicePage() {
                   colSpan="6"
                   className="py-10 text-center text-sm text-gray-500"
                 >
-                  No quotation requests found.
+                  {requests.length > 0 ? 'Nothing matches what is chosen above.' : 'No quotation requests found.'}
                 </td>
               </tr>
             )}

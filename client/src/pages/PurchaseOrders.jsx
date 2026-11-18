@@ -24,6 +24,8 @@ import {
 import StatusBadge from '../components/StatusBadge'
 import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
+import ListControls from '../components/ListControls'
+import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, bySoonest, showChoices, showingOf } from '../utils/listControls'
 import PurchaseOrderHistory from '../components/PurchaseOrderHistory'
 
 
@@ -36,6 +38,10 @@ export default function PurchaseOrdersPage() {
   const { toast } = useToast()
 
   const [purchaseOrders, setPurchaseOrders] = useState([])
+  // Show (a status), Sort by and Search, above the list.
+  const [show, setShow] = useState(ALL)
+  const [sortBy, setSortBy] = useState('status')
+  const [search, setSearch] = useState('')
   const [customerOrders, setCustomerOrders] = useState([])
   const [suppliers, setSuppliers] = useState([])
   const [selectedPO, setSelectedPO] = useState(null)
@@ -542,6 +548,29 @@ export default function PurchaseOrdersPage() {
   }, [profile?.id])
 
 
+  // The list as chosen above it.
+  const PO_ORDER = ['sent to supplier', 'awaiting delivery', 'partially delivered', 'fully delivered']
+  const poList = { statusOf: (po) => po.status, order: PO_ORDER, allLabel: 'All purchase orders' }
+  const choices = showChoices(purchaseOrders, poList)
+  const showing = showingOf(choices, show)
+  const shownPurchaseOrders = applySort(
+    applySearch(applyShow(purchaseOrders, showing, poList), search, (po) => [
+      po.po_number,
+      po.customer_orders?.order_number,
+      po.customer_orders?.profile?.name,
+      po.customer_orders?.profile?.company,
+      ...(po.purchase_order_items || []).map((item) => item.suppliers?.supplier_name),
+    ].join(' ')),
+    sortBy,
+    {
+      status: byStatus((po) => po.status, PO_ORDER, (po) => po.created_at),
+      expected: bySoonest((po) => po.expected_delivery_date),
+      newest: byNewest((po) => po.created_at),
+      oldest: byOldest((po) => po.created_at),
+    }
+  )
+
+
   // =====================================================
   // MAIN CONTENT
   // =====================================================
@@ -568,6 +597,28 @@ export default function PurchaseOrdersPage() {
           </button>
         )}
       </div>
+
+
+      <ListControls
+        choices={choices}
+        show={showing}
+        onShow={setShow}
+        sorts={[
+          { value: 'status', label: 'Status (sent to supplier first, newest first in each)' },
+          { value: 'expected', label: 'Expected delivery (soonest first)' },
+          { value: 'newest', label: 'Newest first' },
+          { value: 'oldest', label: 'Oldest first' },
+        ]}
+        sortBy={sortBy}
+        onSort={setSortBy}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="PO or order number, customer, supplier"
+        shown={shownPurchaseOrders.length}
+        total={purchaseOrders.length}
+        noun={purchaseOrders.length === 1 ? 'purchase order' : 'purchase orders'}
+        loading={loading}
+      />
 
 
       {/* =================================================
@@ -620,8 +671,8 @@ export default function PurchaseOrdersPage() {
                   Loading purchase orders...
                 </td>
               </tr>
-            ) : purchaseOrders.length > 0 ? (
-              purchaseOrders.map((po) => {
+            ) : shownPurchaseOrders.length > 0 ? (
+              shownPurchaseOrders.map((po) => {
                 const items = po.purchase_order_items || []
                 const suppliersMap = new Map()
 
@@ -729,7 +780,7 @@ export default function PurchaseOrdersPage() {
             ) : (
               <tr>
                 <td colSpan={8} className="py-10 text-center text-sm text-gray-500">
-                  No purchase orders found.
+                  {purchaseOrders.length > 0 ? 'Nothing matches what is chosen above.' : 'No purchase orders found.'}
                 </td>
               </tr>
             )}

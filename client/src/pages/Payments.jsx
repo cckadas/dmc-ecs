@@ -16,6 +16,21 @@ import { CANCELLATION_COLUMNS, columnsIf, withNewColumns } from '../utils/newCol
 import DownPaymentDeadline from '../components/DownPaymentDeadline'
 import { deadlineNote } from '../utils/deadlineNote'
 import { downPaymentStatus, formatDay } from '../utils/paymentDeadline'
+import ListControls from '../components/ListControls'
+import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, bySoonest, showChoices, showingOf } from '../utils/listControls'
+
+
+// Where each order stands with paying, for Show.
+const PAYMENT_GROUPS = [
+  { value: 'to pay', label: 'Down payment to pay', test: (order) => ['due', 'due soon', 'due today', 'overdue', 'closed'].includes(downPaymentStatus(order).state) },
+  { value: 'checking', label: 'Awaiting DMC\'s check', test: (order) => downPaymentStatus(order).state === 'checking' || Number(order.pending_payment_amount || 0) > 0 },
+  { value: 'balance', label: 'Balance to pay', test: (order) => Number(order.settled_amount || 0) > 0 && Number(order.pending_payment_amount || 0) <= 0 && Number(order.total_amount || 0) - Number(order.settled_amount || 0) > 0.009 && String(order.status).toLowerCase() !== 'cancelled' },
+  { value: 'paid', label: 'Fully paid', test: (order) => Number(order.total_amount || 0) > 0 && Number(order.settled_amount || 0) >= Number(order.total_amount || 0) },
+  { value: 'cancelled', label: 'Cancelled', test: (order) => String(order.status).toLowerCase() === 'cancelled' },
+]
+
+// The same order as before: what needs paying first.
+const PAYMENT_STATUS_ORDER = ['pending payment', 'submitted', 'payment verified', 'payment rejected', 'procurement', 'warehouse preparation', 'ready for shipment', 'shipped', 'cancelled']
 
 
 export default function PaymentsPage() {
@@ -24,6 +39,10 @@ export default function PaymentsPage() {
   const { toast } = useToast()
 
   const [payments, setPayments] = useState([])
+  // Show (where each stands with paying), Sort by and Search, above the list.
+  const [show, setShow] = useState(ALL)
+  const [sortBy, setSortBy] = useState('status')
+  const [search, setSearch] = useState('')
   const [selectedPayment, setSelectedPayment] = useState(null)
   const [showModal, setShowModal] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -150,6 +169,23 @@ export default function PaymentsPage() {
   }, [profile?.id])
 
 
+  // The list as chosen above it.
+  const paymentList = { statusOf: (order) => order.status, groups: PAYMENT_GROUPS, includeStatuses: false }
+  const choices = showChoices(payments, paymentList)
+  const showing = showingOf(choices, show)
+  const shownPayments = applySort(
+    applySearch(applyShow(payments, showing, paymentList), search, (order) => [order.order_number, order.quotation_number].join(' ')),
+    sortBy,
+    {
+      status: byStatus((order) => order.status, PAYMENT_STATUS_ORDER, (order) => order.created_at),
+      // A down payment still to pay, by its deadline; then everything else.
+      due: bySoonest((order) => (PAYMENT_GROUPS[0].test(order) ? downPaymentStatus(order).deadline : null)),
+      newest: byNewest((order) => order.created_at),
+      oldest: byOldest((order) => order.created_at),
+    }
+  )
+
+
   // =============================================
   // MAIN CONTENT
   // =============================================
@@ -168,6 +204,28 @@ export default function PaymentsPage() {
           View and settle your customer order payments.
         </p>
       </div>
+
+
+      <ListControls
+        choices={choices}
+        show={showing}
+        onShow={setShow}
+        sorts={[
+          { value: 'status', label: 'Status (what needs paying first)' },
+          { value: 'due', label: 'Due date (soonest first)' },
+          { value: 'newest', label: 'Newest first' },
+          { value: 'oldest', label: 'Oldest first' },
+        ]}
+        sortBy={sortBy}
+        onSort={setSortBy}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="Order or quotation number"
+        shown={shownPayments.length}
+        total={payments.length}
+        noun={payments.length === 1 ? 'order' : 'orders'}
+        loading={loading}
+      />
 
 
       {/* =============================================
@@ -232,9 +290,9 @@ export default function PaymentsPage() {
                   </td>
                 </tr>
 
-              ) : payments.length > 0 ? (
+              ) : shownPayments.length > 0 ? (
 
-                payments.map((payment) => {
+                shownPayments.map((payment) => {
   
                   const isPending = payment.status === 'pending payment'
                   const isSubmitted = payment.status === 'submitted'
@@ -379,7 +437,7 @@ export default function PaymentsPage() {
               ) : (
                 <tr>
                   <td colSpan={8} className="py-10 text-center text-sm text-gray-500">
-                    No payments found.
+                    {payments.length > 0 ? 'Nothing matches what is chosen above.' : 'No payments found.'}
                   </td>
                 </tr>
               )}
