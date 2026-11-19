@@ -11,6 +11,7 @@ import { PaymentHistory } from './HistoryList'
 import EstimateWorking from './EstimateWorking'
 import { deadlineNote } from '../utils/deadlineNote'
 import { downPaymentDates, formatDay as formatDeadlineDay } from '../utils/paymentDeadline'
+import { PARTLY_SHIPPED, hasShipped } from '../utils/orderShipping'
 
 
 const formatDate = (date) =>
@@ -91,7 +92,9 @@ export default function OrderProgress({ order, forStaff = false }) {
   }, [order.id, order.status, forStaff, reloads])
 
   const status = (order.status || '').trim().toLowerCase()
-  const shipped = status === 'shipped'
+  // Its container has left, in full or in part (a rush shipment).
+  const shipped = hasShipped(status)
+  const partly = status === PARTLY_SHIPPED
   const arrivedOn = shipped ? prediction?.arrivedOn || null : null
   const done = stepsDone(status, Boolean(arrivedOn))
   const dates = stepDates(order, history, arrivedOn)
@@ -144,6 +147,7 @@ export default function OrderProgress({ order, forStaff = false }) {
           const note =
             index === 1 && status === 'submitted' ? 'Payment awaiting verification'
             : index === 1 && status === 'payment rejected' ? 'Payment rejected — please pay again'
+            : index === 5 && partly ? (forStaff ? 'In part: the rest goes with the next order' : 'In part: the rest goes with your next order')
             : null
 
           return (
@@ -203,7 +207,12 @@ export default function OrderProgress({ order, forStaff = false }) {
       <div className="mt-4 space-y-1 rounded-md bg-gray-50 p-3 text-sm">
         {shipped ? (
           <>
-            <p className="text-gray-700">Shipped{dates[5] ? ` on ${formatDateTime(dates[5])}` : ''}.</p>
+            <p className="text-gray-700">
+              {partly ? 'Shipped in part' : 'Shipped'}{dates[5] ? ` on ${formatDateTime(dates[5])}` : ''}.
+              {partly && (forStaff
+                ? " The goods that hadn't arrived go in the container of the customer's next order (rush shipment)."
+                : " The goods that hadn't arrived go in the container of your next order (rush shipment).")}
+            </p>
             <ArrivalLine prediction={prediction} arrivedOn={arrivedOn} forStaff={forStaff} />
           </>
         ) : loading ? (

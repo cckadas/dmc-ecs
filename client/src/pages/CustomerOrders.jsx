@@ -14,7 +14,10 @@ import { predictOrders } from '../services/predictionService'
 import ShipDateSummary from '../components/ShipDateSummary'
 import TableScroll from '../components/TableScroll'
 import DownPaymentDeadline from '../components/DownPaymentDeadline'
-import { CANCELLATION_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
+import { CANCELLATION_COLUMNS, RUSH_ITEM_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
+import { RushAgreement, WaitingGoods } from '../components/RushShipment'
+import { loadAllWaitingGoods, loadRushAgreements, stillToShip } from '../services/rushService'
+import { lineNote, orderNumberByItem } from '../utils/rushLines'
 import { ALL, filterOrders, showChoices, sortOrders } from '../utils/orderStatusSort'
 import ListControls from '../components/ListControls'
 import { applySearch } from '../utils/listControls'
@@ -58,6 +61,10 @@ export default function CustomerOrdersPage() {
   const [show, setShow] = useState(ALL)
   const [sortBy, setSortBy] = useState('status')
   const [search, setSearch] = useState('')
+  // Rush shipments (db/migrations/034): the agreements, by order id, and every
+  // customer's goods waiting for their next order.
+  const [agreements, setAgreements] = useState(new Map())
+  const [waitingRows, setWaitingRows] = useState([])
 
 
   // =============================================
@@ -68,9 +75,9 @@ export default function CustomerOrdersPage() {
   async function loadCustomerOrders() {
     setLoading(true)
 
-    // When and why an order was cancelled: asked again without them until
-    // db/migrations/028 is run.
-    const { data, error } = await withNewColumns((withCancellation) => supabase
+    // When and why an order was cancelled (028), and what a rush shipment
+    // split (034): asked again without them until those scripts are run.
+    const { data, error } = await withNewColumns((withRush) => withNewColumns((withCancellation) => supabase
       .from('customer_orders')
       .select(`
         id,
@@ -103,6 +110,7 @@ export default function CustomerOrdersPage() {
           quantity,
           unit_price,
           subtotal,
+          ${columnsIf(withRush, RUSH_ITEM_COLUMNS)}
 
           products (
             product_name,
@@ -111,7 +119,7 @@ export default function CustomerOrdersPage() {
           )
         )
       `)
-      .order('created_at', { ascending: false }), CANCELLATION_COLUMNS)
+      .order('created_at', { ascending: false }), CANCELLATION_COLUMNS), RUSH_ITEM_COLUMNS)
 
 
     if (error) {
@@ -191,6 +199,14 @@ export default function CustomerOrdersPage() {
     predictOrders(formattedOrders)
       .then((list) => setEstimates(Object.fromEntries(list.map((prediction) => [prediction.id, prediction]))))
       .catch((error) => console.error('Failed to estimate ship dates:', error))
+
+    // The same for rush shipments.
+    Promise.all([loadRushAgreements(formattedOrders.map((order) => order.id)), loadAllWaitingGoods()])
+      .then(([agreed, waiting]) => {
+        setAgreements(agreed)
+        setWaitingRows(waiting)
+      })
+      .catch((rushError) => console.error('Failed to load rush shipments:', rushError))
 
     return formattedOrders
   }
@@ -366,6 +382,11 @@ export default function CustomerOrdersPage() {
       [order.order_number, order.quotation_number, order.customer?.name, order.customer?.company].join(' ')),
     sortBy
   )
+  const customerName = (customerId) => {
+    const customer = orders.find((order) => order.customer_id === customerId)?.customer
+    return customer?.company || customer?.name || '-'
+  }
+  const waitingOf = (orderId) => stillToShip(waitingRows.filter((row) => row.customer_order_id === orderId))
 
 
   // =============================================
@@ -385,6 +406,9 @@ export default function CustomerOrdersPage() {
         </p>
       </div>
 
+
+      {/* GOODS WAITING FOR CUSTOMERS' NEXT ORDERS (rush shipments) */}
+      <WaitingGoods rows={waitingRows} forStaff customerName={customerName} />
 
       {/* SHOW, SORT BY AND SEARCH */}
       <ListControls
@@ -501,6 +525,14 @@ export default function CustomerOrdersPage() {
                     )}
 
                     <DownPaymentDeadline order={order} forStaff className="mt-1 max-w-[16rem]" />
+
+                    {agreements.has(order.id) && (
+                      <p className="mt-1 max-w-[16rem] text-xs text-amber-700">
+                        Rush shipment{waitingOf(order.id).length
+                          ? `: ${waitingOf(order.id).reduce((sum, row) => sum + Number(row.cases || 0), 0).toLocaleString()} cases wait for the customer's next order`
+                          : ' agreed'}
+                      </p>
+                    )}
                   </td>
 
                   {/* DATE */}
@@ -545,6 +577,9 @@ export default function CustomerOrdersPage() {
         <CustomerOrderModal
           order={selectedOrder}
           estimate={estimates[selectedOrder.id]}
+          agreement={agreements.get(selectedOrder.id)}
+          waiting={waitingRows.filter((row) => row.customer_order_id === selectedOrder.id)}
+          fromOrder={orderNumberByItem(orders)}
           onClose={() => {
             setShowModal(false)
             setSelectedOrder(null)
@@ -580,7 +615,7 @@ export default function CustomerOrdersPage() {
 // =====================================================
 // VIEW CUSTOMER ORDER MODAL
 // =====================================================
-function CustomerOrderModal({ order, estimate, onClose }) {
+function CustomerOrderModal({ order, estimate, agreement = null, waiting = [], fromOrder = new Map(), onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-xl">
@@ -611,6 +646,8 @@ function CustomerOrderModal({ order, estimate, onClose }) {
         <div className="flex-1 overflow-y-auto p-6">
 
           <OrderProgress order={order} forStaff/>
+
+          <RushAgreement agreement={agreement} waiting={waiting} forStaff />
 
 
 
@@ -722,6 +759,9 @@ function CustomerOrderModal({ order, estimate, onClose }) {
                     {/* PRODUCT */}
                     <td className="px-4 py-4">
                       {item.products?.product_name || '-'}
+                      {lineNote(item, fromOrder.get(item.carried_from_item_id), { forStaff: true }) && (
+                        <span className="mt-0.5 block text-xs text-amber-700">{lineNote(item, fromOrder.get(item.carried_from_item_id), { forStaff: true })}</span>
+                      )}
                     </td>
 
                     {/* QUANTITY */}

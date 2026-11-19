@@ -2,6 +2,7 @@ import { supabase } from '../supabase'
 import { allRows } from '../utils/estimateLoader'
 import { bySize } from '../utils/productGroups'
 import { productTransactions } from '../utils/productTransactions'
+import { isCarriedLine, withNewColumnsThrown } from '../utils/newColumns'
 
 
 // =============================================================================
@@ -78,11 +79,13 @@ export async function loadProductTransactions(products, { quotations = false } =
         .in('product_id', ids)
         .order('id'))
       : [],
-    allRows(() => supabase
+    // Goods an order carries from an earlier one (a rush shipment) are that
+    // earlier order's: left out here, so they aren't counted twice.
+    withNewColumnsThrown((carried) => allRows(() => supabase
       .from('customer_order_items')
-      .select('id, product_id, quantity, customer_orders ( id, order_number, status, created_at, customer_id )')
+      .select(`id, product_id, quantity, ${carried ? 'carried_from_item_id, ' : ''}customer_orders ( id, order_number, status, created_at, customer_id )`)
       .in('product_id', ids)
-      .order('id')),
+      .order('id')), ['carried_from_item_id']).then((rows) => rows.filter((item) => !isCarriedLine(item))),
     allRows(() => supabase
       .from('purchase_order_items')
       .select('id, product_id, supplier_id, ordered_quantity, received_quantity, status, fully_received_at, purchase_orders ( id, po_number, created_at, expected_delivery_date, customer_orders ( order_number ) )')

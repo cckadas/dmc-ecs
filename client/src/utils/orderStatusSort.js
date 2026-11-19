@@ -15,6 +15,7 @@ export const STATUS_ORDER = [
   'procurement',
   'warehouse preparation',
   'ready for shipment',
+  'partly shipped',
   'shipped',
   'cancelled',
 ]

@@ -112,13 +112,14 @@ export default function DashboardPage() {
       const procurement = countStatus('procurement')
       const warehousePreparation = countStatus('warehouse preparation')
       const readyForShipment = countStatus('ready for shipment')
-      const shipped = countStatus('shipped')
+      // In full, or in part (a rush shipment: its container left).
+      const shipped = countStatus('shipped') + countStatus('partly shipped')
 
 
       // =================================================
       // TOTAL ACTIVE
       // =================================================
-      const totalActive = orders.filter((order) => order.status !== 'shipped' && order.status !== 'cancelled').length
+      const totalActive = orders.filter((order) => !['shipped', 'partly shipped', 'cancelled'].includes(order.status)).length
       const totalOverall = totalActive + shipped
 
 

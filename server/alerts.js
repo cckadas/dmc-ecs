@@ -25,7 +25,9 @@ const FIRST_CHECK_AFTER = 60 * 1000          // a minute after the server starts
 
 // The statuses of an order going through DMC's steps (payment check onward).
 // Pending payment isn't one: nothing has started until the down payment.
-const OPEN_STATUSES = new Set(['submitted', 'payment verified', 'procurement', 'warehouse preparation', 'ready for shipment'])
+// Partly shipped is (db/migrations/034): its container left, so it gets no
+// order alerts, but the goods it still waits for are on its purchase order.
+const OPEN_STATUSES = new Set(['submitted', 'payment verified', 'procurement', 'warehouse preparation', 'ready for shipment', 'partly shipped'])
 
 // Where each team opens an order alert (client/src/components/layout/navigation.js).
 const ORDER_PAGES = { sales: '/customer-orders', management: '/executive-dashboard' }

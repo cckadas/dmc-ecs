@@ -27,7 +27,8 @@ export async function allStatusHistory(client = supabaseAdmin) {
 
   return allRows(() => client
     .from('customer_order_status_history')
-    .select('customer_order_id, new_status, changed_at')
+    // The previous status tells a rushed order's steps apart (034).
+    .select('customer_order_id, previous_status, new_status, changed_at')
     .order('changed_at', { ascending: true })
     .order('id', { ascending: true }))
 }

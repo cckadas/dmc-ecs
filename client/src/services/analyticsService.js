@@ -2,6 +2,7 @@ import { supabase } from '../supabase'
 import { loadStatusHistory } from './predictionService'
 import { allRows, estimateOrders, loadAllDeliveries, loadArrivals, loadLabelSteps, loadLabelingKinds, loadModels, loadOpenDeliveries } from '../utils/estimateLoader'
 import { buildStageStatistics, normalizeStatus } from '../utils/predictions'
+import { isCarriedLine, withNewColumnsThrown } from '../utils/newColumns'
 import {
   MIN_ACCURACY_ORDERS,
   accuracyCheck,
@@ -58,7 +59,7 @@ export const PREDICTION_PARTS = ['ahead', 'orders', 'deliveries', 'weeks', 'reor
 export const HISTORY_PARTS = ['steps', 'labels', 'suppliers', 'months']
 export const ALL_PARTS = [...PREDICTION_PARTS, ...HISTORY_PARTS]
 
-const CLOSED = ['shipped', 'cancelled']
+const CLOSED = ['shipped', 'partly shipped', 'cancelled']
 
 
 // Rows by their ids, a hundred at a time, so a request never gets too long.
@@ -153,10 +154,16 @@ export async function loadAnalytics(parts = ALL_PARTS) {
   let demand = null
   let orderItems = null
   if (want('demand') || want('ahead')) {
-    const [items, products] = await Promise.all([
-      allRows(() => supabase.from('customer_order_items').select('id, customer_order_id, product_id, quantity, unit_price, subtotal').order('id')),
+    const [lines, products] = await Promise.all([
+      withNewColumnsThrown((carried) => allRows(() => supabase
+        .from('customer_order_items')
+        .select(`id, customer_order_id, product_id, quantity, unit_price, subtotal${carried ? ', carried_from_item_id' : ''}`)
+        .order('id')), ['carried_from_item_id']),
       allRows(() => supabase.from('products').select('id, category, product_name').order('id')),
     ])
+    // Goods an order carries from an earlier one (a rush shipment) were
+    // ordered on that one: counting them again would double them.
+    const items = lines.filter((item) => !isCarriedLine(item))
     orderItems = items
     // With every status change, for when each down payment was sent: this
     // month's forecast is live, moved by what's been placed so far.

@@ -10,11 +10,12 @@
 // Imports carry their .js extension so the server (Node) can load this too.
 // =============================================================================
 
-import { MIN_RECORDS, blendStep, isTestOrder, normalizeStatus } from './predictions.js'
+import { MIN_RECORDS, blendStep, isTestOrder } from './predictions.js'
 import { TEST_RUN_DAYS } from './testRuns.js'
 import { manilaDate, SCORE_WINDOW_DAYS } from './supplierScores.js'
 import { isBigContainer } from './labelingKind.js'
 import { countryName, nearestCountry } from './countryPlaces.js'
+import { hasShipped, isShipEntry } from './orderShipping.js'
 
 const DAY = 1000 * 60 * 60 * 24
 
@@ -86,7 +87,9 @@ export function sailingRecords({ orders = [], locations = [], history = [] }, { 
     if (!entriesOf[entry.customer_order_id]) entriesOf[entry.customer_order_id] = []
     entriesOf[entry.customer_order_id].push(entry)
 
-    if (normalizeStatus(entry.new_status) !== 'shipped') continue
+    // Its own container leaving (a partly shipped order becoming "shipped" is
+    // its waiting goods leaving with the next order).
+    if (!isShipEntry(entry)) continue
     const time = Date.parse(entry.changed_at)
     if (!(shippedAt[entry.customer_order_id] >= time)) shippedAt[entry.customer_order_id] = time
   }
@@ -200,7 +203,7 @@ export const casesIn = (items = []) => items.reduce((sum, item) => sum + (Number
 // sailing: the days at sea to the order's country, from recorded arrivals;
 // labelSteps: from the labels' saved steps (utils/labelingSteps.js).
 export function estimateContext({ order, items, purchaseOrders, poLines, histories, pool = null, supplierNames, sailing = null, country, now, models = null, labelingKind = null, containerSize = null, labelSteps = null }) {
-  const shipped = normalizeStatus(order?.status) === 'shipped'
+  const shipped = hasShipped(order?.status)
 
   return {
     now,

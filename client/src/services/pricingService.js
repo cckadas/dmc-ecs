@@ -142,7 +142,9 @@ function findMarkup(markups, country) {
 //               option carries its fixed cost
 // } — a price or cost is null when it can't be worked out yet, and its source
 // then says who has to fix it.
-export async function getQuotationPricing({ country, lines }) {
+// carriedLines: goods waiting from a rush shipment (db/migrations/034), already
+// paid: not priced, but they go in the container, so they count toward it.
+export async function getQuotationPricing({ country, lines, carriedLines = [] }) {
   const productIds = lines.map((line) => line.productId)
 
   const [supplierPrices, markups, containerSizes, fillPercent] = await Promise.all([
@@ -186,7 +188,7 @@ export async function getQuotationPricing({ country, lines }) {
           : `Fixed shipping cost for ${markup.country}`,
       }
 
-  const containers = planContainer({ lines, sizes: containerSizes, fillPercent })
+  const containers = planContainer({ lines: [...lines, ...carriedLines], sizes: containerSizes, fillPercent })
 
   return { prices, shipping, containers }
 }

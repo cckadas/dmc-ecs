@@ -1,7 +1,9 @@
 import { supabaseAdmin } from '../supabaseAdmin.js'
 import { customerViewOf } from '../estimates.js'
 import { describePayment } from './describe.js'
-import { CANCELLATION_COLUMNS, columnsIf, withNewColumns } from '../../client/src/utils/newColumns.js'
+import { CANCELLATION_COLUMNS, RUSH_ITEM_COLUMNS, columnsIf, withNewColumns } from '../../client/src/utils/newColumns.js'
+import { casesShipping, casesWaiting } from '../../client/src/utils/rushLines.js'
+import { hasShipped, lastShipEntry } from '../../client/src/utils/orderShipping.js'
 
 
 // =============================================================================
@@ -165,20 +167,20 @@ export async function buildCustomerContext(customerId, message) {
 
   const [profiles, orders, requests, history, settings] = await Promise.all([
     must(supabaseAdmin.from('profiles').select('name, company').eq('id', customerId).limit(1), 'profile'),
-    // When and why an order was cancelled: asked again without them until
-    // db/migrations/028 is run.
+    // When and why an order was cancelled (028), and what a rush shipment
+    // split (034): asked again without them until those scripts are run.
     must(
-      withNewColumns((withCancellation) => supabaseAdmin
+      withNewColumns((withRush) => withNewColumns((withCancellation) => supabaseAdmin
         .from('customer_orders')
         .select(`
           id, order_number, quotation_number, status, created_at, requested_ship_date, delivery_location_id, expiry_date,
           ${columnsIf(withCancellation, CANCELLATION_COLUMNS)}
           total_amount, down_payment_amount, settled_amount, pending_payment_amount, rejection_reason,
           pfi_file_path, pack_list_path, cert_shipment_path, cert_clearance_path,
-          customer_order_items ( id, quantity, unit_price, subtotal, products ( product_name, family, pack_size, unit ) )
+          customer_order_items ( id, quantity, unit_price, subtotal, ${columnsIf(withRush, RUSH_ITEM_COLUMNS)} products ( product_name, family, pack_size, unit ) )
         `)
         .eq('customer_id', customerId)
-        .order('created_at', { ascending: false }), CANCELLATION_COLUMNS),
+        .order('created_at', { ascending: false }), CANCELLATION_COLUMNS), RUSH_ITEM_COLUMNS),
       'orders'
     ),
     must(
@@ -192,7 +194,7 @@ export async function buildCustomerContext(customerId, message) {
     // Every order's history, for the prediction statistics; only this
     // customer's predictions are ever sent.
     predictions
-      ? must(supabaseAdmin.from('customer_order_status_history').select('customer_order_id, new_status, changed_at').order('changed_at', { ascending: true }), 'status history')
+      ? must(supabaseAdmin.from('customer_order_status_history').select('customer_order_id, previous_status, new_status, changed_at').order('changed_at', { ascending: true }), 'status history')
       : Promise.resolve([]),
     must(supabaseAdmin.from('business_settings').select('key, value').eq('key', 'credit_limit'), 'credit limit'),
   ])
@@ -243,6 +245,29 @@ export async function buildCustomerContext(customerId, message) {
       console.warn('Order assistant: ship date estimates unavailable.', error.message)
     }
   }
+
+  // Rush shipments (034): which order took each waiting line, and what still
+  // waits for the customer's next order.
+  const takenBy = new Map()
+  for (const other of orders) {
+    for (const line of other.customer_order_items || []) {
+      if (line.carried_from_item_id) takenBy.set(line.carried_from_item_id, other)
+    }
+  }
+  const orderNumberOfItem = new Map(orders.flatMap((other) => (other.customer_order_items || []).map((line) => [line.id, other.order_number])))
+  const waitingFor = (item) => {
+    const next = takenBy.get(item.id)
+    if (!next) return 'your next order (not placed yet)'
+    return hasShipped(next.status) ? null : next.order_number
+  }
+  const goodsWaiting = orders.flatMap((other) => (other.customer_order_items || [])
+    .filter((item) => casesWaiting(item) > 0 && waitingFor(item))
+    .map((item) => ({
+      product: productName(item.products),
+      cases: quantityText(casesWaiting(item), item.products?.unit),
+      fromOrder: other.order_number,
+      goesWith: waitingFor(item),
+    })))
 
   const orderContext = shownOrders.map((order) => {
     const status = String(order.status || '').trim().toLowerCase()
@@ -334,14 +359,28 @@ export async function buildCustomerContext(customerId, message) {
       placedOn: formatTimestamp(order.created_at),
       progress: progressInfo,
       estimatedShipment: estimate,
-      shippedOn: status === 'shipped'
-        ? formatTimestamp(orderHistory.filter((entry) => String(entry.new_status).toLowerCase() === 'shipped').at(-1)?.changed_at)
+      // The day its own container left (in full, or in part after a rush shipment).
+      shippedOn: hasShipped(status) ? formatTimestamp(lastShipEntry(orderHistory)?.changed_at) : null,
+      rushShipment: (order.customer_order_items || []).some((item) => item.ship_quantity !== null && item.ship_quantity !== undefined)
+        ? {
+            agreed: true,
+            note: 'The customer agreed to a rush shipment: only the goods already in DMC\'s warehouse went in this order\'s container; the rest go in the container of their next order, already paid for.',
+            casesInThisOrdersContainer: (order.customer_order_items || []).reduce((sum, item) => sum + casesShipping(item), 0),
+            waitingGoods: (order.customer_order_items || []).filter((item) => casesWaiting(item) > 0).map((item) => ({
+              product: productName(item.products),
+              cases: quantityText(casesWaiting(item), item.products?.unit),
+              goesWith: waitingFor(item) || 'already left with a later order',
+            })),
+          }
         : null,
       items: items.map((item) => ({
         product: productName(item.products),
         quantity: quantityText(item.quantity, item.products?.unit),
         unitPrice: peso(item.unit_price),
         lineTotal: peso(item.subtotal),
+        ...(item.carried_from_item_id
+          ? { fromEarlierOrder: `${orderNumberOfItem.get(item.carried_from_item_id) || 'an earlier order'} (rush shipment; already paid)` }
+          : {}),
       })),
       payment,
       labels: {
@@ -357,10 +396,10 @@ export async function buildCustomerContext(customerId, message) {
     }
   })
 
-  const unpaid = orders.reduce(
-    (sum, order) => sum + Math.max(Number(order.total_amount || 0) - Number(order.settled_amount || 0), 0),
-    0
-  )
+  // A cancelled order owes nothing (028).
+  const unpaid = orders
+    .filter((order) => String(order.status || '').trim().toLowerCase() !== 'cancelled')
+    .reduce((sum, order) => sum + Math.max(Number(order.total_amount || 0) - Number(order.settled_amount || 0), 0), 0)
   const creditLimit = settings[0]?.value == null ? null : Number(settings[0].value)
 
   return {
@@ -372,6 +411,9 @@ export async function buildCustomerContext(customerId, message) {
       openQuotationRequests: openRequests.length,
     },
     orders: orderContext,
+    // From rush shipments: already paid, they go in the container of the
+    // customer's next order (goesWith: the order that has them, if placed).
+    goodsWaitingForNextOrder: goodsWaiting,
     quotationRequests: [...openRequests, ...closedRequests].slice(0, MAX_ORDERS).map((request) => ({
       reference: request.quotation_reference,
       status: label(request.status),

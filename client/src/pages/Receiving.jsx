@@ -12,6 +12,7 @@ import TableScroll from '../components/TableScroll'
 import WarehouseCapacityBanner from '../components/WarehouseCapacityBanner'
 import { casesThatFit, suggestRacks, formatCbm, summarizeCapacity } from '../utils/warehouseCapacity'
 import { loadExpectedDeliveries } from '../services/predictionService'
+import { columnsIf, withNewColumns } from '../utils/newColumns'
 import ListControls from '../components/ListControls'
 import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, bySoonest, showChoices, showingOf } from '../utils/listControls'
 
@@ -123,7 +124,9 @@ export default function ReceivingPage() {
 
     setLoading(true)
 
-    const { data, error } = await supabase
+    // The cases of each line already loaded into a container (034), asked for
+    // until that script is run.
+    const { data, error } = await withNewColumns((withLoaded) => supabase
       .from('purchase_orders')
       .select(`
         id,
@@ -144,6 +147,7 @@ export default function ReceivingPage() {
           status,
           received_condition,
           warehouse_rack_id,
+          ${columnsIf(withLoaded, ['cases_loaded'])}
           created_at,
           updated_at,
 
@@ -190,7 +194,7 @@ export default function ReceivingPage() {
       `)
       .order('created_at', {
         ascending: false
-      })
+      }), ['cases_loaded'])
 
 
     if (error) {
@@ -677,8 +681,12 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
   const [saving, setSaving] = useState(false)
 
   const quantity = Number(receivedQuantity) || 0
+  // Cases of this line already loaded into a container (a rush shipment): they
+  // left, so only the rest of what's received needs racks.
+  const left = Number(item.cases_loaded || 0)
+  const here = Math.max(quantity - left, 0)
   const placed = rackRows.reduce((total, row) => total + (Number(row.quantity) || 0), 0)
-  const suggestion = suggestRacks({ quantity, caseVolume, racks: warehouseRacks, heldRackIds })
+  const suggestion = suggestRacks({ quantity: here, caseVolume, racks: warehouseRacks, heldRackIds })
 
 
   // =====================================================
@@ -689,7 +697,7 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
     setReceivedQuantity(value)
 
     if (!racksEdited) {
-      setRackRows(suggestRacks({ quantity: Number(value) || 0, caseVolume, racks: warehouseRacks, heldRackIds }).allocations)
+      setRackRows(suggestRacks({ quantity: Math.max((Number(value) || 0) - left, 0), caseVolume, racks: warehouseRacks, heldRackIds }).allocations)
     }
   }
 
@@ -700,7 +708,7 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
 
   function addRackRow() {
     setRacksEdited(true)
-    setRackRows((rows) => [...rows, { rackId: '', quantity: Math.max(quantity - placed, 0) }])
+    setRackRows((rows) => [...rows, { rackId: '', quantity: Math.max(here - placed, 0) }])
   }
 
   function removeRackRow(index) {
@@ -737,13 +745,22 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
       return
     }
 
-    if (amount > 0 && rackRows.some((row) => !row.rackId)) {
+    if (amount < left) {
+      toast.error(`${left} ${unit} of this line already left in a container, so at least ${left} were received.`)
+      return
+    }
+
+    const stillHere = amount - left
+
+    if (stillHere > 0 && rackRows.some((row) => !row.rackId)) {
       toast.error('Please choose a rack for every row.')
       return
     }
 
-    if (amount > 0 && placed !== amount) {
-      toast.error(`The racks hold ${placed} but you entered ${amount}. Every ${unit} needs a rack.`)
+    if (stillHere > 0 && placed !== stillHere) {
+      toast.error(left
+        ? `The racks hold ${placed} but ${stillHere} ${unit} are in the warehouse (${amount} received, ${left} already left in a container).`
+        : `The racks hold ${placed} but you entered ${amount}. Every ${unit} needs a rack.`)
       return
     }
 
@@ -757,7 +774,7 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
         p_item_id: item.id,
         p_quantity: amount,
         p_condition: condition,
-        p_racks: amount > 0
+        p_racks: amount - left > 0
           ? rackRows.map((row) => ({ rack_id: row.rackId, quantity: Number(row.quantity) }))
           : [],
       })
@@ -838,6 +855,18 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
               </span>
             </div>
 
+            {left > 0 && (
+              <div className="mt-2 flex justify-between">
+                <span className="text-sm text-gray-500">
+                  Already left in a container (rush shipment)
+                </span>
+
+                <span className="font-medium text-gray-800">
+                  {left}
+                </span>
+              </div>
+            )}
+
             <div className="mt-2 flex justify-between border-t pt-2">
               <span className="text-sm font-medium text-gray-700">
                 Remaining
@@ -917,17 +946,20 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
               )}
             </div>
 
-            {quantity === 0 ? (
+            {here === 0 ? (
               <p className="text-sm text-gray-500">
-                {currentReceived > 0
-                  ? 'Saving 0 undoes this receipt and frees its racks.'
-                  : 'Enter the quantity received, and racks will be suggested.'}
+                {left > 0 && quantity >= left
+                  ? `The ${left} ${unit} received so far already left in a container (rush shipment): no racks needed.`
+                  : currentReceived > 0
+                    ? 'Saving 0 undoes this receipt and frees its racks.'
+                    : 'Enter the quantity received, and racks will be suggested.'}
               </p>
             ) : (
               <>
                 {caseVolume > 0 && (
                   <p className="mb-2 text-xs text-gray-500">
-                    {quantity} {unit} × {caseVolume} m³ = {formatCbm(quantity * caseVolume)}
+                    {here} {unit} × {caseVolume} m³ = {formatCbm(here * caseVolume)}
+                    {left > 0 && ` (${left} of the ${quantity} received already left in a container)`}
                   </p>
                 )}
 
@@ -1011,17 +1043,17 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
                   + Add another rack
                 </button>
 
-                {placed !== quantity && (
+                {placed !== here && (
                   <p className="mt-2 text-sm font-medium text-amber-700">
-                    {placed < quantity
-                      ? `${quantity - placed} ${unit} still need a rack.`
-                      : `The racks hold ${placed - quantity} ${unit} too many.`}
+                    {placed < here
+                      ? `${here - placed} ${unit} still need a rack.`
+                      : `The racks hold ${placed - here} ${unit} too many.`}
                   </p>
                 )}
 
                 {suggestion.unplaced > 0 && (
                   <p className="mt-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-                    Not enough free rack space: {suggestion.unplaced} of {quantity} {unit} won't fit. Record what fits now and receive the rest when racks free up, or ask an admin to add a rack in Warehouse Locations.
+                    Not enough free rack space: {suggestion.unplaced} of {here} {unit} won't fit. Record what fits now and receive the rest when racks free up, or ask an admin to add a rack in Warehouse Locations.
                   </p>
                 )}
               </>

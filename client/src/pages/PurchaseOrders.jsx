@@ -27,6 +27,7 @@ import TableScroll from '../components/TableScroll'
 import ListControls from '../components/ListControls'
 import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, bySoonest, showChoices, showingOf } from '../utils/listControls'
 import PurchaseOrderHistory from '../components/PurchaseOrderHistory'
+import { columnsIf, isCarriedLine, withNewColumns } from '../utils/newColumns'
 
 
 // A file name that won't clash with an earlier upload.
@@ -216,7 +217,8 @@ export default function PurchaseOrdersPage() {
   async function loadCustomerOrders() {
     setLoadingCustomerOrders(true)
 
-    const {data, error} = await supabase
+    // Lines carried from an earlier order (034) are asked for until then.
+    const {data, error} = await withNewColumns((withRush) => supabase
       .from('customer_orders')
       .select(`
         id,
@@ -233,6 +235,7 @@ export default function PurchaseOrdersPage() {
           quantity,
           unit_price,
           subtotal,
+          ${columnsIf(withRush, ['carried_from_item_id'])}
 
           products (
             id,
@@ -247,7 +250,7 @@ export default function PurchaseOrdersPage() {
       .eq('status', 'payment verified')
       .order('created_at', {
         ascending: false
-      })
+      }), ['carried_from_item_id'])
 
 
     if (error) {
@@ -2065,7 +2068,10 @@ function AddPurchaseOrderModal({ customerOrders, suppliers, warehouseRacks, load
     // ---------------------------------------------------
     // CONVERT CUSTOMER ORDER ITEMS INTO PURCHASE ORDER ITEMS
     // ---------------------------------------------------
+  // Goods carried from an earlier order (a rush shipment) are already ordered
+  // on that order's purchase order.
   const purchaseItems = (selectedOrder.customer_order_items || [])
+    .filter((item) => !isCarriedLine(item))
     .map((item) => ({
       customer_order_item_id: item.id,
       product_id: item.product_id,

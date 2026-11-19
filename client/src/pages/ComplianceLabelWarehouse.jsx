@@ -5,6 +5,8 @@ import { supabase } from '../supabase'
 import { useToast } from '../context/ToastContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { createNotification } from '../services/notificationService'
+import { linesShippingNow } from '../services/rushService'
+import { casesShipping, casesWaiting } from '../utils/rushLines'
 import { faBoxOpen, faFileLines, faUpload, faXmark, faImage, faCheck, faStickyNote } from '@fortawesome/free-solid-svg-icons'
 
 import StatusBadge from '../components/StatusBadge'
@@ -128,7 +130,7 @@ async function loadCustomerOrders() {
     // LOAD CUSTOMER ORDER ITEMS
     // =================================================
     const {
-      data: orderItems,
+      data: loadedItems,
       error: orderItemsError
     } = await supabase
       .from('customer_order_items')
@@ -156,6 +158,9 @@ async function loadCustomerOrders() {
     if (orderItemsError) {
       throw orderItemsError
     }
+
+    // A rushed order: only the lines going in its container.
+    const orderItems = await linesShippingNow(loadedItems)
 
 
     // =================================================
@@ -640,7 +645,7 @@ async function loadCustomerOrders() {
       // =================================================
       // GET ALL ITEMS FROM THIS CUSTOMER ORDER
       // =================================================
-      const { data: orderItems, error: orderItemsError } = await supabase
+      const { data: loadedItems, error: orderItemsError } = await supabase
         .from('customer_order_items')
         .select(`
           id
@@ -650,6 +655,9 @@ async function loadCustomerOrders() {
       if (orderItemsError) {
         throw orderItemsError
       }
+
+      // A rushed order is ready once the lines going in its container are.
+      const orderItems = await linesShippingNow(loadedItems)
 
 
       // =================================================
@@ -1041,12 +1049,22 @@ async function loadCustomerOrders() {
                                   )}
                                 </td>
 
-                                {/* QUANTITY */}
+                                {/* QUANTITY: a rushed order's cases going in this container */}
                                 <td className="px-6 py-4 text-left font-medium text-gray-700">
-                                  {item.quantity}
+                                  {casesShipping(item)}
                                   {item.products?.unit && (
                                     <span className="ml-1 text-xs text-gray-500">
                                       {item.products.unit}
+                                    </span>
+                                  )}
+                                  {casesWaiting(item) > 0 && (
+                                    <span className="mt-0.5 block text-xs font-normal text-amber-700">
+                                      of {item.quantity}: the rest wait for the customer's next order
+                                    </span>
+                                  )}
+                                  {item.carried_from_item_id && (
+                                    <span className="mt-0.5 block text-xs font-normal text-amber-700">
+                                      Waited from an earlier order (rush shipment)
                                     </span>
                                   )}
                                 </td>

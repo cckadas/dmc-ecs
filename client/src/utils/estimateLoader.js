@@ -16,6 +16,7 @@ import { MODEL_KEYS, isOutdatedModel, modelPredictor } from './predictionModel.j
 import { labelingKindOf, labelingKinds, productsOrderedBy } from './labelingKind.js'
 import { labelingContext, labelingRecords } from './labelingSteps.js'
 import { planContainer } from './containers.js'
+import { columnsIf, withNewColumns } from './newColumns.js'
 
 // Rows, or none when the table can't be read (no access, or its script not run yet).
 const rowsOf = (result) => (result?.error ? [] : result?.data || [])
@@ -277,6 +278,11 @@ export async function loadArrivals(client, history) {
 
 
 // The orders' items, delivery countries and purchase orders.
+//
+// Goods carried from an earlier order after a rush shipment (db/migrations/034)
+// come on that order's purchase order, and the order carrying them waits for
+// them too: those lines are added to it as one more purchase order of its own,
+// with only the lines it carries.
 async function loadOrderDetails(client, orders) {
   const orderIds = orders.map((order) => order.id)
   const locationIds = [...new Set(orders.map((order) => order.delivery_location_id).filter(Boolean))]
@@ -284,7 +290,10 @@ async function loadOrderDetails(client, orders) {
   if (!orderIds.length) return { items: [], locations: [], purchaseOrders: [], poLines: [] }
 
   const [items, locations, purchaseOrders] = await Promise.all([
-    client.from('customer_order_items').select('customer_order_id, quantity, products ( supplier_id )').in('customer_order_id', orderIds),
+    withNewColumns((carried) => client
+      .from('customer_order_items')
+      .select(`customer_order_id, quantity, ${columnsIf(carried, ['po_item_id'])} products ( supplier_id )`)
+      .in('customer_order_id', orderIds), ['po_item_id']),
     locationIds.length
       ? client.from('delivery_locations').select('id, country').in('id', locationIds)
       : Promise.resolve({ data: [] }),
@@ -296,7 +305,49 @@ async function loadOrderDetails(client, orders) {
     ? rowsOf(await client.from('purchase_order_items').select('purchase_order_id, supplier_id, ordered_quantity, fully_received_at').in('purchase_order_id', poIds))
     : []
 
-  return { items: rowsOf(items), locations: rowsOf(locations), purchaseOrders: rowsOf(purchaseOrders), poLines }
+  const carried = await carriedPurchaseOrders(client, rowsOf(items))
+
+  return {
+    items: rowsOf(items),
+    locations: rowsOf(locations),
+    purchaseOrders: [...rowsOf(purchaseOrders), ...carried.purchaseOrders],
+    poLines: [...poLines, ...carried.poLines],
+  }
+}
+
+
+// For each order carrying goods from an earlier one: the earlier order's
+// purchase order, as one of its own (an id of its own, so other orders don't
+// pick it up), with only the lines it carries.
+async function carriedPurchaseOrders(client, items) {
+  const carriedItems = items.filter((item) => item.po_item_id)
+  if (!carriedItems.length) return { purchaseOrders: [], poLines: [] }
+
+  const lines = rowsOf(await client
+    .from('purchase_order_items')
+    .select('id, purchase_order_id, supplier_id, ordered_quantity, fully_received_at')
+    .in('id', [...new Set(carriedItems.map((item) => item.po_item_id))]))
+  const lineById = new Map(lines.map((line) => [line.id, line]))
+
+  const poIds = [...new Set(lines.map((line) => line.purchase_order_id))]
+  const sources = poIds.length
+    ? rowsOf(await client.from('purchase_orders').select('id, created_at, expected_delivery_date').in('id', poIds))
+    : []
+  const sourceById = new Map(sources.map((order) => [order.id, order]))
+
+  const purchaseOrders = new Map()
+  const poLines = []
+  for (const item of carriedItems) {
+    const line = lineById.get(item.po_item_id)
+    const source = line && sourceById.get(line.purchase_order_id)
+    if (!source) continue
+
+    const id = `${source.id}:carried-by:${item.customer_order_id}`
+    if (!purchaseOrders.has(id)) purchaseOrders.set(id, { ...source, id, customer_order_id: item.customer_order_id })
+    poLines.push({ ...line, purchase_order_id: id })
+  }
+
+  return { purchaseOrders: [...purchaseOrders.values()], poLines }
 }
 
 

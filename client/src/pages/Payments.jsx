@@ -30,7 +30,7 @@ const PAYMENT_GROUPS = [
 ]
 
 // The same order as before: what needs paying first.
-const PAYMENT_STATUS_ORDER = ['pending payment', 'submitted', 'payment verified', 'payment rejected', 'procurement', 'warehouse preparation', 'ready for shipment', 'shipped', 'cancelled']
+const PAYMENT_STATUS_ORDER = ['pending payment', 'submitted', 'payment verified', 'payment rejected', 'procurement', 'warehouse preparation', 'ready for shipment', 'partly shipped', 'shipped', 'cancelled']
 
 
 export default function PaymentsPage() {
@@ -109,6 +109,7 @@ export default function PaymentsPage() {
         'procurement',
         'warehouse preparation',
         'ready for shipment',
+        'partly shipped',
         'shipped',
         'cancelled'
       ])
@@ -129,6 +130,7 @@ export default function PaymentsPage() {
       'procurement': 5,
       'warehouse preparation': 6,
       'ready for shipment': 7,
+      'partly shipped': 8,
       'shipped': 8,
       'cancelled': 9,
     }
@@ -299,7 +301,7 @@ export default function PaymentsPage() {
                   const isRejected = payment.status === 'payment rejected'
                   const isVerified = payment.status === 'payment verified'
                   const isProcurement = payment.status === 'procurement'
-                  const isLaterStage = ['warehouse preparation', 'ready for shipment', 'shipped'].includes(payment.status)
+                  const isLaterStage = ['warehouse preparation', 'ready for shipment', 'partly shipped', 'shipped'].includes(payment.status)
                   const canPayBalance = isVerified || isProcurement || isLaterStage
 
                   // settled_amount = payments sales has verified; a submitted

@@ -34,6 +34,7 @@
 
 import { MIN_PO_DELIVERY_DAYS } from './dates.js'
 import { TEST_RUN_DAYS, isTestRun } from './testRuns.js'
+import { hasShipped, isRushStep, lastShipEntry } from './orderShipping.js'
 
 export const ORDER_STATUS_FLOW = [
   'pending payment',
@@ -221,7 +222,7 @@ function describeLabelPiece(left, labelSteps) {
 // entries: its status changes.
 export function orderRun(entries = []) {
   const sorted = [...entries].sort(byTime)
-  const ready = sorted.find((entry) => ['ready for shipment', 'shipped'].includes(normalizeStatus(entry.new_status)))
+  const ready = sorted.find((entry) => ['ready for shipment', 'shipped', 'partly shipped'].includes(normalizeStatus(entry.new_status)))
   if (!ready) return null
 
   const readyAt = new Date(ready.changed_at).getTime()
@@ -271,6 +272,10 @@ export function buildStageStatistics(allHistory, labelingKindOf = null) {
     for (let i = 0; i < sorted.length - 1; i++) {
       const step = STEP_BY_STATUS[normalizeStatus(sorted[i].new_status)]
       if (!step) continue
+
+      // A rush shipment ended its supplier step by the customer's choice, not
+      // because every delivery came (db/migrations/034).
+      if (isRushStep(sorted[i + 1])) continue
 
       const days = (new Date(sorted[i + 1].changed_at) - new Date(sorted[i].changed_at)) / DAY
       if (days < 0 || days > MAX_STEP_DAYS) continue
@@ -564,10 +569,12 @@ export function predictOrder(order, stageStatistics, historyByOrder, context = {
     return entry ? new Date(entry.changed_at) : null
   }
 
-  if (currentStatus === 'shipped') {
+  if (hasShipped(currentStatus)) {
     // At sea: arrived once its arrival is recorded (db/migrations/025); until
-    // then, expected by the days at sea recorded arrivals took.
-    const shippedOn = lastChangeInto('shipped')
+    // then, expected by the days at sea recorded arrivals took. Shipped in part
+    // (a rush shipment) counts from the day its own container left.
+    const shipEntry = lastShipEntry(orderHistory)
+    const shippedOn = shipEntry ? new Date(shipEntry.changed_at) : null
     const arrivedOn = order.arrived_on || null
     const sailing = !arrivedOn && shippedOn && context.sailing?.typical >= 0 ? context.sailing : null
     const fromShip = (days) => new Date(shippedOn.getTime() + days * DAY)

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faFolderOpen, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faFolderOpen, faTruckFast, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 import StatusBadge from '../components/StatusBadge'
 import OrderProgress from '../components/OrderProgress'
@@ -14,7 +14,10 @@ import TableScroll from '../components/TableScroll'
 import ShipDateSummary from '../components/ShipDateSummary'
 import LabelDesignsNote from '../components/LabelDesignsNote'
 import DownPaymentDeadline from '../components/DownPaymentDeadline'
-import { CANCELLATION_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
+import { CANCELLATION_COLUMNS, RUSH_ITEM_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
+import { RushAgreement, RushShipmentModal, WaitingGoods } from '../components/RushShipment'
+import { loadMyRushOptions, loadRushAgreements, loadWaitingGoods, stillToShip } from '../services/rushService'
+import { lineNote, orderNumberByItem } from '../utils/rushLines'
 import { loadMyEstimates } from '../services/predictionService'
 import ListControls from '../components/ListControls'
 import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, showChoices, showingOf } from '../utils/listControls'
@@ -35,6 +38,12 @@ export default function MyOrdersPage() {
   const [loading, setLoading] = useState(true)
   // Each order's estimated ship date, from DMC's server, by order id.
   const [estimates, setEstimates] = useState({})
+  // Rush shipments (db/migrations/034): the orders that can be rushed now, the
+  // agreements, and the goods waiting for the next order.
+  const [rushOptions, setRushOptions] = useState(new Map())
+  const [agreements, setAgreements] = useState(new Map())
+  const [waitingRows, setWaitingRows] = useState([])
+  const [rushing, setRushing] = useState(null)
 
 
   // =============================================
@@ -48,9 +57,9 @@ export default function MyOrdersPage() {
 
     setLoading(true)
 
-    // When and why an order was cancelled: asked again without them until
-    // db/migrations/028 is run.
-    const { data, error } = await withNewColumns((withCancellation) => supabase
+    // When and why an order was cancelled (028), and what a rush shipment
+    // split (034): asked again without them until those scripts are run.
+    const { data, error } = await withNewColumns((withRush) => withNewColumns((withCancellation) => supabase
       .from('customer_orders')
       .select(`
         id,
@@ -81,6 +90,7 @@ export default function MyOrdersPage() {
           quantity,
           unit_price,
           subtotal,
+          ${columnsIf(withRush, RUSH_ITEM_COLUMNS)}
 
           products (
             product_name,
@@ -96,7 +106,7 @@ export default function MyOrdersPage() {
       .eq('customer_id', profile.id)
       .order('created_at', {
         ascending: false,
-      }), CANCELLATION_COLUMNS)
+      }), CANCELLATION_COLUMNS), RUSH_ITEM_COLUMNS)
 
     if (error) {
       toast.error('Failed to load your orders.')
@@ -106,6 +116,22 @@ export default function MyOrdersPage() {
 
     setOrders(data || [])
     setLoading(false)
+
+    // Not needed to show the orders: a failure just leaves the rush parts out.
+    loadRushParts(data || []).catch((rushError) => console.error('Failed to load rush shipments:', rushError))
+  }
+
+
+  // What can be rushed, what was agreed, and what waits for the next order.
+  async function loadRushParts(list) {
+    const [options, agreed, waiting] = await Promise.all([
+      loadMyRushOptions(),
+      loadRushAgreements(list.map((order) => order.id)),
+      loadWaitingGoods(profile.id),
+    ])
+    setRushOptions(options)
+    setAgreements(agreed)
+    setWaitingRows(waiting)
   }
 
 
@@ -162,6 +188,8 @@ export default function MyOrdersPage() {
           Track your orders and see where each one is in the process.
         </p>
       </div>
+
+      <WaitingGoods rows={waitingRows} />
 
 
       <ListControls
@@ -260,6 +288,7 @@ export default function MyOrdersPage() {
                   <td className="px-5 py-3">
                     <StatusBadge status={order.status}/>
                     <DownPaymentDeadline order={order} className="mt-1 max-w-[16rem]" />
+                    <RushNote option={rushOptions.get(order.id)} waiting={stillToShip(waitingRows.filter((row) => row.customer_order_id === order.id))} agreed={agreements.has(order.id)} />
                   </td>
 
 
@@ -272,7 +301,12 @@ export default function MyOrdersPage() {
 
                   {/* ACTION */}
                   <td className="px-5 py-3">
-                    <IconButton icon={faFolderOpen} title="View Order" color="blue" disabled={false} onClick={() => openOrderModal(order)}/>
+                    <div className="flex gap-2">
+                      <IconButton icon={faFolderOpen} title="View Order" color="blue" disabled={false} onClick={() => openOrderModal(order)}/>
+                      {rushOptions.has(order.id) && (
+                        <IconButton icon={faTruckFast} title="Rush shipment: ship what's in now" color="green" disabled={false} onClick={() => setRushing(order)}/>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))
@@ -294,9 +328,27 @@ export default function MyOrdersPage() {
         <MyOrderModal
           order={selectedOrder}
           estimate={estimates[selectedOrder.id]}
+          rushOption={rushOptions.get(selectedOrder.id)}
+          agreement={agreements.get(selectedOrder.id)}
+          waiting={waitingRows.filter((row) => row.customer_order_id === selectedOrder.id)}
+          fromOrder={orderNumberByItem(orders)}
+          onRush={() => setRushing(selectedOrder)}
           onClose={() => {
             setShowModal(false)
             setSelectedOrder(null)
+          }}
+        />
+      )}
+
+      {/* The rush shipment: what ships, what waits, and agreeing */}
+      {rushing && (
+        <RushShipmentModal
+          order={rushing}
+          onClose={() => setRushing(null)}
+          onAgreed={async () => {
+            setShowModal(false)
+            setSelectedOrder(null)
+            await loadMyOrders()
           }}
         />
       )}
@@ -310,7 +362,7 @@ export default function MyOrdersPage() {
 // =====================================================
 // VIEW CUSTOMER ORDER MODAL
 // =====================================================
-function MyOrderModal({ order, estimate, onClose }) {
+function MyOrderModal({ order, estimate, rushOption = null, agreement = null, waiting = [], fromOrder = new Map(), onRush, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl bg-white shadow-xl">
@@ -343,6 +395,29 @@ function MyOrderModal({ order, estimate, onClose }) {
           <LabelDesignsNote order={order} />
 
           <OrderProgress order={order}/>
+
+          {/* A rush shipment: agreed, or one the customer can ask for now */}
+          <RushAgreement agreement={agreement} waiting={waiting} />
+
+          {!agreement && rushOption && (
+            <div className="mb-6 rounded-lg border border-green-200 bg-green-50 p-4 text-sm">
+              <p className="font-semibold text-gray-800">
+                <FontAwesomeIcon icon={faTruckFast} className="mr-2 text-[#2D5A42]" />
+                Want what's here shipped now?
+              </p>
+              <p className="mt-1 text-gray-700">
+                {rushOption.casesNow.toLocaleString()} of {(rushOption.casesNow + rushOption.casesWaiting).toLocaleString()} cases of this order are in
+                DMC's warehouse. You can ask for a rush shipment: what's here ships now, and the rest goes in the container of your next order.
+              </p>
+              <button
+                type="button"
+                onClick={onRush}
+                className="mt-3 rounded-md bg-[#2D5A42] px-4 py-2 text-sm font-medium text-white hover:bg-[#234633]"
+              >
+                Rush shipment...
+              </button>
+            </div>
+          )}
 
 
 
@@ -423,6 +498,9 @@ function MyOrderModal({ order, estimate, onClose }) {
                     {/* PRODUCT */}
                     <td className="px-4 py-4">
                       {item.products?.product_name || '-'}
+                      {lineNote(item, fromOrder.get(item.carried_from_item_id)) && (
+                        <span className="mt-0.5 block text-xs text-amber-700">{lineNote(item, fromOrder.get(item.carried_from_item_id))}</span>
+                      )}
                     </td>
 
 
@@ -558,5 +636,33 @@ function MyOrderModal({ order, estimate, onClose }) {
 
       </div>
     </div>
+  )
+}
+
+
+// Under an order's status: it can be rushed, or how much of it waits.
+function RushNote({ option, waiting, agreed }) {
+  if (option) {
+    return (
+      <p className="mt-1 max-w-[16rem] text-xs text-green-700">
+        {option.casesNow.toLocaleString()} of {(option.casesNow + option.casesWaiting).toLocaleString()} cases are in: you can rush what's here.
+      </p>
+    )
+  }
+
+  if (!agreed || !waiting.length) return null
+
+  // Still waiting for an order, or already joined to one not shipped yet.
+  const cases = (rows) => rows.reduce((sum, row) => sum + Number(row.cases || 0), 0)
+  const notTaken = cases(waiting.filter((row) => !row.carried_into))
+  const joined = [...new Set(waiting.filter((row) => row.carried_into).map((row) => row.carried_into))]
+  const taken = cases(waiting.filter((row) => row.carried_into))
+  return (
+    <p className="mt-1 max-w-[16rem] text-xs text-amber-700">
+      Rush shipment:
+      {notTaken > 0 && ` ${notTaken.toLocaleString()} ${notTaken === 1 ? 'case waits' : 'cases wait'} for your next order`}
+      {notTaken > 0 && taken > 0 && ';'}
+      {taken > 0 && ` ${taken.toLocaleString()} ${taken === 1 ? 'case goes' : 'cases go'} with ${joined.join(', ')}`}.
+    </p>
   )
 }

@@ -67,10 +67,21 @@ const STATUS_TEXT = {
   Procurement: 'DMC is sourcing your products',
   'Warehouse preparation': 'being prepared in DMC\'s warehouse',
   'Ready for shipment': 'ready for shipment',
+  'Partly shipped': 'shipped in part (rush shipment)',
   Cancelled: 'cancelled',
 }
 
+// A rushed order's goods still waiting for the next order, in a few words.
+const waitingText = (order) => {
+  const waiting = (order.rushShipment?.waitingGoods || []).filter((entry) => entry.goesWith !== 'already left with a later order')
+  if (!waiting.length) return ''
+  return ` Waiting for your next order's container: ${waiting.map((entry) => `${entry.cases} of ${entry.product}`).join(', ')}.`
+}
+
 function statusLine(order) {
+  if (order.shippedOn && order.progress.status === 'Partly shipped') {
+    return `${order.orderNumber}: shipped in part on ${order.shippedOn} (rush shipment).${waitingText(order)}`
+  }
   if (order.shippedOn) return `${order.orderNumber}: shipped on ${order.shippedOn}.`
   const p = order.progress
   if (p.status === 'Cancelled') return `${order.orderNumber}: ${describePayment(order.payment)}.`
@@ -79,6 +90,9 @@ function statusLine(order) {
 }
 
 function readinessLine(order) {
+  if (order.shippedOn && order.progress.status === 'Partly shipped') {
+    return `${order.orderNumber}: shipped in part on ${order.shippedOn} (rush shipment).${waitingText(order)}`
+  }
   if (order.shippedOn) return `${order.orderNumber}: already shipped on ${order.shippedOn}.`
   if (order.progress.status === 'Cancelled') return `${order.orderNumber}: cancelled, so it won't ship.`
 

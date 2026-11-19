@@ -5,6 +5,8 @@ import { supabase } from '../supabase'
 import { useToast } from '../context/ToastContext'
 import { useAuth } from '../context/AuthContext'
 import { createNotification } from '../services/notificationService'
+import { linesShippingNow } from '../services/rushService'
+import { casesShipping, casesWaiting } from '../utils/rushLines'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBoxOpen, faFileLines, faXmark, faImage, faPaperPlane, faPrint } from '@fortawesome/free-solid-svg-icons'
 
@@ -113,7 +115,7 @@ export default function ComplianceLabelSalesPage() {
       // =================================================
       // LOAD CUSTOMER ORDER ITEMS
       // =================================================
-      const { data: orderItems, error: orderItemsError } = await supabase
+      const { data: loadedItems, error: orderItemsError } = await supabase
         .from('customer_order_items')
         .select(`
           id,
@@ -138,6 +140,9 @@ export default function ComplianceLabelSalesPage() {
       if (orderItemsError) {
         throw orderItemsError
       }
+
+      // A rushed order: only the lines going in its container.
+      const orderItems = await linesShippingNow(loadedItems)
 
 
       // =================================================
@@ -801,12 +806,22 @@ export default function ComplianceLabelSalesPage() {
                                   )}
                                 </td>
 
-                                {/* QUANTITY */}
+                                {/* QUANTITY: a rushed order's cases going in this container */}
                                 <td className="px-6 py-4 text-left font-medium text-gray-700">
-                                  {item.quantity}
+                                  {casesShipping(item)}
                                   {item.products?.unit && (
                                     <span className="ml-1 text-xs text-gray-500">
                                       {item.products.unit}
+                                    </span>
+                                  )}
+                                  {casesWaiting(item) > 0 && (
+                                    <span className="mt-0.5 block text-xs font-normal text-amber-700">
+                                      of {item.quantity}: the rest wait for the customer's next order
+                                    </span>
+                                  )}
+                                  {item.carried_from_item_id && (
+                                    <span className="mt-0.5 block text-xs font-normal text-amber-700">
+                                      Waited from an earlier order (rush shipment)
                                     </span>
                                   )}
                                 </td>

@@ -11,6 +11,8 @@ import { getCreditStatus, formatPeso } from '../services/creditService'
 import { getMinimumOrderQuantities } from '../services/pricingService'
 import { groupByFamily, sizeLabel } from '../utils/productGroups'
 import { previewMyEstimate } from '../services/predictionService'
+import { loadCarriedFrom } from '../services/rushService'
+import { RUSH_ITEM_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
@@ -240,7 +242,8 @@ export default function QuotationRequestsPage() {
   async function viewQuotation(requestId) {
     setLoadingQuotation(true)
 
-    const { data, error } = await supabase
+    // Lines for goods waiting from a rush shipment (034) are asked for until then.
+    const { data, error } = await withNewColumns((withRush) => supabase
       .from('quotations')
       .select(`
         id,
@@ -273,6 +276,7 @@ export default function QuotationRequestsPage() {
           quantity,
           unit_price,
           subtotal,
+          ${columnsIf(withRush, ['carried_from_item_id'])}
           products (
             product_name,
             brand,
@@ -281,16 +285,24 @@ export default function QuotationRequestsPage() {
         )
       `)
       .eq('quotation_request_id', requestId)
-      .single()
-
-    setLoadingQuotation(false)
+      .single(), RUSH_ITEM_COLUMNS)
 
     if (error) {
+      setLoadingQuotation(false)
       toast.error('Failed to load quotation.')
       return
     }
 
-    setSelectedQuotation(data)
+    const carriedFrom = await loadCarriedFrom(data.quotation_items)
+    setLoadingQuotation(false)
+
+    setSelectedQuotation({
+      ...data,
+      quotation_items: (data.quotation_items || []).map((item) => ({
+        ...item,
+        carried_from: item.carried_from_item_id ? carriedFrom.get(item.carried_from_item_id) || 'an earlier order' : null,
+      })),
+    })
     setShowQuotationModal(true)
   }
 
@@ -884,6 +896,12 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
                       {item.products?.brand && (
                         <p className="text-xs text-gray-500">
                           {item.products.brand}
+                        </p>
+                      )}
+
+                      {item.carried_from && (
+                        <p className="mt-0.5 text-xs font-medium text-amber-700">
+                          From {item.carried_from} (your rush shipment): already paid, goes in this order's container
                         </p>
                       )}
                     </td>

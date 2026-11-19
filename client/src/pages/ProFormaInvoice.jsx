@@ -12,6 +12,8 @@ import { localDateExcludingSundays, formatDateString, QUOTATION_VALIDITY_DAYS, f
 import { getQuotationPricing, pricingErrorMessage } from '../services/pricingService'
 import { formatVolume, formatWeight } from '../utils/containers'
 import { previewEstimate } from '../services/predictionService'
+import { loadCarriedFrom, loadWaitingGoods, waitingState } from '../services/rushService'
+import { RUSH_ITEM_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
@@ -121,13 +123,17 @@ export default function ProFormaInvoicePage() {
         return
       }
 
-      // Create quotation items
+      // Create quotation items. Goods waiting from a rush shipment are ₱0
+      // lines that name the earlier order's line they carry (034); approving
+      // checks them. Left out when there are none, as before 034.
+      const carries = data.items.some((item) => item.carried_from_item_id)
       const quotationItems = data.items.map((item) => ({
         quotation_id: quotation.id,
         product_id: item.product_id,
         quantity: item.quantity,
         unit_price: item.unit_price,
         subtotal: item.quantity * item.unit_price,
+        ...(carries ? { carried_from_item_id: item.carried_from_item_id || null } : {}),
       }))
 
       const { error: itemError } = await supabase
@@ -264,8 +270,9 @@ export default function ProFormaInvoicePage() {
       return
     }
 
-    // Every other status has a quotation on record, kept even after it's answered.
-    const { data, error } = await supabase
+    // Every other status has a quotation on record, kept even after it's
+    // answered. Its lines for waiting goods (034) are asked for until then.
+    const { data, error } = await withNewColumns((withRush) => supabase
       .from('quotations')
       .select(`
         id,
@@ -287,6 +294,7 @@ export default function ProFormaInvoicePage() {
           quantity,
           unit_price,
           subtotal,
+          ${columnsIf(withRush, ['carried_from_item_id'])}
           products (
             product_name,
             brand,
@@ -295,14 +303,21 @@ export default function ProFormaInvoicePage() {
         )
       `)
       .eq('quotation_request_id', request.id)
-      .single()
+      .single(), RUSH_ITEM_COLUMNS)
 
     if (error) {
       toast.error('Failed to load quotation.')
       return
     }
 
-    setCurrentQuotation(data)
+    const carriedFrom = await loadCarriedFrom(data.quotation_items)
+    setCurrentQuotation({
+      ...data,
+      quotation_items: (data.quotation_items || []).map((item) => ({
+        ...item,
+        carried_from: item.carried_from_item_id ? carriedFrom.get(item.carried_from_item_id) || 'an earlier order' : null,
+      })),
+    })
     setShowModal(true)
   }
 
@@ -644,6 +659,12 @@ function QuotationViewModal({ quotation, onClose }) {
                           {item.products.brand}
                         </p>
                       )}
+
+                      {item.carried_from && (
+                        <p className="mt-0.5 text-xs font-medium text-amber-700">
+                          From {item.carried_from} (rush shipment): already paid
+                        </p>
+                      )}
                     </td>
 
 
@@ -864,6 +885,9 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
   )
   const [pricingError, setPricingError] = useState('')
   const [loadingPrices, setLoadingPrices] = useState(true)
+  // The customer's goods waiting from a rush shipment (034), not yet joined
+  // to an order: they go in this quotation's container, at ₱0.
+  const carriedItems = items.filter((item) => item.carried_from_item_id)
 
 
   // ===================================================
@@ -906,6 +930,11 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
 
     async function loadPrices() {
       try {
+        // What waits from the customer's rush shipments, not taken by an order yet.
+        const waiting = request.profiles?.id
+          ? (await loadWaitingGoods(request.profiles.id)).filter((row) => waitingState(row) === 'waiting')
+          : []
+
         const { prices, shipping: shippingPrice, containers: containerPlan } = await getQuotationPricing({
           country: request.delivery_locations?.country,
           lines: request.quotation_request_items.map((item) => ({
@@ -916,6 +945,13 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
             cbm: item.products.cbm,
             grossWeightKg: item.products.gross_weight_kg,
           })),
+          carriedLines: waiting.map((row) => ({
+            productId: row.product_id,
+            quantity: Number(row.cases),
+            name: row.product_name,
+            cbm: row.cbm,
+            grossWeightKg: row.gross_weight_kg,
+          })),
         })
 
         if (!active) return
@@ -924,19 +960,38 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
         setContainers(containerPlan)
         setContainerCode(containerPlan.smallest?.code || '')
 
-        setItems((current) =>
-          current.map((item) => {
-            const price = prices[item.product_id]
-            if (!price) return item
+        setItems((current) => [
+          ...current
+            .filter((item) => !item.carried_from_item_id)
+            .map((item) => {
+              const price = prices[item.product_id]
+              if (!price) return item
 
-            return {
-              ...item,
-              unit_price: price.price,
-              price_source: price.source,
-              moq: price.moq,
-            }
-          })
-        )
+              return {
+                ...item,
+                unit_price: price.price,
+                price_source: price.source,
+                moq: price.moq,
+              }
+            }),
+          ...waiting.map((row) => ({
+            id: `carried:${row.item_id}`,
+            product_id: row.product_id,
+            product_name: row.product_name,
+            brand: null,
+            quantity: Number(row.cases),
+            notes: null,
+            unit: row.unit,
+            supplier_id: null,
+            unit_price: 0,
+            price_source: `Already paid on ${row.order_number}`,
+            moq: null,
+            carried_from_item_id: row.item_id,
+            carried_from: row.order_number,
+            // Under the product's name on the PFI.
+            description: `From ${row.order_number} (rush shipment): already paid`,
+          })),
+        ])
       } catch (error) {
         console.error('Failed to load prices:', error)
         if (active) setPricingError(pricingErrorMessage(error))
@@ -1068,6 +1123,14 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                 </span>
               </div>
 
+              {carriedItems.length > 0 && (
+                <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                  This customer agreed to a rush shipment on {[...new Set(carriedItems.map((item) => item.carried_from))].join(', ')}:
+                  the goods that hadn't arrived then go in the container of their next order. They're added below at ₱0 (already paid),
+                  counted in the container, and can't be left out.
+                </div>
+              )}
+
               {pricingError && (
                 <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
                   <p className="text-sm text-amber-800">
@@ -1126,6 +1189,12 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                                     {item.brand}
                                   </p>
                                 )}
+
+                                {item.carried_from && (
+                                  <p className="mt-0.5 text-xs font-medium text-amber-700">
+                                    From {item.carried_from} (rush shipment)
+                                  </p>
+                                )}
                               </td>
 
 
@@ -1170,7 +1239,7 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                                   </p>
                                 )}
 
-                                {item.moq && item.quantity < item.moq && (
+                                {!item.carried_from_item_id && item.moq && item.quantity < item.moq && (
                                   <p className="mt-1 text-xs font-medium text-amber-700">
                                     Below supplier minimum of {item.moq} {item.unit}
                                   </p>
@@ -1378,8 +1447,14 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                           // Every line needs its fixed price; there is no
                           // manual price to fall back on.
                           const unpriced = items.find(
-                            (item) => !(Number(item.unit_price) > 0)
+                            (item) => !item.carried_from_item_id && !(Number(item.unit_price) > 0)
                           )
+
+                          // Something to order besides the waiting goods.
+                          if (!items.some((item) => !item.carried_from_item_id)) {
+                            alert('This quotation has only goods waiting from a rush shipment. It needs at least one product the customer asked for.')
+                            return
+                          }
 
                           if (unpriced) {
                             alert(`${unpriced.product_name} can't be priced yet: ${unpriced.price_source || 'prices could not be loaded'}.`)

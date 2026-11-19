@@ -9,6 +9,8 @@ import { createNotification } from '../services/notificationService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBoxOpen, faPaperPlane, faTruckRampBox } from '@fortawesome/free-solid-svg-icons'
 import { generatePackingList } from '../services/packingListService'
+import { linesShippingNow } from '../services/rushService'
+import { casesShipping, casesWaiting } from '../utils/rushLines'
 import { generateCertificateOfShipment, generateCertificateOfClearance } from '../services/certificateService'
 
 import StatusBadge from '../components/StatusBadge'
@@ -21,8 +23,9 @@ const formatLoadedAt = (value) =>
 
 // The racks holding each order's goods, by order and product:
 // { 'orderId:productId': ['RACK-001', ...] }. Staff see where to load from,
-// and which racks loading frees.
-async function loadRacksByProduct(customerOrderIds) {
+// and which racks loading frees. Goods carried from an earlier order (a rush
+// shipment) are on that order's purchase order line (po_item_id).
+async function loadRacksByProduct(customerOrderIds, items = []) {
   const { data: purchaseOrders, error: poError } = await supabase
     .from('purchase_orders')
     .select('id, customer_order_id')
@@ -34,18 +37,43 @@ async function loadRacksByProduct(customerOrderIds) {
 
   const orderOfPo = Object.fromEntries((purchaseOrders || []).map((po) => [po.id, po.customer_order_id]))
   const poIds = Object.keys(orderOfPo)
-  if (!poIds.length) return {}
+  const carried = items.filter((item) => item.carried_from_item_id && item.po_item_id)
+  if (!poIds.length && !carried.length) return {}
 
-  const { data: lines, error: linesError } = await supabase
-    .from('purchase_order_items')
-    .select('id, purchase_order_id, product_id, warehouse_rack_id')
-    .in('purchase_order_id', poIds)
+  const { data: ownLines, error: linesError } = poIds.length
+    ? await supabase
+      .from('purchase_order_items')
+      .select('id, purchase_order_id, product_id, warehouse_rack_id')
+      .in('purchase_order_id', poIds)
+    : { data: [], error: null }
 
   if (linesError) {
     throw linesError
   }
 
-  const lineIds = (lines || []).map((line) => line.id)
+  // A carried line's goods count as the order carrying them.
+  const { data: carriedLines, error: carriedError } = carried.length
+    ? await supabase
+      .from('purchase_order_items')
+      .select('id, purchase_order_id, product_id, warehouse_rack_id')
+      .in('id', [...new Set(carried.map((item) => item.po_item_id))])
+    : { data: [], error: null }
+
+  if (carriedError) {
+    throw carriedError
+  }
+
+  const carriedPo = new Map()
+  for (const item of carried) {
+    const line = (carriedLines || []).find((row) => row.id === item.po_item_id)
+    if (!line) continue
+    const key = `carried:${item.id}`
+    orderOfPo[key] = item.customer_order_id
+    carriedPo.set(line.id, { ...line, purchase_order_id: key })
+  }
+  const lines = [...(ownLines || []), ...carriedPo.values()]
+
+  const lineIds = [...new Set((lines || []).map((line) => line.id))]
   const [links, racks] = await Promise.all([
     lineIds.length
       ? supabase.from('purchase_order_item_racks').select('purchase_order_item_id, warehouse_rack_id').in('purchase_order_item_id', lineIds)
@@ -57,7 +85,9 @@ async function loadRacksByProduct(customerOrderIds) {
   if (racks.error) throw racks.error
 
   const rackName = Object.fromEntries((racks.data || []).map((rack) => [rack.id, rack.rack_id]))
-  const lineById = Object.fromEntries((lines || []).map((line) => [line.id, line]))
+  // A line can be both its own order's and carried by a later one.
+  const linesById = {}
+  for (const line of lines || []) linesById[line.id] = [...(linesById[line.id] || []), line]
   const byProduct = {}
   const add = (line, rackId) => {
     const key = `${orderOfPo[line.purchase_order_id]}:${line.product_id}`
@@ -65,7 +95,7 @@ async function loadRacksByProduct(customerOrderIds) {
   }
 
   for (const link of links.data || []) {
-    if (lineById[link.purchase_order_item_id]) add(lineById[link.purchase_order_item_id], link.warehouse_rack_id)
+    for (const line of linesById[link.purchase_order_item_id] || []) add(line, link.warehouse_rack_id)
   }
   for (const line of lines || []) {
     if (line.warehouse_rack_id) add(line, line.warehouse_rack_id)
@@ -133,7 +163,7 @@ export default function StagingTrackerPage() {
       // =================================================
       // LOAD CUSTOMER ORDER ITEMS
       // =================================================
-      const { data: orderItems, error: orderItemsError } = await supabase
+      const { data: loadedItems, error: orderItemsError } = await supabase
         .from('customer_order_items')
         .select(`
           id,
@@ -148,7 +178,8 @@ export default function StagingTrackerPage() {
             id,
             product_name,
             brand,
-            unit
+            unit,
+            sku
           )
         `)
         .in(
@@ -159,6 +190,10 @@ export default function StagingTrackerPage() {
       if (orderItemsError) {
         throw orderItemsError
       }
+
+      // A rushed order (034): only the lines going in its container, so
+      // everything listed here is all that has to be loaded and shipped.
+      const orderItems = await linesShippingNow(loadedItems)
 
 
       // =================================================
@@ -209,7 +244,7 @@ export default function StagingTrackerPage() {
       // =================================================
       // WHERE EACH PRODUCT'S GOODS ARE
       // =================================================
-      const racksByProduct = await loadRacksByProduct(customerOrderIds)
+      const racksByProduct = await loadRacksByProduct(customerOrderIds, orderItems)
 
 
       // =================================================
@@ -439,7 +474,7 @@ export default function StagingTrackerPage() {
   }
 
 
-  async function markOrderAsShipped(order) {
+  async function markOrderAsShipped(order, shipItems = []) {
 
     if (!order?.id) {
       toast.error('Missing customer order.')
@@ -524,6 +559,25 @@ export default function StagingTrackerPage() {
       // =================================================
       if (purchaseOrderItems.length === 0) {
         throw new Error('No purchase order items found for packing list.')
+      }
+
+      // A rushed order, or one carrying goods from an earlier order: what's in
+      // this container is its lines' cases going now (034), not its purchase
+      // order's deliveries.
+      const splitByRush = shipItems.some((item) => item.ship_quantity !== null && item.ship_quantity !== undefined)
+        || shipItems.some((item) => item.carried_from_item_id)
+      if (splitByRush) {
+        purchaseOrderItems = shipItems.map((item) => ({
+          id: item.id,
+          product_id: item.product_id,
+          ordered_quantity: casesShipping(item),
+          received_quantity: casesShipping(item),
+          product: {
+            product_name: item.products?.product_name,
+            sku: item.products?.sku,
+            unit: item.products?.unit,
+          },
+        }))
       }
 
       // Get customer order number and current status
@@ -902,7 +956,7 @@ export default function StagingTrackerPage() {
                         <button
                           type="button"
                           disabled={loading || items.length < Number(orderGroup.total_items)}
-                          onClick={() => markOrderAsShipped(customerOrder)}
+                          onClick={() => markOrderAsShipped(customerOrder, items)}
                           className="inline-flex items-center gap-2 rounded-lg bg-[#2D5A42] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#234A35] disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           <FontAwesomeIcon icon={faPaperPlane} className="h-4 w-4"/>
@@ -971,12 +1025,22 @@ export default function StagingTrackerPage() {
                                   )}
                                 </td>
 
-                                {/* QUANTITY */}
+                                {/* QUANTITY: a rushed order's cases going in this container */}
                                 <td className="px-6 py-4 font-medium text-gray-700">
-                                  {item.quantity}
+                                  {casesShipping(item)}
                                   {item.products?.unit && (
                                     <span className="ml-1 text-xs text-gray-500">
                                       {item.products.unit}
+                                    </span>
+                                  )}
+                                  {casesWaiting(item) > 0 && (
+                                    <span className="mt-0.5 block text-xs font-normal text-amber-700">
+                                      of {item.quantity}: the rest wait for the customer's next order
+                                    </span>
+                                  )}
+                                  {item.carried_from_item_id && (
+                                    <span className="mt-0.5 block text-xs font-normal text-amber-700">
+                                      Waited from an earlier order (rush shipment)
                                     </span>
                                   )}
                                 </td>

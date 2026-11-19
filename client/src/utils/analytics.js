@@ -17,6 +17,7 @@ import { estimateContext, supplierHistories, supplierPool } from './estimateInpu
 import { SCORE_WINDOW_DAYS, manilaDate, scoreSuppliers } from './supplierScores.js'
 import { countryName } from './countryPlaces.js'
 import { REORDER_SOON_DAYS } from './reorderTiming.js'
+import { hasShipped, lastShipEntry, wasRushed } from './orderShipping.js'
 
 const DAY = 24 * 60 * 60 * 1000
 
@@ -48,8 +49,8 @@ const addDays = (day, days) => new Date(Date.parse(`${day}T00:00:00Z`) + days * 
 
 const sortedHistory = (historyByOrder, orderId) => [...(historyByOrder[orderId] || [])].sort(byTime)
 const firstInto = (entries, status) => entries.find((entry) => normalizeStatus(entry.new_status) === status) || null
-const lastInto = (entries, status) => [...entries].reverse().find((entry) => normalizeStatus(entry.new_status) === status) || null
-const isShipped = (order) => normalizeStatus(order.status) === 'shipped'
+// Its container left, in full or in part (a rush shipment, db/migrations/034).
+const isShipped = (order) => hasShipped(order.status)
 
 
 // The Monday of the week a moment falls in, in the Philippines, as YYYY-MM-DD.
@@ -204,7 +205,7 @@ export function shippingOnTimeByMonth(orders, historyByOrder, { today = new Date
     if (!isShipped(order) || !order.requested_ship_date) continue
 
     const entries = sortedHistory(historyByOrder, order.id)
-    const shipped = lastInto(entries, 'shipped')
+    const shipped = lastShipEntry(entries)
     if (!shipped || isTestOrder(entries)) continue
 
     const shipDay = manilaDate(shipped.changed_at)
@@ -265,8 +266,10 @@ export function finishedForAccuracy(orders, historyByOrder) {
 
       const entries = sortedHistory(historyByOrder, order.id)
       const verified = firstInto(entries, 'payment verified')
-      const shipped = lastInto(entries, 'shipped')
-      if (!verified || !shipped) return null
+      const shipped = lastShipEntry(entries)
+      // A rushed order shipped early by the customer's choice: not a test of
+      // the estimate (db/migrations/034).
+      if (!verified || !shipped || wasRushed(entries)) return null
 
       const verifiedAt = Date.parse(verified.changed_at)
       const shippedAt = Date.parse(shipped.changed_at)
@@ -494,8 +497,8 @@ export function headlineNumbers({ predictions = [], orders = [], historyByOrder 
 
     const entries = sortedHistory(historyByOrder, order.id)
     const paid = firstInto(entries, 'submitted') || firstInto(entries, 'payment verified')
-    const shipped = lastInto(entries, 'shipped')
-    if (!paid || !shipped) continue
+    const shipped = lastShipEntry(entries)
+    if (!paid || !shipped || wasRushed(entries)) continue
 
     const shippedAt = Date.parse(shipped.changed_at)
     const days = (shippedAt - Date.parse(paid.changed_at)) / DAY

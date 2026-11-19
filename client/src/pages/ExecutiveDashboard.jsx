@@ -103,13 +103,14 @@ export default function ExecutiveDashboard() {
       const procurement = countStatus('procurement')
       const warehousePreparation = countStatus('warehouse preparation')
       const readyForShipment = countStatus('ready for shipment')
-      const shipped = countStatus('shipped')
+      // In full, or in part (a rush shipment: its container left).
+      const shipped = countStatus('shipped') + countStatus('partly shipped')
 
 
       // =================================================
       // TOTAL ACTIVE
       // =================================================
-      const totalActive = orders.filter((order) => order.status !== 'shipped' && order.status !== 'cancelled').length
+      const totalActive = orders.filter((order) => !['shipped', 'partly shipped', 'cancelled'].includes(order.status)).length
       const totalOverall = totalActive + shipped
 
 
@@ -337,7 +338,7 @@ export default function ExecutiveDashboard() {
           requested_ship_date,
           delivery_location_id
         `)
-        .not('status', 'in', '(shipped,cancelled)')
+        .not('status', 'in', '("shipped","partly shipped","cancelled")')
 
       if (activeOrdersError) {
         throw activeOrdersError

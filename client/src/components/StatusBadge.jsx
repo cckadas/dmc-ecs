@@ -143,6 +143,13 @@ export default function StatusBadge({ status }) {
       icon: faCartFlatbed,
     },
 
+    // Its container left without the goods that hadn't arrived: they go with
+    // the customer's next order (rush shipment, db/migrations/034).
+    'partly shipped': {
+      style: 'bg-lime-50 text-lime-800 border-lime-200',
+      icon: faPlaneDeparture,
+    },
+
     'shipped': {
       style: 'bg-green-50 text-green-700 border-green-200',
       icon: faPlaneDeparture,
