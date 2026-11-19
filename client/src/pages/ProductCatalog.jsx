@@ -4,13 +4,14 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPen, faTrash, faXmark, faPlus, faImage, faClockRotateLeft } from '@fortawesome/free-solid-svg-icons'
+import { faPen, faTrash, faXmark, faPlus, faImage, faClockRotateLeft, faCube } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 
 import RoleActivityBadge from '../components/RoleActivityBadge'
 import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
 import ProductTransactions from '../components/ProductTransactions'
+import CaseVolumeModal from '../components/CaseVolumeModal'
 import { getMinimumOrderQuantities, getProductManufacturers } from '../services/pricingService'
 import { bySize, groupByFamily, sizeNames } from '../utils/productGroups'
 
@@ -83,6 +84,9 @@ export default function ProductCatalogPage() {
   const [minimums, setMinimums] = useState({})
   const [sizeNameOf, setSizeNameOf] = useState({})
   const [transactionsOf, setTransactionsOf] = useState(null)
+  // Warehouse staff (and admin) correct a product's volume per case (033).
+  const [caseVolumeOf, setCaseVolumeOf] = useState(null)
+  const setsCaseVolume = ['admin', 'warehouse'].includes(profile?.role)
 
 
   // =============================================
@@ -700,6 +704,10 @@ export default function ProductCatalogPage() {
                         <div className="flex items-center justify-start gap-2">
                           <IconButton icon={faClockRotateLeft} title="Transactions with this product" color="blue" disabled={false} onClick={() => setTransactionsOf(product)}/>
 
+                          {setsCaseVolume && (
+                            <IconButton icon={faCube} title="Change volume per case" color="green" disabled={false} onClick={() => setCaseVolumeOf(product)}/>
+                          )}
+
                           {profile?.role === 'admin' && (
                             <>
                               <IconButton icon={faPen} title="Edit Product" color="amber" disabled={false} onClick={() => handleEditProduct(product)}/>
@@ -732,6 +740,17 @@ export default function ProductCatalogPage() {
           productId={transactionsOf.id}
           name={transactionsOf.family || transactionsOf.product_name}
           onClose={() => setTransactionsOf(null)}
+        />
+      )}
+
+
+      {/* A PRODUCT'S VOLUME PER CASE */}
+      {caseVolumeOf && (
+        <CaseVolumeModal
+          key={caseVolumeOf.id}
+          product={caseVolumeOf}
+          onClose={() => setCaseVolumeOf(null)}
+          onSaved={loadProducts}
         />
       )}
 

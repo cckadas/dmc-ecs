@@ -171,7 +171,8 @@ export const NAV_SECTIONS = [
         label: 'Products',
         path: 'product-catalog',
         icon: faBagShopping,
-        roles: ['admin', 'management', 'sales', 'procurement'],
+        // Warehouse: to correct a product's volume per case (033).
+        roles: ['admin', 'management', 'sales', 'procurement', 'warehouse'],
       },
       {
         label: 'Customers',
