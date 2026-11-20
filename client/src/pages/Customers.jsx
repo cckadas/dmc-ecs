@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import ExportButton from '../components/ExportButton'
-import { downloadCsv, exportName } from '../utils/csvExport'
+import { exportList } from '../utils/csvExport'
 import { useAuth } from '../context/AuthContext'
 import { createCustomer } from '../services/userService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -222,7 +222,7 @@ export default function CustomersPage() {
             Manage customer records.
           </p>
 
-          <ExportButton className="mt-3" count={customers.length} onExport={() => downloadCsv(exportName('customers'), CUSTOMER_COLUMNS, customers)} />
+          <ExportButton className="mt-3" count={customers.length} onExport={(how) => exportList(how, 'customers', CUSTOMER_COLUMNS, customers)} />
         </div>
 
 

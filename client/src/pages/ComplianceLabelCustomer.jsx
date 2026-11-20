@@ -10,7 +10,7 @@ import StatusBadge from '../components/StatusBadge'
 import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
 import ListControls from '../components/ListControls'
-import { dateTime, downloadCsv, exportName, statusText } from '../utils/csvExport'
+import { dateTime, exportList, statusText } from '../utils/csvExport'
 import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, showChoices, showingOf } from '../utils/listControls'
 import { linesShippingNow } from '../services/rushService'
 import { casesShipping, casesWaiting } from '../utils/rushLines'
@@ -668,7 +668,7 @@ async function loadCustomerOrders() {
         searchPlaceholder="Order number or product"
         shown={shownGroups.length}
         total={customerOrders.length}
-        onExport={() => downloadCsv(exportName('my-compliance-labels'), LABEL_COLUMNS, shownGroups.flatMap((group) => (group.items || []).map((item) => ({ group, item }))))}
+        onExport={(how) => exportList(how, 'my-compliance-labels', LABEL_COLUMNS, shownGroups.flatMap((group) => (group.items || []).map((item) => ({ group, item }))))}
         noun={customerOrders.length === 1 ? 'order' : 'orders'}
         loading={loading}
       />

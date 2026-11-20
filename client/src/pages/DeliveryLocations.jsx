@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import ExportButton from '../components/ExportButton'
-import { downloadCsv, exportName } from '../utils/csvExport'
+import { exportList } from '../utils/csvExport'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPen, faTrash, faPlus } from '@fortawesome/free-solid-svg-icons'
@@ -182,7 +182,7 @@ export default function DeliveryLocationsPage() {
             Manage your saved delivery addresses.
           </p>
 
-          <ExportButton className="mt-3" count={locations.length} onExport={() => downloadCsv(exportName('delivery-locations'), LOCATION_COLUMNS, locations)} />
+          <ExportButton className="mt-3" count={locations.length} onExport={(how) => exportList(how, 'delivery-locations', LOCATION_COLUMNS, locations)} />
         </div>
 
         <button

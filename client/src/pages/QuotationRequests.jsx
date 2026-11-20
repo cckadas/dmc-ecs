@@ -18,7 +18,7 @@ import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
 import TableScroll from '../components/TableScroll'
 import ListControls from '../components/ListControls'
-import { dateTime, downloadCsv, exportName, productsText, statusText } from '../utils/csvExport'
+import { dateTime, exportList, productsText, statusText } from '../utils/csvExport'
 import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, showChoices, showingOf, statusLabel } from '../utils/listControls'
 
 
@@ -544,7 +544,7 @@ export default function QuotationRequestsPage() {
         searchPlaceholder="Reference or product"
         shown={shownRequests.length}
         total={requests.length}
-        onExport={() => downloadCsv(exportName('my-quotation-requests'), myRequestColumns(requests), shownRequests)}
+        onExport={(how) => exportList(how, 'my-quotation-requests', myRequestColumns(requests), shownRequests)}
         noun={requests.length === 1 ? 'request' : 'requests'}
       />
 

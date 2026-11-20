@@ -12,7 +12,8 @@
 // Like the page itself, a file has only what the person exporting may see.
 //
 // columns: [{ header, value: (row) => string | number | null }]
-// Pure, except downloadCsv (it needs a browser).
+// exportList also makes the PDF (utils/pdfExport.js), with DMC's logo.
+// Pure, except downloadCsv and exportList (they need a browser).
 // =============================================================================
 
 export const BOM = String.fromCharCode(0xfeff)
@@ -93,6 +94,68 @@ export const statusText = (status) =>
 
 // The file's name: the list and today's date in the Philippines.
 export const exportName = (list, now = Date.now()) => `${list}-${day(now)}.csv`
+
+// What a list is called on its PDF.
+const TITLES = {
+  'billings': 'Billings',
+  'payments': 'My Payments',
+  'my-orders': 'My Orders',
+  'customer-orders': 'Customer Orders',
+  'quotation-requests': 'Quotation Requests',
+  'my-quotation-requests': 'My Quotation Requests',
+  'purchase-orders': 'Purchase Orders',
+  'receiving': 'Receiving',
+  'compliance-labels': 'Compliance Labels',
+  'my-compliance-labels': 'My Compliance Labels',
+  'staging': 'Staging',
+  'products': 'Products',
+  'suppliers': 'Suppliers',
+  'customers': 'Customers',
+  'delivery-locations': 'Delivery Locations',
+  'warehouse-racks': 'Warehouse Racks',
+  'warehouse-holdings': 'Warehouse Holdings',
+  'staff-accounts': 'Staff Accounts',
+  'order-documents': 'Order Documents',
+  'markups-and-shipping': 'Markups and Shipping Costs',
+  'customer-balances': 'Customer Balances',
+}
+export const titleOf = (list) =>
+  TITLES[list] || String(list).split('-').filter(Boolean).map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
+
+
+// For the PDF -------------------------------------------------------------------------------
+// The PDF's built-in font has Western European letters only: the peso sign is
+// written PHP, and anything else it can't show becomes '?', instead of garbage.
+const WINDOWS_1252_EXTRA = new Set('€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ')
+export const pdfText = (value) =>
+  [...String(value ?? '').replace(/₱\s?/g, 'PHP ')]
+    .map((char) => (char.codePointAt(0) <= 0xff || WINDOWS_1252_EXTRA.has(char) ? char : '?'))
+    .join('')
+
+// One cell, as it reads on paper: amounts with 2 decimals and thousands
+// separators (columns with PHP in their name), other numbers with separators.
+export function pdfCell(value, header = '') {
+  if (value === null || value === undefined || value === '') return ''
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return ''
+    return /PHP/.test(header)
+      ? value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : value.toLocaleString('en-US', { maximumFractionDigits: 4 })
+  }
+  return pdfText(value)
+}
+
+// The Export button's choice: a CSV file, or a PDF with DMC's logo
+// (utils/pdfExport.js, loaded only when asked for). how: { format, by }.
+export async function exportList(how, list, columns, rows) {
+  const format = typeof how === 'string' ? how : how?.format || 'csv'
+  if (format === 'pdf') {
+    const { downloadPdf } = await import('./pdfExport.js')
+    return downloadPdf(exportName(list).replace(/\.csv$/, '.pdf'), titleOf(list), columns, rows, { by: how?.by || null })
+  }
+  return downloadCsv(exportName(list), columns, rows)
+}
 
 // An order's or request's products in one cell: "Lucky Me Noodles × 100 cases; ...".
 export const productsText = (items, nameOf = (item) => item.products?.product_name, unitOf = (item) => item.products?.unit) =>

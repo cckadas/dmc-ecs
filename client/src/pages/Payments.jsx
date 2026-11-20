@@ -17,7 +17,7 @@ import DownPaymentDeadline from '../components/DownPaymentDeadline'
 import { deadlineNote } from '../utils/deadlineNote'
 import { downPaymentDates, downPaymentStatus, formatDay } from '../utils/paymentDeadline'
 import ListControls from '../components/ListControls'
-import { dateTime, day, downloadCsv, exportName, money, productsText, statusText } from '../utils/csvExport'
+import { dateTime, day, exportList, money, productsText, statusText } from '../utils/csvExport'
 import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, bySoonest, showChoices, showingOf } from '../utils/listControls'
 
 
@@ -226,7 +226,7 @@ export default function PaymentsPage() {
         searchPlaceholder="Order or quotation number"
         shown={shownPayments.length}
         total={payments.length}
-        onExport={() => downloadCsv(exportName('payments'), PAYMENT_COLUMNS, shownPayments)}
+        onExport={(how) => exportList(how, 'payments', PAYMENT_COLUMNS, shownPayments)}
         noun={payments.length === 1 ? 'order' : 'orders'}
         loading={loading}
       />

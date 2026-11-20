@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import ExportButton from '../components/ExportButton'
-import { downloadCsv, exportName, number } from '../utils/csvExport'
+import { exportList, number } from '../utils/csvExport'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPen, faTrash, faXmark, faPlus, faImage, faClockRotateLeft, faCube } from '@fortawesome/free-solid-svg-icons'
@@ -466,7 +466,7 @@ export default function ProductCatalogPage() {
             Browse available export products.
           </p>
 
-          <ExportButton className="mt-3" count={products.length} onExport={() => downloadCsv(exportName('products'), productColumns(showsSupplier), products)} />
+          <ExportButton className="mt-3" count={products.length} onExport={(how) => exportList(how, 'products', productColumns(showsSupplier), products)} />
         </div>
 
 

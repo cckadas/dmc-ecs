@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import ExportButton from '../components/ExportButton'
-import { dateTime, downloadCsv, exportName } from '../utils/csvExport'
+import { dateTime, exportList } from '../utils/csvExport'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faFolderOpen, faPen, faTrash, faFileImport } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from '../context/ToastContext'
@@ -199,7 +199,7 @@ export default function SuppliersPage() {
             Manage supplier records.
           </p>
 
-          <ExportButton className="mt-3" count={suppliers.length} onExport={() => downloadCsv(exportName('suppliers'), SUPPLIER_COLUMNS, suppliers)} />
+          <ExportButton className="mt-3" count={suppliers.length} onExport={(how) => exportList(how, 'suppliers', SUPPLIER_COLUMNS, suppliers)} />
         </div>
 
         <div className="flex items-center gap-2">

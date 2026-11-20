@@ -20,7 +20,7 @@ import { loadAllWaitingGoods, loadRushAgreements, stillToShip } from '../service
 import { lineNote, orderNumberByItem } from '../utils/rushLines'
 import { ALL, filterOrders, showChoices, sortOrders } from '../utils/orderStatusSort'
 import ListControls from '../components/ListControls'
-import { dateTime, day, downloadCsv, exportName, money, productsText, statusText } from '../utils/csvExport'
+import { dateTime, day, exportList, money, productsText, statusText } from '../utils/csvExport'
 import { applySearch } from '../utils/listControls'
 
 
@@ -428,7 +428,7 @@ export default function CustomerOrdersPage() {
         searchPlaceholder="Order number or customer"
         shown={shownOrders.length}
         total={orders.length}
-        onExport={() => downloadCsv(exportName('customer-orders'), customerOrderColumns(estimates, agreements), shownOrders)}
+        onExport={(how) => exportList(how, 'customer-orders', customerOrderColumns(estimates, agreements), shownOrders)}
         noun={orders.length === 1 ? 'order' : 'orders'}
         loading={loading}
       />
@@ -1233,24 +1233,24 @@ function PaymentModal({ order, estimate, onClose, onReview, reviewing, canCheck 
 const customerOrderColumns = (estimates, agreements) => [
   { header: 'Order', value: (order) => order.order_number },
   { header: 'Quotation', value: (order) => order.quotation_number },
-  { header: 'Customer', value: (order) => order.customer?.name },
+  { header: 'Customer', value: (order) => order.customer?.name, pdf: false },
   { header: 'Company', value: (order) => order.customer?.company },
-  { header: 'Country', value: (order) => order.customer?.country },
+  { header: 'Country', value: (order) => order.customer?.country, pdf: false },
   { header: 'Status', value: (order) => statusText(order.status) },
   { header: 'Placed', value: (order) => dateTime(order.created_at) },
   { header: 'Requested ship date', value: (order) => day(order.requested_ship_date) },
   { header: 'Estimated ship date', value: (order) => (estimates[order.id]?.shipped ? '' : day(estimates[order.id]?.estimatedShipDate)) },
-  { header: 'Container', value: (order) => order.container_size },
-  { header: 'Products subtotal (PHP)', value: (order) => money(order.subtotal) },
-  { header: 'Container cost (PHP)', value: (order) => money(order.container_cost) },
-  { header: 'Shipping (PHP)', value: (order) => money(order.shipping_cost) },
+  { header: 'Container', value: (order) => order.container_size, pdf: false },
+  { header: 'Products subtotal (PHP)', value: (order) => money(order.subtotal), pdf: false },
+  { header: 'Container cost (PHP)', value: (order) => money(order.container_cost), pdf: false },
+  { header: 'Shipping (PHP)', value: (order) => money(order.shipping_cost), pdf: false },
   { header: 'Total (PHP)', value: (order) => money(order.total_amount) },
-  { header: 'Down payment (PHP)', value: (order) => money(order.down_payment_amount) },
+  { header: 'Down payment (PHP)', value: (order) => money(order.down_payment_amount), pdf: false },
   { header: 'Paid (PHP)', value: (order) => money(order.settled_amount) },
-  { header: 'Waiting for payment check (PHP)', value: (order) => money(order.pending_payment_amount) },
+  { header: 'Waiting for payment check (PHP)', value: (order) => money(order.pending_payment_amount), pdf: false },
   { header: 'Balance (PHP)', value: (order) => (String(order.status || '').trim().toLowerCase() === 'cancelled' ? 0 : money(Math.max(Number(order.total_amount || 0) - Number(order.settled_amount || 0), 0))) },
-  { header: 'Cancelled', value: (order) => dateTime(order.cancelled_at) },
-  { header: 'Cancellation reason', value: (order) => order.cancellation_reason },
+  { header: 'Cancelled', value: (order) => dateTime(order.cancelled_at), pdf: false },
+  { header: 'Cancellation reason', value: (order) => order.cancellation_reason, pdf: false },
   { header: 'Rush shipment', value: (order) => (agreements.has(order.id) ? 'Agreed' : '') },
   { header: 'Products', value: (order) => productsText(order.customer_order_items) },
 ]

@@ -9,7 +9,7 @@ import StatusBadge from '../components/StatusBadge'
 import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
 import ListControls from '../components/ListControls'
-import { dateTime, downloadCsv, exportName, money, statusText } from '../utils/csvExport'
+import { dateTime, exportList, money, statusText } from '../utils/csvExport'
 import { ALL, applySearch, applyShow, applySort, byHighest, byNewest, byOldest, byStatus, showChoices, showingOf } from '../utils/listControls'
 
 
@@ -262,7 +262,7 @@ export default function BillingsPage() {
         searchPlaceholder="Order number or customer"
         shown={shownOrders.length}
         total={orders.length}
-        onExport={() => downloadCsv(exportName('billings'), billingColumns(getPaymentStatus, getRemainingBalance), shownOrders)}
+        onExport={(how) => exportList(how, 'billings', billingColumns(getPaymentStatus, getRemainingBalance), shownOrders)}
         noun={orders.length === 1 ? 'order' : 'orders'}
         loading={loading}
       />

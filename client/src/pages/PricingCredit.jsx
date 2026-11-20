@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import ExportButton from '../components/ExportButton'
-import { downloadCsv, exportName, money, number } from '../utils/csvExport'
+import { exportList, money, number } from '../utils/csvExport'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
 import { faFloppyDisk, faPlus, faTrash } from '@fortawesome/free-solid-svg-icons'
@@ -194,7 +194,7 @@ function MarkupsSection() {
           Markups and shipping costs by country
         </h2>
 
-        <ExportButton count={markups.length} onExport={() => downloadCsv(exportName('markups-and-shipping'), MARKUP_COLUMNS, markups)} />
+        <ExportButton count={markups.length} onExport={(how) => exportList(how, 'markups-and-shipping', MARKUP_COLUMNS, markups)} />
       </div>
 
       <p className="mb-3 text-sm text-gray-500">
@@ -678,7 +678,7 @@ function CreditSection() {
           Credit limit
         </h2>
 
-        <ExportButton count={balances.length} onExport={() => downloadCsv(exportName('customer-balances'), balanceColumns(creditLimit), balances)} />
+        <ExportButton count={balances.length} onExport={(how) => exportList(how, 'customer-balances', balanceColumns(creditLimit), balances)} />
       </div>
 
       <p className="mb-3 text-sm text-gray-500">

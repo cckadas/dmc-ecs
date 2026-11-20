@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../supabase'
 import ExportButton from '../components/ExportButton'
-import { downloadCsv, exportName, number } from '../utils/csvExport'
+import { exportList, number } from '../utils/csvExport'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faXmark, faFloppyDisk, faLocationDot, faLayerGroup, faWarehouse, faBox, faToggleOn, faToggleOff, faBoxOpen, faPlus } from '@fortawesome/free-solid-svg-icons'
@@ -367,7 +367,7 @@ export default function WarehouseLocationsPage() {
             View and manage warehouse racks by location and section.
           </p>
 
-          <ExportButton className="mt-3" count={racks.length} onExport={() => downloadCsv(exportName('warehouse-racks'), RACK_COLUMNS, visibleLocations.flatMap(([, sections]) => Object.values(sections).flat()))} />
+          <ExportButton className="mt-3" count={racks.length} onExport={(how) => exportList(how, 'warehouse-racks', RACK_COLUMNS, visibleLocations.flatMap(([, sections]) => Object.values(sections).flat()))} />
         </div>
 
 

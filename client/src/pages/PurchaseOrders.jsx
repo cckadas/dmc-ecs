@@ -25,7 +25,7 @@ import StatusBadge from '../components/StatusBadge'
 import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
 import ListControls from '../components/ListControls'
-import { dateTime, day, downloadCsv, exportName, money, number, statusText } from '../utils/csvExport'
+import { dateTime, day, exportList, money, number, statusText } from '../utils/csvExport'
 import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, bySoonest, showChoices, showingOf } from '../utils/listControls'
 import PurchaseOrderHistory from '../components/PurchaseOrderHistory'
 import { columnsIf, isCarriedLine, withNewColumns } from '../utils/newColumns'
@@ -620,7 +620,7 @@ export default function PurchaseOrdersPage() {
         searchPlaceholder="PO or order number, customer, supplier"
         shown={shownPurchaseOrders.length}
         total={purchaseOrders.length}
-        onExport={() => downloadCsv(exportName('purchase-orders'), PURCHASE_ORDER_COLUMNS, shownPurchaseOrders.flatMap((po) => (po.purchase_order_items || []).map((line) => ({ po, line }))))}
+        onExport={(how) => exportList(how, 'purchase-orders', PURCHASE_ORDER_COLUMNS, shownPurchaseOrders.flatMap((po) => (po.purchase_order_items || []).map((line) => ({ po, line }))))}
         noun={purchaseOrders.length === 1 ? 'purchase order' : 'purchase orders'}
         loading={loading}
       />
@@ -2530,17 +2530,17 @@ const PURCHASE_ORDER_COLUMNS = [
   { header: 'PO', value: ({ po }) => po.po_number },
   { header: 'PO status', value: ({ po }) => statusText(po.status) },
   { header: 'Order', value: ({ po }) => po.customer_orders?.order_number },
-  { header: 'Customer', value: ({ po }) => po.customer_orders?.profile?.company || po.customer_orders?.profile?.name },
-  { header: 'Created', value: ({ po }) => dateTime(po.created_at) },
+  { header: 'Customer', value: ({ po }) => po.customer_orders?.profile?.company || po.customer_orders?.profile?.name, pdf: false },
+  { header: 'Created', value: ({ po }) => dateTime(po.created_at), pdf: false },
   { header: 'Expected delivery', value: ({ po }) => day(po.expected_delivery_date) },
   { header: 'Supplier', value: ({ line }) => line.suppliers?.supplier_name },
   { header: 'Product', value: ({ line }) => line.products?.product_name },
   { header: 'Ordered', value: ({ line }) => number(line.ordered_quantity) },
   { header: 'Received', value: ({ line }) => number(line.received_quantity) },
-  { header: 'Unit price (PHP)', value: ({ line }) => money(line.unit_price) },
+  { header: 'Unit price (PHP)', value: ({ line }) => money(line.unit_price), pdf: false },
   { header: 'Line total (PHP)', value: ({ line }) => money(Number(line.ordered_quantity || 0) * Number(line.unit_price || 0)) },
   { header: 'Line status', value: ({ line }) => statusText(line.status) },
-  { header: "Supplier's PFI (PHP)", value: ({ line }) => money(line.supplier_pfi_amount) },
-  { header: 'Paid to supplier (PHP)', value: ({ line }) => money(line.payment_amount) },
-  { header: 'Paid on', value: ({ line }) => day(line.payment_date) },
+  { header: "Supplier's PFI (PHP)", value: ({ line }) => money(line.supplier_pfi_amount), pdf: false },
+  { header: 'Paid to supplier (PHP)', value: ({ line }) => money(line.payment_amount), pdf: false },
+  { header: 'Paid on', value: ({ line }) => day(line.payment_date), pdf: false },
 ]

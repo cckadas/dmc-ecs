@@ -14,7 +14,7 @@ import { casesThatFit, suggestRacks, formatCbm, summarizeCapacity } from '../uti
 import { loadExpectedDeliveries } from '../services/predictionService'
 import { columnsIf, withNewColumns } from '../utils/newColumns'
 import ListControls from '../components/ListControls'
-import { day, downloadCsv, exportName, number, statusText } from '../utils/csvExport'
+import { day, exportList, number, statusText } from '../utils/csvExport'
 import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, bySoonest, showChoices, showingOf } from '../utils/listControls'
 
 
@@ -387,7 +387,7 @@ export default function ReceivingPage() {
         searchPlaceholder="PO or order number, customer"
         shown={shownPurchaseOrders.length}
         total={purchaseOrders.length}
-        onExport={() => downloadCsv(exportName('receiving'), receivingColumns(warehouseRacks), shownPurchaseOrders.flatMap((po) => (po.purchase_order_items || []).map((line) => ({ po, line }))))}
+        onExport={(how) => exportList(how, 'receiving', receivingColumns(warehouseRacks), shownPurchaseOrders.flatMap((po) => (po.purchase_order_items || []).map((line) => ({ po, line }))))}
         noun={purchaseOrders.length === 1 ? 'purchase order' : 'purchase orders'}
         loading={loading}
       />

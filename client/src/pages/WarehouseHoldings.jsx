@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../supabase'
 import ExportButton from '../components/ExportButton'
-import { downloadCsv, exportName, number, statusText } from '../utils/csvExport'
+import { exportList, number, statusText } from '../utils/csvExport'
 import { useToast } from '../context/ToastContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faWarehouse, faMagnifyingGlass, faBox, faLocationDot } from '@fortawesome/free-solid-svg-icons'
@@ -471,7 +471,7 @@ export default function WarehouseHoldingsPage() {
           View items currently inside the warehouse and their assigned locations.
         </p>
 
-        <ExportButton className="mt-3" count={filteredItems.length} onExport={() => downloadCsv(exportName('warehouse-holdings'), HOLDING_COLUMNS, filteredItems)} />
+        <ExportButton className="mt-3" count={filteredItems.length} onExport={(how) => exportList(how, 'warehouse-holdings', HOLDING_COLUMNS, filteredItems)} />
       </div>
 
 

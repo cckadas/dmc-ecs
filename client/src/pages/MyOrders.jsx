@@ -20,7 +20,7 @@ import { loadMyRushOptions, loadRushAgreements, loadWaitingGoods, stillToShip } 
 import { lineNote, orderNumberByItem } from '../utils/rushLines'
 import { loadMyEstimates } from '../services/predictionService'
 import ListControls from '../components/ListControls'
-import { dateTime, day, downloadCsv, exportName, money, productsText, statusText } from '../utils/csvExport'
+import { dateTime, day, exportList, money, productsText, statusText } from '../utils/csvExport'
 import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, showChoices, showingOf } from '../utils/listControls'
 import { STATUS_ORDER } from '../utils/orderStatusSort'
 
@@ -209,7 +209,7 @@ export default function MyOrdersPage() {
         searchPlaceholder="Order or quotation number"
         shown={shownOrders.length}
         total={orders.length}
-        onExport={() => downloadCsv(exportName('my-orders'), myOrderColumns(estimates), shownOrders)}
+        onExport={(how) => exportList(how, 'my-orders', myOrderColumns(estimates), shownOrders)}
         noun={orders.length === 1 ? 'order' : 'orders'}
         loading={loading}
       />

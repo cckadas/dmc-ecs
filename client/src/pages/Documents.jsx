@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import ExportButton from '../components/ExportButton'
-import { dateTime, downloadCsv, exportName, money, statusText } from '../utils/csvExport'
+import { dateTime, exportList, money, statusText } from '../utils/csvExport'
 import { useAuth } from '../context/AuthContext'
 import { 
   faFileInvoice,
@@ -120,7 +120,7 @@ export default function DocumentsPage() {
           View attached documents for your orders.
         </p>
 
-        <ExportButton className="mt-3" count={orders.length} onExport={() => downloadCsv(exportName('order-documents'), DOCUMENT_COLUMNS, orders)} />
+        <ExportButton className="mt-3" count={orders.length} onExport={(how) => exportList(how, 'order-documents', DOCUMENT_COLUMNS, orders)} />
       </div>
 
 

@@ -19,7 +19,7 @@ import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
 import TableScroll from '../components/TableScroll'
 import ListControls from '../components/ListControls'
-import { dateTime, day, downloadCsv, exportName, productsText, statusText } from '../utils/csvExport'
+import { dateTime, day, exportList, productsText, statusText } from '../utils/csvExport'
 import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, showChoices, showingOf } from '../utils/listControls'
 
 
@@ -388,7 +388,7 @@ export default function ProFormaInvoicePage() {
         searchPlaceholder="Reference or customer"
         shown={shownRequests.length}
         total={requests.length}
-        onExport={() => downloadCsv(exportName('quotation-requests'), requestColumns(requests), shownRequests)}
+        onExport={(how) => exportList(how, 'quotation-requests', requestColumns(requests), shownRequests)}
         noun={requests.length === 1 ? 'request' : 'requests'}
       />
 

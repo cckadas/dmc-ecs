@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import ExportButton from '../components/ExportButton'
-import { dateTime, downloadCsv, exportName, statusText } from '../utils/csvExport'
+import { dateTime, exportList, statusText } from '../utils/csvExport'
 import { useAuth } from '../context/AuthContext'
 import { createStaffAccount, updateStaffAccountStatus } from '../services/userService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -207,7 +207,7 @@ export default function AccountsPage() {
             Manage staff accounts and access.
           </p>
 
-          <ExportButton className="mt-3" count={accounts.length} onExport={() => downloadCsv(exportName('staff-accounts'), ACCOUNT_COLUMNS, accounts)} />
+          <ExportButton className="mt-3" count={accounts.length} onExport={(how) => exportList(how, 'staff-accounts', ACCOUNT_COLUMNS, accounts)} />
         </div>
 
         {profile?.role === 'admin' && (

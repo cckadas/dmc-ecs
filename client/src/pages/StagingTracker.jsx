@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import ListControls from '../components/ListControls'
-import { dateTime, downloadCsv, exportName, statusText } from '../utils/csvExport'
+import { dateTime, exportList, statusText } from '../utils/csvExport'
 import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, showChoices, showingOf } from '../utils/listControls'
 import { supabase } from '../supabase'
 import { useToast } from '../context/ToastContext'
@@ -827,7 +827,7 @@ export default function StagingTrackerPage() {
         searchPlaceholder="Order number or customer"
         shown={shownGroups.length}
         total={customerOrders.length}
-        onExport={() => downloadCsv(exportName('staging'), STAGING_COLUMNS, shownGroups.flatMap((group) => (group.items || []).map((item) => ({ group, item }))))}
+        onExport={(how) => exportList(how, 'staging', STAGING_COLUMNS, shownGroups.flatMap((group) => (group.items || []).map((item) => ({ group, item }))))}
         noun={customerOrders.length === 1 ? 'order' : 'orders'}
         loading={loading}
       />
