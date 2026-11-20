@@ -21,6 +21,9 @@ export default function DeliveryLocationsPage() {
   const [locations, setLocations] = useState([])
   const [showModal, setShowModal] = useState(false)
   const [editingLocation, setEditingLocation] = useState(null)
+  // Where each location is used: its requests' and orders' numbers, by id.
+  // A location in use is frozen (db/migrations/036): those keep its address.
+  const [usedBy, setUsedBy] = useState({})
 
 
   // =============================================
@@ -48,13 +51,39 @@ export default function DeliveryLocationsPage() {
     }
 
     setLocations(data)
+    loadUsage().catch((usageError) => console.error('Failed to check where locations are used:', usageError))
   }
+
+
+  // =============================================
+  // WHERE EACH LOCATION IS USED
+  // =============================================
+  async function loadUsage() {
+    const [requests, orders] = await Promise.all([
+      supabase.from('quotation_requests').select('delivery_location_id, quotation_reference, created_at').eq('customer_id', profile.id),
+      supabase.from('customer_orders').select('delivery_location_id, order_number, created_at').eq('customer_id', profile.id),
+    ])
+    if (requests.error) throw requests.error
+    if (orders.error) throw orders.error
+
+    const used = {}
+    const add = (locationId, reference, madeAt) => {
+      if (!locationId || !reference) return
+      ;(used[locationId] ||= []).push({ reference, madeAt })
+    }
+    for (const order of orders.data || []) add(order.delivery_location_id, order.order_number, order.created_at)
+    for (const request of requests.data || []) add(request.delivery_location_id, request.quotation_reference, request.created_at)
+    for (const list of Object.values(used)) list.sort((a, b) => String(b.madeAt).localeCompare(String(a.madeAt)))
+    setUsedBy(used)
+  }
+
+  const referencesOf = (locationId) => (usedBy[locationId] || []).map((use) => use.reference)
 
 
   // =============================================
   // SAVE LOCATION
   // =============================================
-  async function saveLocation(formData) {
+  async function saveLocation(formData, { takeOldOff = false } = {}) {
     if (!formData.location_name || !formData.address) {
       alert('Location name and address are required')
       return
@@ -75,8 +104,10 @@ export default function DeliveryLocationsPage() {
     }
 
     let error
+    // A location in use stays as it is: the changes become a new location.
+    const asNew = Boolean(editingLocation) && referencesOf(editingLocation.id).length > 0
 
-    if (editingLocation) {
+    if (editingLocation && !asNew) {
       const { error: updateError } = await supabase
         .from('delivery_locations')
         .update(formData)
@@ -84,7 +115,7 @@ export default function DeliveryLocationsPage() {
 
       error = updateError
     }
-    
+
     else {
       const { error: insertError } = await supabase
         .from('delivery_locations')
@@ -101,7 +132,17 @@ export default function DeliveryLocationsPage() {
       return
     }
 
-    toast.success(editingLocation ? 'Location updated successfully!' : 'Location added successfully!')
+    if (asNew && takeOldOff) {
+      // Archived, since requests or orders use it (db/migrations/011).
+      const { error: removeError } = await supabase.rpc('remove_delivery_location', { p_location_id: editingLocation.id })
+      if (removeError) toast.error(`The new location was saved, but the old one couldn't be taken off your list: ${removeError.message}`)
+    }
+
+    toast.success(
+      asNew
+        ? `Saved as a new location for your next requests. ${referencesOf(editingLocation.id).join(', ')} keep${referencesOf(editingLocation.id).length === 1 ? 's' : ''} the old address.`
+        : editingLocation ? 'Location updated successfully!' : 'Location added successfully!'
+    )
     setShowModal(false)
     loadLocations()
   }
@@ -230,7 +271,15 @@ export default function DeliveryLocationsPage() {
             {locations.length > 0 ? (
               locations.map((location) => (
                 <tr key={location.id} className="border-t border-gray-200 text-sm hover:bg-gray-50">
-                  <td className="px-5 py-3 font-medium text-gray-800"> {location.location_name} </td>
+                  <td className="px-5 py-3 font-medium text-gray-800">
+                    {location.location_name}
+                    {referencesOf(location.id).length > 0 && (
+                      <span className="mt-0.5 block max-w-[16rem] text-xs font-normal text-gray-500">
+                        On {referencesOf(location.id).slice(0, 3).join(', ')}
+                        {referencesOf(location.id).length > 3 ? ` and ${referencesOf(location.id).length - 3} more` : ''}: kept as it is
+                      </span>
+                    )}
+                  </td>
                   <td className="px-5 py-3"> {location.recipient_name || '-'} </td>
                   <td className="px-5 py-3"> {location.contact_number || '-'} </td>
                   <td className="px-5 py-3"> {location.address} </td>
@@ -238,7 +287,7 @@ export default function DeliveryLocationsPage() {
 
                   <td className="px-5 py-3">
                     <div className="flex gap-2">
-                      <IconButton icon={faPen} title="Edit Location" color="amber" disabled={false} onClick={() => openEditModal(location)}/>
+                      <IconButton icon={faPen} title={referencesOf(location.id).length ? 'Change (saved as a new location)' : 'Edit Location'} color="amber" disabled={false} onClick={() => openEditModal(location)}/>
                       <IconButton icon={faTrash} title="Delete Location" color="red" disabled={false} onClick={() => deleteLocation(location.id)}/>
                     </div>
                   </td>
@@ -258,6 +307,7 @@ export default function DeliveryLocationsPage() {
       {showModal && (
         <DeliveryLocationModal
           location={editingLocation}
+          usedOn={editingLocation ? referencesOf(editingLocation.id) : []}
           onClose={() => setShowModal(false)}
           onSubmit={saveLocation}
         />
@@ -271,7 +321,11 @@ export default function DeliveryLocationsPage() {
 // =============================================
 // DELIVERY LOCATION MODAL
 // =============================================
-function DeliveryLocationModal({ onClose, onSubmit, location }) {
+// usedOn: the requests and orders that use this location. Then it can't be
+// changed (db/migrations/036): the changes are saved as a new location.
+function DeliveryLocationModal({ onClose, onSubmit, location, usedOn = [] }) {
+  const asNew = Boolean(location) && usedOn.length > 0
+  const [takeOldOff, setTakeOldOff] = useState(true)
 
   const [form, setForm] = useState({
     location_name: location?.location_name || '',
@@ -294,7 +348,7 @@ function DeliveryLocationModal({ onClose, onSubmit, location }) {
   function handleSubmit(e) {
     e.preventDefault()
     if (!form.location_name || !form.address) return
-    onSubmit(form)
+    onSubmit(form, { takeOldOff: asNew && takeOldOff })
     onClose()
   }
 
@@ -306,8 +360,15 @@ function DeliveryLocationModal({ onClose, onSubmit, location }) {
         {/* Header */}
         <div className="border-b bg-[#F4F8F5] px-6 py-4">
           <h2 className="text-xl font-semibold text-[#1F3A2C]">
-            {location ? 'Edit Delivery Location' : 'Add Delivery Location'}
+            {asNew ? 'Change Delivery Location' : location ? 'Edit Delivery Location' : 'Add Delivery Location'}
           </h2>
+
+          {asNew && (
+            <p className="mt-1 text-sm text-gray-600">
+              This address is on {usedOn.slice(0, 4).join(', ')}{usedOn.length > 4 ? ` and ${usedOn.length - 4} more` : ''}, and they keep it as it is.
+              Your changes are saved as a new location, for your next requests.
+            </p>
+          )}
         </div>
 
         <form
@@ -406,6 +467,18 @@ function DeliveryLocationModal({ onClose, onSubmit, location }) {
           </div>
 
 
+          {asNew && (
+            <label className="flex items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={takeOldOff}
+                onChange={(event) => setTakeOldOff(event.target.checked)}
+                className="mt-0.5 h-4 w-4 accent-[#2D5A42]"
+              />
+              <span>Take the old location off my list (the requests and orders above still show it).</span>
+            </label>
+          )}
+
           {/* Buttons */}
           <div className="flex justify-end gap-3 pt-5">
             <button
@@ -420,7 +493,7 @@ function DeliveryLocationModal({ onClose, onSubmit, location }) {
               type="submit"
               className="rounded-lg bg-[#1F3A2C] px-4 py-2 text-white transition hover:bg-[#2D5A42]"
             >
-              {location ? 'Save Changes' : 'Save Location'}
+              {asNew ? 'Save as a New Location' : location ? 'Save Changes' : 'Save Location'}
             </button>
           </div>
         </form>
