@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
+import ExportButton from '../components/ExportButton'
+import { downloadCsv, exportName } from '../utils/csvExport'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPen, faTrash, faPlus } from '@fortawesome/free-solid-svg-icons'
@@ -179,6 +181,8 @@ export default function DeliveryLocationsPage() {
           <p className="mt-1 text-gray-500">
             Manage your saved delivery addresses.
           </p>
+
+          <ExportButton className="mt-3" count={locations.length} onExport={() => downloadCsv(exportName('delivery-locations'), LOCATION_COLUMNS, locations)} />
         </div>
 
         <button
@@ -424,3 +428,16 @@ function DeliveryLocationModal({ onClose, onSubmit, location }) {
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per saved delivery location.
+// =============================================
+const LOCATION_COLUMNS = [
+  { header: 'Location', value: (location) => location.location_name },
+  { header: 'Recipient', value: (location) => location.recipient_name },
+  { header: 'Contact number', value: (location) => location.contact_number },
+  { header: 'Address', value: (location) => location.address },
+  { header: 'Country', value: (location) => location.country },
+]

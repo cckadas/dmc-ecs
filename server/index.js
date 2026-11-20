@@ -12,6 +12,7 @@ import estimatesRouter from './routes/estimates.js'
 import { requireRole } from './auth.js'
 import { startPredictionAlerts } from './alerts.js'
 import { startPaymentDeadlines } from './paymentDeadlines.js'
+import { startQuotationExpiry } from './quotationExpiry.js'
 
 const app = express()
 
@@ -68,4 +69,7 @@ app.listen(PORT, () => {
 
   // Down payment reminders, and cancelling orders not paid 7 days after the deadline (paymentDeadlines.js).
   startPaymentDeadlines()
+
+  // Quotation reminders 2 days before expiry, and marking expired ones (quotationExpiry.js).
+  startQuotationExpiry()
 })

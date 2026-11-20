@@ -15,8 +15,9 @@ import TableScroll from '../components/TableScroll'
 import { CANCELLATION_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
 import DownPaymentDeadline from '../components/DownPaymentDeadline'
 import { deadlineNote } from '../utils/deadlineNote'
-import { downPaymentStatus, formatDay } from '../utils/paymentDeadline'
+import { downPaymentDates, downPaymentStatus, formatDay } from '../utils/paymentDeadline'
 import ListControls from '../components/ListControls'
+import { dateTime, day, downloadCsv, exportName, money, productsText, statusText } from '../utils/csvExport'
 import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, bySoonest, showChoices, showingOf } from '../utils/listControls'
 
 
@@ -225,6 +226,7 @@ export default function PaymentsPage() {
         searchPlaceholder="Order or quotation number"
         shown={shownPayments.length}
         total={payments.length}
+        onExport={() => downloadCsv(exportName('payments'), PAYMENT_COLUMNS, shownPayments)}
         noun={payments.length === 1 ? 'order' : 'orders'}
         loading={loading}
       />
@@ -1168,3 +1170,24 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted, onRefused }) {
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per order, as listed.
+// =============================================
+const isCancelledOrder = (order) => String(order.status || '').trim().toLowerCase() === 'cancelled'
+const PAYMENT_COLUMNS = [
+  { header: 'Order', value: (order) => order.order_number },
+  { header: 'Quotation', value: (order) => order.quotation_number },
+  { header: 'Status', value: (order) => statusText(order.status) },
+  { header: 'Total (PHP)', value: (order) => money(order.total_amount) },
+  { header: 'Down payment (PHP)', value: (order) => money(order.down_payment_amount) },
+  { header: 'Paid and verified (PHP)', value: (order) => money(order.settled_amount) },
+  { header: 'Waiting for DMC to check (PHP)', value: (order) => money(order.pending_payment_amount) },
+  { header: 'Balance (PHP)', value: (order) => (isCancelledOrder(order) ? 0 : money(Math.max(Number(order.total_amount || 0) - Number(order.settled_amount || 0), 0))) },
+  { header: 'Down payment due by', value: (order) => (Number(order.settled_amount || 0) > 0 || isCancelledOrder(order) ? '' : day(downPaymentDates(order)?.deadline)) },
+  { header: 'Cancelled', value: (order) => dateTime(order.cancelled_at) },
+  { header: 'Placed', value: (order) => dateTime(order.created_at) },
+  { header: 'Products', value: (order) => productsText(order.customer_order_items) },
+]

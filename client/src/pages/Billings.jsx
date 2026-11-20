@@ -9,6 +9,7 @@ import StatusBadge from '../components/StatusBadge'
 import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
 import ListControls from '../components/ListControls'
+import { dateTime, downloadCsv, exportName, money, statusText } from '../utils/csvExport'
 import { ALL, applySearch, applyShow, applySort, byHighest, byNewest, byOldest, byStatus, showChoices, showingOf } from '../utils/listControls'
 
 
@@ -261,6 +262,7 @@ export default function BillingsPage() {
         searchPlaceholder="Order number or customer"
         shown={shownOrders.length}
         total={orders.length}
+        onExport={() => downloadCsv(exportName('billings'), billingColumns(getPaymentStatus, getRemainingBalance), shownOrders)}
         noun={orders.length === 1 ? 'order' : 'orders'}
         loading={loading}
       />
@@ -430,3 +432,22 @@ export default function BillingsPage() {
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per order, as listed.
+// =============================================
+const billingColumns = (paymentStatusOf, balanceOf) => [
+  { header: 'Order', value: (order) => order.order_number },
+  { header: 'Quotation', value: (order) => order.quotation_number },
+  { header: 'Customer', value: (order) => order.customer?.name },
+  { header: 'Company', value: (order) => order.customer?.company },
+  { header: 'Order status', value: (order) => statusText(order.status) },
+  { header: 'Payment', value: (order) => statusText(paymentStatusOf(order)) },
+  { header: 'Total (PHP)', value: (order) => money(order.total_amount) },
+  { header: 'Down payment due (PHP)', value: (order) => money(order.down_payment_amount) },
+  { header: 'Paid (PHP)', value: (order) => money(order.settled_amount) },
+  { header: 'Balance (PHP)', value: (order) => money(balanceOf(order)) },
+  { header: 'Placed', value: (order) => dateTime(order.created_at) },
+]

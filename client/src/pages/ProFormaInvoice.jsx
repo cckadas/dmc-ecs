@@ -19,6 +19,7 @@ import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
 import TableScroll from '../components/TableScroll'
 import ListControls from '../components/ListControls'
+import { dateTime, day, downloadCsv, exportName, productsText, statusText } from '../utils/csvExport'
 import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, showChoices, showingOf } from '../utils/listControls'
 
 
@@ -41,13 +42,15 @@ export default function ProFormaInvoicePage() {
   // LOAD QUEUES
   // =============================================
   async function loadQueues() {
-    const { data, error } = await supabase
+    // Which request a new quote replaces (035), asked for until that script is run.
+    const { data, error } = await withNewColumns((withLink) => supabase
       .from('quotation_requests')
       .select(`
         id,
         quotation_reference,
         preferred_ship_date,
         delivery_location_id,
+        ${columnsIf(withLink, ['replaces_request_id'])}
         status,
         created_at,
         profiles (
@@ -78,7 +81,7 @@ export default function ProFormaInvoicePage() {
           )
         )
       `)
-      .order('created_at', { ascending: false })
+      .order('created_at', { ascending: false }), ['replaces_request_id'])
 
 
     if (error) {
@@ -337,7 +340,7 @@ export default function ProFormaInvoicePage() {
   // =============================================
   // The list as chosen above it. By status: awaiting pricing first, the one
   // waiting longest first.
-  const REQUEST_ORDER = ['awaiting pricing', 'priced & sent to customer', 'approved', 'rejected', 'cancelled']
+  const REQUEST_ORDER = ['awaiting pricing', 'priced & sent to customer', 'approved', 'rejected', 'expired', 'cancelled']
   const requestList = { statusOf: (request) => request.status, order: REQUEST_ORDER, allLabel: 'All requests' }
   const choices = showChoices(requests, requestList)
   const showing = showingOf(choices, show)
@@ -385,6 +388,7 @@ export default function ProFormaInvoicePage() {
         searchPlaceholder="Reference or customer"
         shown={shownRequests.length}
         total={requests.length}
+        onExport={() => downloadCsv(exportName('quotation-requests'), requestColumns(requests), shownRequests)}
         noun={requests.length === 1 ? 'request' : 'requests'}
       />
 
@@ -435,6 +439,16 @@ export default function ProFormaInvoicePage() {
 
                   <td className="px-5 py-3 font-medium text-gray-800">
                     {request.quotation_reference}
+                    {request.replaces_request_id && (
+                      <span className="mt-0.5 block text-xs font-normal text-gray-500">
+                        New quote for {requests.find((other) => other.id === request.replaces_request_id)?.quotation_reference || 'an expired request'} (its quotation expired)
+                      </span>
+                    )}
+                    {requests.some((other) => other.replaces_request_id === request.id) && (
+                      <span className="mt-0.5 block text-xs font-normal text-gray-500">
+                        New quote requested: {requests.find((other) => other.replaces_request_id === request.id).quotation_reference}
+                      </span>
+                    )}
                   </td>
 
                   <td className="px-5 py-3">
@@ -1506,3 +1520,21 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per quotation request, as listed.
+// =============================================
+const requestColumns = (requests) => [
+  { header: 'Reference', value: (request) => request.quotation_reference },
+  { header: 'New quote for', value: (request) => requests.find((other) => other.id === request.replaces_request_id)?.quotation_reference || '' },
+  { header: 'Company', value: (request) => request.profiles?.company },
+  { header: 'Email', value: (request) => request.profiles?.email },
+  { header: 'Delivery location', value: (request) => request.delivery_locations?.location_name },
+  { header: 'Country', value: (request) => request.delivery_locations?.country },
+  { header: 'Status', value: (request) => statusText(request.status) },
+  { header: 'Requested', value: (request) => dateTime(request.created_at) },
+  { header: 'Preferred ship date', value: (request) => day(request.preferred_ship_date) },
+  { header: 'Products', value: (request) => productsText(request.quotation_request_items) },
+]

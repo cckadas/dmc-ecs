@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../supabase'
+import ExportButton from '../components/ExportButton'
+import { downloadCsv, exportName, number } from '../utils/csvExport'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faXmark, faFloppyDisk, faLocationDot, faLayerGroup, faWarehouse, faBox, faToggleOn, faToggleOff, faBoxOpen, faPlus } from '@fortawesome/free-solid-svg-icons'
@@ -364,6 +366,8 @@ export default function WarehouseLocationsPage() {
           <p className="mt-1 text-gray-500">
             View and manage warehouse racks by location and section.
           </p>
+
+          <ExportButton className="mt-3" count={racks.length} onExport={() => downloadCsv(exportName('warehouse-racks'), RACK_COLUMNS, visibleLocations.flatMap(([, sections]) => Object.values(sections).flat()))} />
         </div>
 
 
@@ -827,3 +831,18 @@ function RackEditModal({ rack, isAdmin, saving, onChange, onSave, onClose }) {
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per rack, for the location chosen (or all).
+// =============================================
+const RACK_COLUMNS = [
+  { header: 'Rack', value: (rack) => rack.rack_id },
+  { header: 'Name', value: (rack) => rack.name },
+  { header: 'Location', value: (rack) => rack.location },
+  { header: 'Section', value: (rack) => rack.section },
+  { header: 'Capacity (m3)', value: (rack) => number(rack.capacity_cbm) },
+  { header: 'Occupied', value: (rack) => Boolean(rack.is_occupied) },
+  { header: 'In use', value: (rack) => rack.is_active !== false },
+]

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
+import ExportButton from '../components/ExportButton'
+import { dateTime, downloadCsv, exportName } from '../utils/csvExport'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faFolderOpen, faPen, faTrash, faFileImport } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from '../context/ToastContext'
@@ -196,6 +198,8 @@ export default function SuppliersPage() {
           <p className="mt-1 text-gray-500">
             Manage supplier records.
           </p>
+
+          <ExportButton className="mt-3" count={suppliers.length} onExport={() => downloadCsv(exportName('suppliers'), SUPPLIER_COLUMNS, suppliers)} />
         </div>
 
         <div className="flex items-center gap-2">
@@ -1272,3 +1276,18 @@ function ImportSuppliersModal({ onClose, onSubmit }) {
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per supplier, as listed.
+// =============================================
+const SUPPLIER_COLUMNS = [
+  { header: 'Supplier', value: (supplier) => supplier.supplier_name },
+  { header: 'Type', value: (supplier) => supplier.supplier_type },
+  { header: 'Contact person', value: (supplier) => supplier.contact_person },
+  { header: 'Email', value: (supplier) => supplier.email },
+  { header: 'Phone', value: (supplier) => supplier.phone },
+  { header: 'Address', value: (supplier) => supplier.address },
+  { header: 'Added', value: (supplier) => dateTime(supplier.created_at) },
+]

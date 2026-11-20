@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
+import ExportButton from '../components/ExportButton'
+import { downloadCsv, exportName } from '../utils/csvExport'
 import { useAuth } from '../context/AuthContext'
 import { createCustomer } from '../services/userService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -219,6 +221,8 @@ export default function CustomersPage() {
           <p className="mt-1 text-gray-500">
             Manage customer records.
           </p>
+
+          <ExportButton className="mt-3" count={customers.length} onExport={() => downloadCsv(exportName('customers'), CUSTOMER_COLUMNS, customers)} />
         </div>
 
 
@@ -787,3 +791,17 @@ function EditCustomerModal({ customer, onClose, onSubmit }) {
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per customer, as listed.
+// =============================================
+const CUSTOMER_COLUMNS = [
+  { header: 'Name', value: (customer) => customer.name },
+  { header: 'Company', value: (customer) => customer.company },
+  { header: 'Email', value: (customer) => customer.email },
+  { header: 'Contact number', value: (customer) => customer.contact_number },
+  { header: 'Address', value: (customer) => customer.address },
+  { header: 'Country', value: (customer) => customer.country },
+]

@@ -77,6 +77,10 @@ export const PORTAL_FAQ = [
     answer: 'My Orders shows each order\'s progress: order confirmed, down payment verified, procurement, warehouse preparation, ready for shipment, and shipped (or partly shipped, after a rush shipment). It also shows the estimated ship date with a likely range, and the estimated arrival at your port. These are estimates based on past orders, not guarantees.',
   },
   {
+    topic: 'Expired quotation',
+    answer: 'A quotation can be approved until its expiry date (7 days, Sundays not counted); the customer is reminded 2 days before. After that it is marked Expired and can\'t be approved. To still order, the customer opens it in Quotation Requests and clicks "Request a new quote": the products are filled in from the expired one, can be changed, and DMC prices the new request again with the prices of that day.',
+  },
+  {
     topic: 'Rush shipment',
     answer: 'While an order waits for its goods (Procurement) and some of them are already in DMC\'s warehouse, the customer can ask for a rush shipment on My Orders: what is in ships now, and the rest goes in the container of their next order with DMC, whenever they place it. The order\'s price and balance stay the same, and the waiting goods are not charged again. The customer sees exactly what ships and what waits before agreeing, and once agreed it cannot be undone. If they don\'t agree, the order keeps waiting for everything.',
   },

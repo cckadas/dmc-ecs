@@ -4,7 +4,11 @@
 // Above a page's list of records: Show (one status or group, with how many
 // each has), Sort by, and Search, with how many records are showing. The
 // choices come from utils/listControls.js; each page keeps its own state.
+// onExport (optional): an Export button that downloads what is showing as a
+// CSV file (utils/csvExport.js).
 // =============================================
+
+import ExportButton from './ExportButton'
 
 const field = 'rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800'
 
@@ -22,6 +26,7 @@ export default function ListControls({
   total,
   noun = 'records',
   loading = false,
+  onExport = null,
   className = 'mb-4',
 }) {
   return (
@@ -69,6 +74,10 @@ export default function ListControls({
         <p className="pb-2 text-sm text-gray-500">
           Showing {shown} of {total} {noun}
         </p>
+      )}
+
+      {onExport && (
+        <ExportButton onExport={onExport} count={loading ? 0 : shown} className="ml-auto" />
       )}
     </div>
   )

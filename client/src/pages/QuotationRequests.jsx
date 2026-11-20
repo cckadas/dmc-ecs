@@ -12,12 +12,13 @@ import { getMinimumOrderQuantities } from '../services/pricingService'
 import { groupByFamily, sizeLabel } from '../utils/productGroups'
 import { previewMyEstimate } from '../services/predictionService'
 import { loadCarriedFrom } from '../services/rushService'
-import { RUSH_ITEM_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
+import { RUSH_ITEM_COLUMNS, columnsIf, isMissingColumn, withNewColumns } from '../utils/newColumns'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
 import TableScroll from '../components/TableScroll'
 import ListControls from '../components/ListControls'
+import { dateTime, downloadCsv, exportName, productsText, statusText } from '../utils/csvExport'
 import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, showChoices, showingOf, statusLabel } from '../utils/listControls'
 
 
@@ -38,6 +39,8 @@ export default function QuotationRequestsPage() {
   const [loadingQuotation, setLoadingQuotation] = useState(false)
   const [creatingCO, setCreatingCO] = useState(false)
   const [credit, setCredit] = useState(null)
+  // The expired request a new quote is being asked for in place of (035).
+  const [requestAgain, setRequestAgain] = useState(null)
 
 
   // =============================================
@@ -64,13 +67,16 @@ export default function QuotationRequestsPage() {
   // LOAD REQUESTS
   // =============================================
   async function loadRequests() {
-    const { data, error } = await supabase
+    // Which request a new quote replaces (035), asked for until that script is run.
+    const { data, error } = await withNewColumns((withLink) => supabase
       .from('quotation_requests')
       .select(`
         id,
         quotation_reference,
         status,
         created_at,
+        delivery_location_id,
+        ${columnsIf(withLink, ['replaces_request_id'])}
         delivery_locations (
           location_name,
           address,
@@ -78,6 +84,7 @@ export default function QuotationRequestsPage() {
         ),
         quotation_request_items (
           id,
+          product_id,
           quantity,
           notes,
           products (
@@ -88,7 +95,7 @@ export default function QuotationRequestsPage() {
         )
       `)
       .eq('customer_id', profile.id)
-      .order('created_at', { ascending: false })
+      .order('created_at', { ascending: false }), ['replaces_request_id'])
 
     if (error) {
       toast.error(error.message)
@@ -143,17 +150,25 @@ export default function QuotationRequestsPage() {
   async function saveRequest(formData) {
     const quotationReference = generateQuotationReference()
 
-    const { data: request, error } = await supabase
-      .from('quotation_requests')
-      .insert({
-        quotation_reference: quotationReference,
-        customer_id: profile.id,
-        delivery_location_id: formData.delivery_location_id,
-        preferred_ship_date: formData.preferred_ship_date,
-        status: 'awaiting pricing',
-      })
-      .select()
-      .single()
+    // A new quote for an expired one says which request it replaces (035).
+    const row = {
+      quotation_reference: quotationReference,
+      customer_id: profile.id,
+      delivery_location_id: formData.delivery_location_id,
+      preferred_ship_date: formData.preferred_ship_date,
+      status: 'awaiting pricing',
+      ...(formData.replaces_request_id ? { replaces_request_id: formData.replaces_request_id } : {}),
+    }
+    const insertRequest = (values) => supabase.from('quotation_requests').insert(values).select().single()
+
+    let { data: request, error } = await insertRequest(row)
+
+    // Before 035 is run, it's saved as an ordinary request.
+    if (error && row.replaces_request_id && (error.code === 'PGRST204' || isMissingColumn(error, ['replaces_request_id']))) {
+      const withoutLink = { ...row }
+      delete withoutLink.replaces_request_id
+      ;({ data: request, error } = await insertRequest(withoutLink))
+    }
 
     if (error) {
       toast.error(error.message)
@@ -179,9 +194,32 @@ export default function QuotationRequestsPage() {
       return
     }
 
+    if (formData.replaces_request_id) {
+      toast.success(`New quote requested: ${quotationReference}. DMC prices it again with today's prices.`)
+    }
+
     setShowModal(false)
+    setRequestAgain(null)
     loadRequests()
   }
+
+
+  // A new quote in place of an expired one: the request form, filled in from it.
+  function requestNewQuote(quotation) {
+    const expired = requests.find((request) => request.id === quotation?.quotation_request_id)
+    if (!expired) {
+      toast.error('The request of this quotation could not be found. Please reload the page.')
+      return
+    }
+
+    setShowQuotationModal(false)
+    setSelectedQuotation(null)
+    setRequestAgain(expired)
+    setShowModal(true)
+  }
+
+  // The request asked for in place of this one, if any.
+  const replacementOf = (requestId) => requests.find((request) => request.replaces_request_id === requestId) || null
 
 
   // =============================================
@@ -431,7 +469,7 @@ export default function QuotationRequestsPage() {
   // MAIN CONTENT
   // =============================================
   // The list as chosen above it. A priced request is waiting for the customer.
-  const REQUEST_ORDER = ['awaiting pricing', 'priced & sent to customer', 'approved', 'rejected', 'cancelled']
+  const REQUEST_ORDER = ['awaiting pricing', 'priced & sent to customer', 'approved', 'rejected', 'expired', 'cancelled']
   const requestList = {
     statusOf: (request) => request.status,
     order: REQUEST_ORDER,
@@ -506,6 +544,7 @@ export default function QuotationRequestsPage() {
         searchPlaceholder="Reference or product"
         shown={shownRequests.length}
         total={requests.length}
+        onExport={() => downloadCsv(exportName('my-quotation-requests'), myRequestColumns(requests), shownRequests)}
         noun={requests.length === 1 ? 'request' : 'requests'}
       />
 
@@ -552,6 +591,16 @@ export default function QuotationRequestsPage() {
 
                   <td className="px-5 py-3 font-medium text-gray-800">
                     {request.quotation_reference}
+                    {request.replaces_request_id && (
+                      <span className="mt-0.5 block text-xs font-normal text-gray-500">
+                        New quote for {requests.find((other) => other.id === request.replaces_request_id)?.quotation_reference || 'an expired request'}
+                      </span>
+                    )}
+                    {replacementOf(request.id) && (
+                      <span className="mt-0.5 block text-xs font-normal text-gray-500">
+                        New quote requested: {replacementOf(request.id).quotation_reference}
+                      </span>
+                    )}
                   </td>
 
                   <td className="px-5 py-3">
@@ -619,7 +668,15 @@ export default function QuotationRequestsPage() {
       <QuotationRequestModal
         deliveryLocations={deliveryLocations}
         products={products}
-        onClose={() => setShowModal(false)}
+        initial={requestAgain && {
+          delivery_location_id: requestAgain.delivery_location_id,
+          items: (requestAgain.quotation_request_items || []).map((item) => ({ product_id: item.product_id, quantity: item.quantity, notes: item.notes || '' })),
+          replaces: { id: requestAgain.id, reference: requestAgain.quotation_reference },
+        }}
+        onClose={() => {
+          setShowModal(false)
+          setRequestAgain(null)
+        }}
         onSubmit={saveRequest}
       />
     )}
@@ -630,6 +687,9 @@ export default function QuotationRequestsPage() {
         loading={loadingQuotation}
         onApprove={approveQuotation}
         onReject={rejectQuotation}
+        onRequestAgain={requestNewQuote}
+        newQuote={selectedQuotation ? replacementOf(selectedQuotation.quotation_request_id)?.quotation_reference || null : null}
+        blocked={Boolean(credit?.blocked)}
         creating={creatingCO}
         onClose={() => {
           if (creatingCO) { return }
@@ -718,7 +778,7 @@ function QuotationShipEstimate({ quotation }) {
 }
 
 
-function QuotationModal({ quotation, loading, creating,onClose, onApprove, onReject }) {
+function QuotationModal({ quotation, loading, creating, onClose, onApprove, onReject, onRequestAgain, newQuote = null, blocked = false }) {
   if (loading) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -732,7 +792,8 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
   if (!quotation) return null
 
   const today = new Date()
-  const isExpired = today > new Date(`${quotation.expiry_date}T23:59:59`)
+  // Marked expired by the system (035), or past its expiry date before that run.
+  const isExpired = quotation.status === 'expired' || today > new Date(`${quotation.expiry_date}T23:59:59`)
 
   const expiryDate = new Date(quotation.expiry_date)
 
@@ -1068,18 +1129,34 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
                 </p>
 
                 <p className="text-sm text-gray-500">
-                  This quotation has expired. Please request a refreshed quote
-                  before proceeding.
+                  It expired on {new Date(`${quotation.expiry_date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} without being approved, so it can't be approved any more.
+                  {newQuote
+                    ? ` You asked for a new quote: ${newQuote}.`
+                    : ' Ask for a new quote: your products are filled in for you, and DMC prices them again.'}
                 </p>
               </div>
 
-              <button
-                onClick={onClose}
-                disabled={creating}
-                className="rounded-lg bg-gray-200 px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300 disabled:opacity-50"
-              >
-                Close
-              </button>
+              <div className="flex shrink-0 items-center gap-3">
+                {!newQuote && onRequestAgain && (
+                  <button
+                    type="button"
+                    onClick={() => onRequestAgain(quotation)}
+                    disabled={creating || blocked}
+                    title={blocked ? 'Your unpaid balance has reached your credit limit' : undefined}
+                    className="rounded-lg bg-[#2D5A42] px-5 py-2 text-sm font-medium text-white hover:bg-[#234633] disabled:opacity-50"
+                  >
+                    Request a new quote
+                  </button>
+                )}
+
+                <button
+                  onClick={onClose}
+                  disabled={creating}
+                  className="rounded-lg bg-gray-200 px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300 disabled:opacity-50"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           ) : (
             <div className="flex w-full items-center justify-between">
@@ -1132,15 +1209,18 @@ function QuotationModal({ quotation, loading, creating,onClose, onApprove, onRej
 // =============================================
 // QUOTATION REQUEST MODAL
 // =============================================
-function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit }) {
+// initial: a new quote for an expired request (035): its delivery location
+// and products, filled in, and which request it replaces.
+function QuotationRequestModal({ deliveryLocations, products, initial = null, onClose, onSubmit }) {
   const { toast } = useToast()
-  const [selectedProducts, setSelectedProducts] = useState([])
+  const [selectedProducts, setSelectedProducts] = useState(initial?.items || [])
   const [minimums, setMinimums] = useState({})
   const [productSearch, setProductSearch] = useState('')
 
   const [form, setForm] = useState({
     preferred_ship_date: '',
-    delivery_location_id: '',
+    // Only a location still in use.
+    delivery_location_id: deliveryLocations.some((location) => location.id === initial?.delivery_location_id) ? initial.delivery_location_id : '',
   })
 
   const earliestShipDate = localDateString(MIN_PREFERRED_SHIP_DAYS)
@@ -1281,6 +1361,7 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
     onSubmit({
       ...form,
       items: selectedProducts,
+      replaces_request_id: initial?.replaces?.id || null,
     })
   }
 
@@ -1292,8 +1373,15 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
         {/* Header */}
         <div className="border-b bg-[#F4F8F5] px-6 py-4">
           <h2 className="text-xl font-semibold text-[#1F3A2C]">
-            Add Quotation Request
+            {initial ? 'Request a New Quote' : 'Add Quotation Request'}
           </h2>
+
+          {initial && (
+            <p className="mt-1 text-sm text-gray-600">
+              In place of {initial.replaces.reference}, whose quotation expired. Its products are filled in: change them if you like,
+              and pick a new preferred shipping date. DMC prices it again with today's prices.
+            </p>
+          )}
         </div>
 
         {/* Form */}
@@ -1576,3 +1664,18 @@ function QuotationRequestModal({ deliveryLocations, products, onClose, onSubmit 
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per quotation request, as listed.
+// =============================================
+const myRequestColumns = (requests) => [
+  { header: 'Reference', value: (request) => request.quotation_reference },
+  { header: 'New quote for', value: (request) => requests.find((other) => other.id === request.replaces_request_id)?.quotation_reference || '' },
+  { header: 'Delivery location', value: (request) => request.delivery_locations?.location_name },
+  { header: 'Country', value: (request) => request.delivery_locations?.country },
+  { header: 'Status', value: (request) => statusText(request.status) },
+  { header: 'Requested', value: (request) => dateTime(request.created_at) },
+  { header: 'Products', value: (request) => productsText(request.quotation_request_items) },
+]

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
+import ExportButton from '../components/ExportButton'
+import { dateTime, downloadCsv, exportName, statusText } from '../utils/csvExport'
 import { useAuth } from '../context/AuthContext'
 import { createStaffAccount, updateStaffAccountStatus } from '../services/userService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -204,6 +206,8 @@ export default function AccountsPage() {
           <p className="mt-1 text-gray-500">
             Manage staff accounts and access.
           </p>
+
+          <ExportButton className="mt-3" count={accounts.length} onExport={() => downloadCsv(exportName('staff-accounts'), ACCOUNT_COLUMNS, accounts)} />
         </div>
 
         {profile?.role === 'admin' && (
@@ -783,3 +787,19 @@ function ViewAccountModal({ account, onClose }) {
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per staff account, as listed.
+// =============================================
+const ACCOUNT_COLUMNS = [
+  { header: 'Name', value: (account) => account.name },
+  { header: 'Email', value: (account) => account.email },
+  { header: 'Role', value: (account) => statusText(account.role) },
+  { header: 'Company', value: (account) => account.company },
+  { header: 'Contact number', value: (account) => account.contact_number },
+  { header: 'Country', value: (account) => account.country },
+  { header: 'Active', value: (account) => account.is_active !== false },
+  { header: 'Created', value: (account) => dateTime(account.created_at) },
+]

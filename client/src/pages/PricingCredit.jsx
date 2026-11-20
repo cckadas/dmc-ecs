@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
+import ExportButton from '../components/ExportButton'
+import { downloadCsv, exportName, money, number } from '../utils/csvExport'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
 import { faFloppyDisk, faPlus, faTrash } from '@fortawesome/free-solid-svg-icons'
@@ -187,9 +189,13 @@ function MarkupsSection() {
 
   return (
     <div>
-      <h2 className="text-lg font-semibold text-[#1F3A2C]">
-        Markups and shipping costs by country
-      </h2>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold text-[#1F3A2C]">
+          Markups and shipping costs by country
+        </h2>
+
+        <ExportButton count={markups.length} onExport={() => downloadCsv(exportName('markups-and-shipping'), MARKUP_COLUMNS, markups)} />
+      </div>
 
       <p className="mb-3 text-sm text-gray-500">
         Every quotation price is the supplier price plus the markup for the delivery country, and each quotation pays that country's fixed shipping cost, however much it holds. Countries that aren't listed use the Default row. Sales can't change quotation prices or shipping, so these rates are the only way to change what customers pay.
@@ -667,9 +673,13 @@ function CreditSection() {
 
   return (
     <div>
-      <h2 className="text-lg font-semibold text-[#1F3A2C]">
-        Credit limit
-      </h2>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold text-[#1F3A2C]">
+          Credit limit
+        </h2>
+
+        <ExportButton count={balances.length} onExport={() => downloadCsv(exportName('customer-balances'), balanceColumns(creditLimit), balances)} />
+      </div>
 
       <p className="mb-3 text-sm text-gray-500">
         Once a customer's unpaid balance reaches this amount, they can't send new quotation requests or approve quotations until they pay. Every unpaid order counts, including overdue ones.
@@ -749,3 +759,23 @@ function CreditSection() {
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// The markups by country, and each customer's unpaid balance against the credit limit.
+// =============================================
+const MARKUP_COLUMNS = [
+  { header: 'Country', value: (markup) => markup.country },
+  { header: 'Markup (%)', value: (markup) => number(markup.markup_percent) },
+  { header: 'Shipping cost (PHP)', value: (markup) => money(markup.shipping_cost) },
+  { header: 'Simulated', value: (markup) => Boolean(markup.is_simulated) },
+]
+
+const balanceColumns = (limit) => [
+  { header: 'Customer', value: (customer) => customer.name },
+  { header: 'Company', value: (customer) => customer.company },
+  { header: 'Unpaid balance (PHP)', value: (customer) => money(customer.outstanding) },
+  { header: 'Credit limit (PHP)', value: () => money(limit) },
+  { header: 'Standing', value: (customer) => (limit == null ? 'No limit set' : customer.outstanding >= limit ? 'Blocked: must pay first' : customer.outstanding >= limit * 0.8 ? 'Near the limit' : 'OK') },
+]

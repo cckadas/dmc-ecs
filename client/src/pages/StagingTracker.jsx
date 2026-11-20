@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import ListControls from '../components/ListControls'
+import { dateTime, downloadCsv, exportName, statusText } from '../utils/csvExport'
 import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, showChoices, showingOf } from '../utils/listControls'
 import { supabase } from '../supabase'
 import { useToast } from '../context/ToastContext'
@@ -826,6 +827,7 @@ export default function StagingTrackerPage() {
         searchPlaceholder="Order number or customer"
         shown={shownGroups.length}
         total={customerOrders.length}
+        onExport={() => downloadCsv(exportName('staging'), STAGING_COLUMNS, shownGroups.flatMap((group) => (group.items || []).map((item) => ({ group, item }))))}
         noun={customerOrders.length === 1 ? 'order' : 'orders'}
         loading={loading}
       />
@@ -1100,3 +1102,23 @@ export default function StagingTrackerPage() {
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per product ready for staging, as listed, with its racks.
+// =============================================
+const STAGING_COLUMNS = [
+  { header: 'Order', value: ({ group }) => group.customer_order?.order_number },
+  { header: 'Quotation', value: ({ group }) => group.customer_order?.quotation_number },
+  { header: 'Company', value: ({ group }) => group.customer_order?.profile?.company || group.customer_order?.profile?.name },
+  { header: 'Country', value: ({ group }) => group.customer_order?.delivery_location?.country },
+  { header: 'Order status', value: ({ group }) => statusText(group.customer_order?.status) },
+  { header: 'Product', value: ({ item }) => item.products?.product_name },
+  { header: 'Brand', value: ({ item }) => item.products?.brand },
+  { header: 'Cases', value: ({ item }) => casesShipping(item) },
+  { header: 'Unit', value: ({ item }) => item.products?.unit },
+  { header: 'Label status', value: ({ item }) => statusText(item.compliance_label_exchange?.status) },
+  { header: 'Racks', value: ({ item }) => (item.racks || []).join('; ') },
+  { header: 'Loaded', value: ({ item }) => dateTime(item.loaded_at) },
+]

@@ -20,6 +20,7 @@ import { loadMyRushOptions, loadRushAgreements, loadWaitingGoods, stillToShip } 
 import { lineNote, orderNumberByItem } from '../utils/rushLines'
 import { loadMyEstimates } from '../services/predictionService'
 import ListControls from '../components/ListControls'
+import { dateTime, day, downloadCsv, exportName, money, productsText, statusText } from '../utils/csvExport'
 import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, showChoices, showingOf } from '../utils/listControls'
 import { STATUS_ORDER } from '../utils/orderStatusSort'
 
@@ -208,6 +209,7 @@ export default function MyOrdersPage() {
         searchPlaceholder="Order or quotation number"
         shown={shownOrders.length}
         total={orders.length}
+        onExport={() => downloadCsv(exportName('my-orders'), myOrderColumns(estimates), shownOrders)}
         noun={orders.length === 1 ? 'order' : 'orders'}
         loading={loading}
       />
@@ -666,3 +668,23 @@ function RushNote({ option, waiting, agreed }) {
     </p>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per order, as listed, with its ship date estimate.
+// =============================================
+const myOrderColumns = (estimates) => [
+  { header: 'Order', value: (order) => order.order_number },
+  { header: 'Quotation', value: (order) => order.quotation_number },
+  { header: 'Status', value: (order) => statusText(order.status) },
+  { header: 'Placed', value: (order) => dateTime(order.created_at) },
+  { header: 'Requested ship date', value: (order) => day(order.requested_ship_date) },
+  { header: 'Estimated ship date', value: (order) => (estimates[order.id]?.shipped ? '' : day(estimates[order.id]?.estimatedShipDate)) },
+  { header: 'Shipped', value: (order) => day(estimates[order.id]?.shippedOn) },
+  { header: 'Container', value: (order) => order.container_size },
+  { header: 'Total (PHP)', value: (order) => money(order.total_amount) },
+  { header: 'Down payment (PHP)', value: (order) => money(order.down_payment_amount) },
+  { header: 'Paid (PHP)', value: (order) => money(order.settled_amount) },
+  { header: 'Products', value: (order) => productsText(order.customer_order_items) },
+]

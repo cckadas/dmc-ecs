@@ -10,6 +10,7 @@ import StatusBadge from '../components/StatusBadge'
 import IconButton from '../components/IconButton'
 import TableScroll from '../components/TableScroll'
 import ListControls from '../components/ListControls'
+import { dateTime, downloadCsv, exportName, statusText } from '../utils/csvExport'
 import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, showChoices, showingOf } from '../utils/listControls'
 import { linesShippingNow } from '../services/rushService'
 import { casesShipping, casesWaiting } from '../utils/rushLines'
@@ -667,6 +668,7 @@ async function loadCustomerOrders() {
         searchPlaceholder="Order number or product"
         shown={shownGroups.length}
         total={customerOrders.length}
+        onExport={() => downloadCsv(exportName('my-compliance-labels'), LABEL_COLUMNS, shownGroups.flatMap((group) => (group.items || []).map((item) => ({ group, item }))))}
         noun={customerOrders.length === 1 ? 'order' : 'orders'}
         loading={loading}
       />
@@ -1070,3 +1072,21 @@ async function loadCustomerOrders() {
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per product, as listed (a rushed order: only what ships now).
+// =============================================
+const LABEL_COLUMNS = [
+  { header: 'Order', value: ({ group }) => group.customer_order?.order_number },
+  { header: 'Quotation', value: ({ group }) => group.customer_order?.quotation_number },
+  { header: 'Country', value: ({ group }) => group.customer_order?.delivery_location?.country },
+  { header: 'Order status', value: ({ group }) => statusText(group.customer_order?.status) },
+  { header: 'Product', value: ({ item }) => item.products?.product_name },
+  { header: 'Brand', value: ({ item }) => item.products?.brand },
+  { header: 'Cases', value: ({ item }) => casesShipping(item) },
+  { header: 'Unit', value: ({ item }) => item.products?.unit },
+  { header: 'Label status', value: ({ item }) => statusText(item.compliance_label_exchange?.status) || 'Not started' },
+  { header: 'Label updated', value: ({ item }) => dateTime(item.compliance_label_exchange?.updated_at) },
+]

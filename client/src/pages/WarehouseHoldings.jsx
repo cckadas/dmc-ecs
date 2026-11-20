@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../supabase'
+import ExportButton from '../components/ExportButton'
+import { downloadCsv, exportName, number, statusText } from '../utils/csvExport'
 import { useToast } from '../context/ToastContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faWarehouse, faMagnifyingGlass, faBox, faLocationDot } from '@fortawesome/free-solid-svg-icons'
@@ -468,6 +470,8 @@ export default function WarehouseHoldingsPage() {
         <p className="mt-1 text-gray-500">
           View items currently inside the warehouse and their assigned locations.
         </p>
+
+        <ExportButton className="mt-3" count={filteredItems.length} onExport={() => downloadCsv(exportName('warehouse-holdings'), HOLDING_COLUMNS, filteredItems)} />
       </div>
 
 
@@ -737,3 +741,23 @@ export default function WarehouseHoldingsPage() {
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per product in a rack, as listed.
+// =============================================
+const HOLDING_COLUMNS = [
+  { header: 'Rack', value: (item) => item.warehouse_rack?.rack_id },
+  { header: 'Location', value: (item) => item.warehouse_rack?.location },
+  { header: 'Section', value: (item) => item.warehouse_rack?.section },
+  { header: 'Product', value: (item) => item.products?.product_name },
+  { header: 'Brand', value: (item) => item.products?.brand },
+  { header: 'Cases in this rack', value: (item) => number(item.rack_quantity) },
+  { header: 'Unit', value: (item) => item.products?.unit },
+  { header: 'PO', value: (item) => item.purchase_order?.po_number },
+  { header: 'Order', value: (item) => item.customer_order?.order_number },
+  { header: 'Order status', value: (item) => statusText(item.customer_order?.status) },
+  { header: 'Customer', value: (item) => item.customer_order?.profile?.company || item.customer_order?.profile?.name },
+  { header: 'Country', value: (item) => item.customer_order?.delivery_location?.country },
+]

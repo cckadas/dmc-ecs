@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
+import ExportButton from '../components/ExportButton'
+import { downloadCsv, exportName, number } from '../utils/csvExport'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPen, faTrash, faXmark, faPlus, faImage, faClockRotateLeft, faCube } from '@fortawesome/free-solid-svg-icons'
@@ -463,6 +465,8 @@ export default function ProductCatalogPage() {
           <p className="mt-1 text-gray-500">
             Browse available export products.
           </p>
+
+          <ExportButton className="mt-3" count={products.length} onExport={() => downloadCsv(exportName('products'), productColumns(showsSupplier), products)} />
         </div>
 
 
@@ -1470,3 +1474,23 @@ function EditProductModal({ product, suppliers, categories, onClose, onSubmit })
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per product, as listed. Customers get the manufacturer only, as on the page.
+// =============================================
+const productColumns = (staff) => [
+  { header: 'Product', value: (product) => product.product_name },
+  { header: 'SKU', value: (product) => product.sku },
+  { header: 'Family', value: (product) => product.family },
+  { header: 'Pack size', value: (product) => product.pack_size },
+  { header: 'Brand', value: (product) => product.brand },
+  { header: 'Category', value: (product) => product.category },
+  { header: 'Unit', value: (product) => product.unit },
+  { header: 'Availability', value: (product) => product.availability },
+  { header: staff ? 'Supplier' : 'Manufacturer', value: (product) => product.suppliers?.supplier_name },
+  ...(staff ? [{ header: 'Supplier type', value: (product) => product.suppliers?.supplier_type }] : []),
+  { header: 'Volume per case (m3)', value: (product) => number(product.cbm) },
+  { header: 'Weight per case (kg)', value: (product) => number(product.gross_weight_kg) },
+]

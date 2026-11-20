@@ -14,6 +14,7 @@ import { casesThatFit, suggestRacks, formatCbm, summarizeCapacity } from '../uti
 import { loadExpectedDeliveries } from '../services/predictionService'
 import { columnsIf, withNewColumns } from '../utils/newColumns'
 import ListControls from '../components/ListControls'
+import { day, downloadCsv, exportName, number, statusText } from '../utils/csvExport'
 import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, bySoonest, showChoices, showingOf } from '../utils/listControls'
 
 
@@ -386,6 +387,7 @@ export default function ReceivingPage() {
         searchPlaceholder="PO or order number, customer"
         shown={shownPurchaseOrders.length}
         total={purchaseOrders.length}
+        onExport={() => downloadCsv(exportName('receiving'), receivingColumns(warehouseRacks), shownPurchaseOrders.flatMap((po) => (po.purchase_order_items || []).map((line) => ({ po, line }))))}
         noun={purchaseOrders.length === 1 ? 'purchase order' : 'purchase orders'}
         loading={loading}
       />
@@ -1088,3 +1090,23 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per purchase order line, as listed, with the racks its goods are in.
+// =============================================
+const receivingColumns = (racks) => [
+  { header: 'PO', value: ({ po }) => po.po_number },
+  { header: 'Order', value: ({ po }) => po.customer_orders?.order_number },
+  { header: 'Expected delivery', value: ({ po }) => day(po.expected_delivery_date) },
+  { header: 'Supplier', value: ({ line }) => line.suppliers?.supplier_name },
+  { header: 'Product', value: ({ line }) => line.products?.product_name },
+  { header: 'Ordered', value: ({ line }) => number(line.ordered_quantity) },
+  { header: 'Received', value: ({ line }) => number(line.received_quantity) },
+  { header: 'Remaining', value: ({ line }) => Math.max(Number(line.ordered_quantity || 0) - Number(line.received_quantity || 0), 0) },
+  { header: 'Already left in a container', value: ({ line }) => number(line.cases_loaded) },
+  { header: 'Status', value: ({ line }) => statusText(line.status) },
+  { header: 'Condition', value: ({ line }) => statusText(line.received_condition) },
+  { header: 'Racks', value: ({ line }) => (line.purchase_order_item_racks || []).map((entry) => `${racks.find((rack) => rack.id === entry.warehouse_rack_id)?.rack_id || 'Rack'} (${entry.quantity})`).join('; ') },
+]
