@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlus, faTrash, faFileSignature, faDownload, faXmark, faChevronDown } from '@fortawesome/free-solid-svg-icons'
+import { faPlus, faTrash, faFileSignature, faDownload, faXmark, faChevronDown, faLocationDot } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 import { MIN_PREFERRED_SHIP_DAYS, localDateString, formatDateTime } from '../utils/dates'
 import { getCreditStatus, formatPeso } from '../services/creditService'
@@ -41,6 +41,10 @@ export default function QuotationRequestsPage() {
   const [credit, setCredit] = useState(null)
   // The expired request a new quote is being asked for in place of (035).
   const [requestAgain, setRequestAgain] = useState(null)
+  // Changing a request's delivery location (037): the request, and each
+  // request's changes so far.
+  const [movingRequest, setMovingRequest] = useState(null)
+  const [locationChanges, setLocationChanges] = useState({})
 
 
   // =============================================
@@ -103,6 +107,20 @@ export default function QuotationRequestsPage() {
     }
 
     setRequests(data || [])
+    loadLocationChanges()
+  }
+
+
+  // Each request's delivery location changes, newest last (037; none before it's run).
+  async function loadLocationChanges() {
+    const { data, error } = await supabase
+      .from('quotation_request_location_changes')
+      .select('quotation_request_id, from_text, to_text, withdrawn_quotation_id, changed_at')
+      .order('changed_at', { ascending: true })
+    if (error) return
+    const byRequest = {}
+    for (const change of data || []) (byRequest[change.quotation_request_id] ||= []).push(change)
+    setLocationChanges(byRequest)
   }
 
 
@@ -232,7 +250,20 @@ export default function QuotationRequestsPage() {
 
     if (!confirmed) return
 
-    // Delete child records first
+    // One step in the database (037): deleted, or kept and marked cancelled if a
+    // quotation of it is on record (one withdrawn when its location changed).
+    const { data: outcome, error: cancelError } = await supabase.rpc('cancel_quotation_request', { p_request_id: requestId })
+    if (!cancelError) {
+      toast.success(outcome === 'cancelled' ? 'Quotation request cancelled. It stays on record with its earlier quotation.' : 'Quotation request deleted successfully')
+      loadRequests()
+      return
+    }
+    if (cancelError.code !== 'PGRST202' && !/cancel_quotation_request/.test(cancelError.message || '')) {
+      toast.error(cancelError.message || 'The request could not be cancelled.')
+      return
+    }
+
+    // Before 037 is run: as before. Delete child records first
     const { error: itemError } = await supabase
       .from('quotation_request_items')
       .delete()
@@ -323,6 +354,10 @@ export default function QuotationRequestsPage() {
         )
       `)
       .eq('quotation_request_id', requestId)
+      // Its newest: an earlier one may have been withdrawn when the delivery
+      // location changed (037).
+      .order('created_at', { ascending: false })
+      .limit(1)
       .single(), RUSH_ITEM_COLUMNS)
 
     if (error) {
@@ -605,6 +640,11 @@ export default function QuotationRequestsPage() {
 
                   <td className="px-5 py-3">
                     {request.delivery_locations?.location_name || '-'}
+                    {locationChanges[request.id]?.length > 0 && (
+                      <span className="mt-0.5 block max-w-[14rem] text-xs text-gray-500">
+                        Changed {formatDateTime(locationChanges[request.id].at(-1).changed_at)}, from {locationChanges[request.id].at(-1).from_text}
+                      </span>
+                    )}
                   </td>
 
                   <td className="px-5 py-3">
@@ -641,11 +681,16 @@ export default function QuotationRequestsPage() {
                   </td>
 
                   <td className="px-5 py-3">
-                    {request.status === 'awaiting pricing' ? (
-                      <IconButton icon={faTrash} title="Cancel Request" color="red" disabled={false} onClick={() => deleteRequest(request.id)}/>
-                    ) : (
-                      <IconButton icon={faFileSignature} title="View Quotation" color="blue" disabled={false} onClick={() => viewQuotation(request.id)}/>
-                    )}
+                    <div className="flex gap-2">
+                      {request.status === 'awaiting pricing' ? (
+                        <IconButton icon={faTrash} title="Cancel Request" color="red" disabled={false} onClick={() => deleteRequest(request.id)}/>
+                      ) : (
+                        <IconButton icon={faFileSignature} title="View Quotation" color="blue" disabled={false} onClick={() => viewQuotation(request.id)}/>
+                      )}
+                      {['awaiting pricing', 'priced & sent to customer'].includes(request.status) && (
+                        <IconButton icon={faLocationDot} title="Change delivery location" color="amber" disabled={false} onClick={() => setMovingRequest(request)}/>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))
@@ -681,6 +726,18 @@ export default function QuotationRequestsPage() {
       />
     )}
 
+    {movingRequest && (
+      <ChangeLocationModal
+        request={movingRequest}
+        locations={deliveryLocations}
+        onClose={() => setMovingRequest(null)}
+        onChanged={() => {
+          setMovingRequest(null)
+          loadRequests()
+        }}
+      />
+    )}
+
     {showQuotationModal && (
       <QuotationModal
         quotation={selectedQuotation}
@@ -688,6 +745,13 @@ export default function QuotationRequestsPage() {
         onApprove={approveQuotation}
         onReject={rejectQuotation}
         onRequestAgain={requestNewQuote}
+        onChangeLocation={(quotation) => {
+          const request = requests.find((entry) => entry.id === quotation.quotation_request_id)
+          if (!request) return
+          setShowQuotationModal(false)
+          setSelectedQuotation(null)
+          setMovingRequest(request)
+        }}
         newQuote={selectedQuotation ? replacementOf(selectedQuotation.quotation_request_id)?.quotation_reference || null : null}
         blocked={Boolean(credit?.blocked)}
         creating={creatingCO}
@@ -778,7 +842,7 @@ function QuotationShipEstimate({ quotation }) {
 }
 
 
-function QuotationModal({ quotation, loading, creating, onClose, onApprove, onReject, onRequestAgain, newQuote = null, blocked = false }) {
+function QuotationModal({ quotation, loading, creating, onClose, onApprove, onReject, onRequestAgain, onChangeLocation, newQuote = null, blocked = false }) {
   if (loading) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -1083,16 +1147,17 @@ function QuotationModal({ quotation, loading, creating, onClose, onApprove, onRe
             FOOTER
         ================================================= */}
         <div className="flex w-full items-center gap-3 bg-gray-50 px-6 py-4">
-          {['rejected', 'approved', 'cancelled'].includes(quotation.status) ? (
+          {['rejected', 'approved', 'cancelled', 'withdrawn'].includes(quotation.status) ? (
             <div className="flex w-full items-center justify-between gap-4">
               <div>
                 <p className={`font-medium ${quotation.status === 'approved' ? 'text-green-600' : 'text-red-600'}`}>
-                  Quotation {quotation.status === 'approved' ? 'Approved' : quotation.status === 'rejected' ? 'Rejected' : 'Cancelled'}
+                  Quotation {quotation.status === 'approved' ? 'Approved' : quotation.status === 'rejected' ? 'Rejected' : quotation.status === 'withdrawn' ? 'Withdrawn' : 'Cancelled'}
                 </p>
 
                 <p className="text-sm text-gray-500">
                   {quotation.status === 'approved' && `This quotation was approved${order?.order_number ? ` and became order ${order.order_number}` : ''}.`}
                   {quotation.status === 'rejected' && 'This quotation was rejected.'}
+                  {quotation.status === 'withdrawn' && "You changed the request's delivery location, so DMC is pricing it again."}
                   {quotation.status === 'cancelled' && (
                     order?.order_number
                       ? `The order made from this quotation, ${order.order_number}, was cancelled: its down payment wasn't received in time.`
@@ -1178,6 +1243,17 @@ function QuotationModal({ quotation, loading, creating, onClose, onApprove, onRe
                 >
                   Close
                 </button>
+
+                {onChangeLocation && (
+                  <button
+                    type="button"
+                    onClick={() => onChangeLocation(quotation)}
+                    disabled={creating}
+                    className="rounded-lg border border-gray-300 bg-white px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Change Delivery Location
+                  </button>
+                )}
 
                 <button
                   onClick={() => onReject(quotation.id)}
@@ -1679,3 +1755,99 @@ const myRequestColumns = (requests) => [
   { header: 'Requested', value: (request) => dateTime(request.created_at) },
   { header: 'Products', value: (request) => productsText(request.quotation_request_items) },
 ]
+
+
+// =============================================
+// CHANGE A REQUEST'S DELIVERY LOCATION (037)
+//
+// Before it's an order. Not priced yet: it just goes to the new location.
+// Priced: its quotation is withdrawn and DMC prices it again for the new
+// location (the price can change: markup and shipping go by country).
+// =============================================
+function ChangeLocationModal({ request, locations, onClose, onChanged }) {
+  const { toast } = useToast()
+  const choices = (locations || []).filter((location) => location.id !== request.delivery_location_id)
+  const [locationId, setLocationId] = useState(choices[0]?.id || '')
+  const [saving, setSaving] = useState(false)
+  const priced = request.status === 'priced & sent to customer'
+  const current = request.delivery_locations
+  const chosen = choices.find((location) => location.id === locationId)
+
+  async function save() {
+    if (!locationId || saving) return
+    setSaving(true)
+    try {
+      const { data, error } = await supabase.rpc('change_request_location', { p_request_id: request.id, p_location_id: locationId })
+      if (error) {
+        toast.error(error.code === 'PGRST202' || /change_request_location/.test(error.message || '')
+          ? 'Changing a delivery location needs db/migrations/037 to be run first.'
+          : error.message || 'The delivery location could not be changed.')
+        return
+      }
+      toast.success(data?.withdrawn
+        ? `${request.quotation_reference} now goes to ${chosen?.location_name}. Quotation ${data.withdrawn} was withdrawn, and DMC prices it again for the new location.`
+        : `${request.quotation_reference} now goes to ${chosen?.location_name}. DMC prices it for that location.`)
+      onChanged()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-lg overflow-hidden rounded-xl bg-white shadow-xl">
+        <div className="border-b bg-[#F4F8F5] px-6 py-4">
+          <h2 className="text-xl font-semibold text-[#1F3A2C]">Change Delivery Location</h2>
+          <p className="text-sm text-gray-500">{request.quotation_reference}</p>
+        </div>
+
+        <div className="space-y-4 px-6 py-5 text-sm">
+          <p className="text-gray-700">
+            Now: <span className="font-medium">{[current?.location_name, current?.address, current?.country].filter(Boolean).join(', ') || '-'}</span>
+          </p>
+
+          {choices.length ? (
+            <label className="block">
+              <span className="mb-1 block font-medium text-gray-700">New delivery location</span>
+              <select
+                value={locationId}
+                onChange={(event) => setLocationId(event.target.value)}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 outline-none focus:border-[#2D5A42]"
+              >
+                {choices.map((location) => (
+                  <option key={location.id} value={location.id}>
+                    {location.location_name} · {location.address}, {location.country}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-800">
+              You have no other saved delivery location. Add the new address in Delivery Locations first.
+            </p>
+          )}
+
+          <p className={`rounded-lg border p-3 ${priced ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-gray-200 bg-gray-50 text-gray-700'}`}>
+            {priced
+              ? 'DMC has already priced this request for its current location. Changing it withdraws that quotation, and DMC prices the request again for the new location: the price can change, since the markup and shipping cost go by country.'
+              : "DMC hasn't priced this request yet, so it is priced for the new location."}
+          </p>
+        </div>
+
+        <div className="flex justify-end gap-3 bg-gray-50 px-6 py-4">
+          <button type="button" onClick={onClose} disabled={saving} className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={save}
+            disabled={!locationId || saving}
+            className="rounded-md bg-[#2D5A42] px-4 py-2 text-sm font-medium text-white hover:bg-[#234633] disabled:opacity-50"
+          >
+            {saving ? 'Changing...' : priced ? 'Change and Ask for a New Price' : 'Change Location'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}

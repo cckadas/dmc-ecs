@@ -81,6 +81,10 @@ export const PORTAL_FAQ = [
     answer: 'A quotation can be approved until its expiry date (7 days, Sundays not counted); the customer is reminded 2 days before. After that it is marked Expired and can\'t be approved. To still order, the customer opens it in Quotation Requests and clicks "Request a new quote": the products are filled in from the expired one, can be changed, and DMC prices the new request again with the prices of that day.',
   },
   {
+    topic: 'Changing a delivery location',
+    answer: 'A saved delivery location that a request or order already uses can\'t be edited, so those keep the address they were made with; the customer adds the new address as a new location in Delivery Locations. A quotation request can be moved to another saved location from Quotation Requests (the location button) until it becomes an order: before DMC prices it, it is simply priced for the new location; after DMC priced it, that quotation is withdrawn and DMC prices the request again, and the price can change, since the markup and shipping cost go by country. Changing where a confirmed order goes isn\'t possible in the system yet: the customer contacts DMC.',
+  },
+  {
     topic: 'Rush shipment',
     answer: 'While an order waits for its goods (Procurement) and some of them are already in DMC\'s warehouse, the customer can ask for a rush shipment on My Orders: what is in ships now, and the rest goes in the container of their next order with DMC, whenever they place it. The order\'s price and balance stay the same, and the waiting goods are not charged again. The customer sees exactly what ships and what waits before agreeing, and once agreed it cannot be undone. If they don\'t agree, the order keeps waiting for everything.',
   },

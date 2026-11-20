@@ -74,6 +74,12 @@ export default function StatusBadge({ status }) {
       icon: faBan,
     },
 
+    // A quotation whose request's delivery location changed: priced again (037).
+    'withdrawn': {
+      style: 'bg-gray-50 text-gray-600 border-gray-200',
+      icon: faBan,
+    },
+
     'processing': {
       style: 'bg-purple-50 text-purple-700 border-purple-200',
       icon: faSpinner,

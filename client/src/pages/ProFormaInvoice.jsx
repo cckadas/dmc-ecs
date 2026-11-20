@@ -36,6 +36,8 @@ export default function ProFormaInvoicePage() {
   const [currentRequest, setCurrentRequest] = useState(null)
   const [currentQuotation, setCurrentQuotation] = useState(null)
   const [creatingQuotation, setCreatingQuotation] = useState(false)
+  // Each request's newest delivery location change by its customer (037).
+  const [locationChanges, setLocationChanges] = useState({})
 
 
   // =============================================
@@ -90,6 +92,13 @@ export default function ProFormaInvoicePage() {
     }
 
     setRequests(data || [])
+
+    // The customers' delivery location changes (037; none before it's run): the newest per request.
+    const { data: changes, error: changesError } = await supabase
+      .from('quotation_request_location_changes')
+      .select('quotation_request_id, from_text, withdrawn_quotation_id, changed_at')
+      .order('changed_at', { ascending: true })
+    if (!changesError) setLocationChanges(Object.fromEntries((changes || []).map((change) => [change.quotation_request_id, change])))
   }
 
 
@@ -101,6 +110,22 @@ export default function ProFormaInvoicePage() {
     setCreatingQuotation(true)
 
     try {
+      // The customer may have changed the request (its delivery location, say,
+      // 037) while it was being priced: then nothing is saved.
+      const { data: fresh } = await supabase
+        .from('quotation_requests')
+        .select('delivery_location_id, status')
+        .eq('id', currentRequest.id)
+        .maybeSingle()
+
+      if (fresh && (fresh.delivery_location_id !== currentRequest.delivery_location_id
+        || String(fresh.status || '').trim().toLowerCase() !== 'awaiting pricing')) {
+        toast.error(`The customer changed ${currentRequest.quotation_reference} while you were pricing it (its delivery location or status). Nothing was saved: open it again to price it as it is now.`)
+        setShowModal(false)
+        loadQueues()
+        return
+      }
+
       // Create quotation. The database gives it its number (QT-2026-00001), its
       // fixed expiry date, and sets the container and shipping costs itself.
       const { data: quotation, error } = await supabase
@@ -306,6 +331,10 @@ export default function ProFormaInvoicePage() {
         )
       `)
       .eq('quotation_request_id', request.id)
+      // Its newest: an earlier one may have been withdrawn when the customer
+      // changed the delivery location (037).
+      .order('created_at', { ascending: false })
+      .limit(1)
       .single(), RUSH_ITEM_COLUMNS)
 
     if (error) {
@@ -457,6 +486,12 @@ export default function ProFormaInvoicePage() {
 
                   <td className="px-5 py-3">
                     {request.delivery_locations?.location_name || '-'}
+                    {locationChanges[request.id] && (
+                      <span className="mt-0.5 block max-w-[14rem] text-xs text-amber-700">
+                        Changed by the customer {formatDateTime(locationChanges[request.id].changed_at)}, from {locationChanges[request.id].from_text}
+                        {locationChanges[request.id].withdrawn_quotation_id ? ': price it again' : ''}
+                      </span>
+                    )}
                   </td>
 
                   <td className="px-5 py-3">
