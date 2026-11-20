@@ -211,7 +211,7 @@ export async function buildCustomerContext(customerId, message) {
     : []
 
   // Past quotations and requests stay on record, so the open ones come first.
-  const isOpenRequest = (request) => !['approved', 'rejected', 'cancelled'].includes(String(request.status).trim().toLowerCase())
+  const isOpenRequest = (request) => !['approved', 'rejected', 'cancelled', 'expired'].includes(String(request.status).trim().toLowerCase())
   const openRequests = requests.filter(isOpenRequest)
   const closedRequests = requests.filter((request) => !isOpenRequest(request))
   const isOpenQuotation = (quotation) => String(quotation.status).trim().toLowerCase() === 'pending approval'
