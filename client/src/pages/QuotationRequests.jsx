@@ -198,6 +198,8 @@ export default function QuotationRequestsPage() {
   // SAVE REQUEST
   // =============================================
   async function saveRequest(formData) {
+    // The database names the request (042) and ignores this one; it's only
+    // used until that script is run.
     const quotationReference = generateQuotationReference()
 
     // A new quote for an expired one says which request it replaces (035).
@@ -245,10 +247,13 @@ export default function QuotationRequestsPage() {
       return
     }
 
+    // The reference the database gave it.
+    const savedReference = request.quotation_reference || quotationReference
+
     if (formData.replaces_request_id) {
-      toast.success(`New quote requested: ${quotationReference}. DMC prices it again with today's prices.`)
+      toast.success(`New quote requested: ${savedReference}. DMC prices it again with today's prices.`)
     } else if (!items.length) {
-      toast.success(`${quotationReference} sent for your waiting goods alone. DMC prices only their container and shipping.`)
+      toast.success(`${savedReference} sent for your waiting goods alone. DMC prices only their container and shipping.`)
     }
 
     setShowModal(false)

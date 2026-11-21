@@ -82,7 +82,7 @@ export const PORTAL_FAQ = [
   },
   {
     topic: 'Changing a delivery location',
-    answer: 'A saved delivery location that a request or order already uses can\'t be edited, so those keep the address they were made with; the customer adds the new address as a new location in Delivery Locations. A quotation request can be moved to another saved location from Quotation Requests (the location button) until it becomes an order: before DMC prices it, it is simply priced for the new location; after DMC priced it, that quotation is withdrawn and DMC prices the request again, and the price can change, since the markup and shipping cost go by country. Changing where a confirmed order goes isn\'t possible in the system yet: the customer contacts DMC.',
+    answer: 'A saved delivery location that a request or order already uses can\'t be edited, so those keep the address they were made with; the customer adds the new address as a new location in Delivery Locations. A quotation request can be moved to another saved location from Quotation Requests (the location button) until it becomes an order: before DMC prices it, it is simply priced for the new location; after DMC priced it, that quotation is withdrawn and DMC prices the request again, and the price can change, since the markup and shipping cost go by country. Once a quotation is approved, the order keeps the delivery location it was approved with: DMC\'s rule is that a different location is only for new requests.',
   },
   {
     topic: 'New orders stopped on an account',
