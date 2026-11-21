@@ -555,7 +555,7 @@ export default function WarehouseHoldingsPage() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search product, order, customer, rack..."
+            placeholder="Search product, order, customer, slot..."
             className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-10 pr-4 text-sm outline-none transition focus:border-[#2D5A42] focus:ring-1 focus:ring-[#2D5A42]"
           />
         </div>
@@ -753,7 +753,7 @@ const HOLDING_COLUMNS = [
   { header: 'Section', value: (item) => item.warehouse_rack?.section },
   { header: 'Product', value: (item) => item.products?.product_name },
   { header: 'Brand', value: (item) => item.products?.brand },
-  { header: 'Cases in this rack', value: (item) => number(item.rack_quantity) },
+  { header: 'Cases in this slot', value: (item) => number(item.rack_quantity) },
   { header: 'Unit', value: (item) => item.products?.unit },
   { header: 'PO', value: (item) => item.purchase_order?.po_number },
   { header: 'Order', value: (item) => item.customer_order?.order_number },

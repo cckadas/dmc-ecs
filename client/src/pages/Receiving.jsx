@@ -10,7 +10,8 @@ import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
 import TableScroll from '../components/TableScroll'
 import WarehouseCapacityBanner from '../components/WarehouseCapacityBanner'
-import { casesThatFit, suggestRacks, formatCbm, summarizeCapacity } from '../utils/warehouseCapacity'
+import { casesThatFit, suggestSlots, slotRoom, slotOtherOrder, formatCbm, summarizeCapacity } from '../utils/warehouseCapacity'
+import { loadSlots } from '../services/warehouseSlots'
 import { loadExpectedDeliveries } from '../services/predictionService'
 import { columnsIf, withNewColumns } from '../utils/newColumns'
 import ListControls from '../components/ListControls'
@@ -23,7 +24,7 @@ import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, b
 //
 // Supplier deliveries due in the next 7 days, each at the date it's expected
 // (its promised date moved by how late that supplier usually is), against the
-// free rack space, so racks can be freed before the goods arrive.
+// free slot space, so slots can be freed before the goods arrive.
 // =============================================
 const WINDOW_DAYS = 7
 
@@ -60,7 +61,7 @@ function ExpectedDeliveries({ racks }) {
       {capacity && soon.length > 0 && (
         <p className={`mt-0.5 ${tooMuch ? 'font-medium text-red-700' : 'text-gray-500'}`}>
           {tooMuch
-            ? `That's more than the ${formatCbm(capacity.freeCbm)} free. Free up racks, or plan where the rest will go.`
+            ? `That's more than the ${formatCbm(capacity.freeCbm)} free. Free up slots, or plan where the rest will go.`
             : `${formatCbm(capacity.freeCbm)} is free, so it fits.`}
         </p>
       )}
@@ -282,30 +283,13 @@ export default function ReceivingPage() {
   async function loadWarehouseRacks() {
     setLoadingRacks(true)
 
-    const { data, error } = await supabase
-      .from('warehouse_racks')
-      .select(`
-        id,
-        rack_id,
-        name,
-        location,
-        section,
-        is_active,
-        is_occupied,
-        capacity_cbm
-      `)
-      .order('rack_id', {
-        ascending: true
-      })
-
-    if (error) {
-      console.error('Failed to load warehouse racks:', error)
-      toast.error('Failed to load warehouse racks.')
-      setLoadingRacks(false)
-      return
+    // Every slot, with what's in it and whose order it is (043).
+    try {
+      setWarehouseRacks(await loadSlots())
+    } catch (error) {
+      console.error('Failed to load warehouse slots:', error)
+      toast.error('Failed to load warehouse slots.')
     }
-
-    setWarehouseRacks(data || [])
     setLoadingRacks(false)
   }
 
@@ -608,7 +592,7 @@ export default function ReceivingPage() {
                                   title="Receive Delivery"
                                   color="blue"
                                   disabled={item.status === 'sent to supplier' || item.status === 'fully delivered' || remaining === 0}
-                                  onClick={() => openReceivingModal({...item, purchase_order_id: po.id })}
+                                  onClick={() => openReceivingModal({...item, purchase_order_id: po.id, order_id: po.customer_orders?.id || null })}
                                 />
                               </td>
                             </tr>
@@ -688,7 +672,9 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
   const left = Number(item.cases_loaded || 0)
   const here = Math.max(quantity - left, 0)
   const placed = rackRows.reduce((total, row) => total + (Number(row.quantity) || 0), 0)
-  const suggestion = suggestRacks({ quantity: here, caseVolume, racks: warehouseRacks, heldRackIds })
+  // Whole pallets first, then what's left with this order's other goods (043).
+  const planSlots = (cases) => suggestSlots({ quantity: cases, caseVolume, slots: warehouseRacks, lineId: item.id, orderId: item.order_id })
+  const suggestion = planSlots(here)
 
 
   // =====================================================
@@ -699,7 +685,7 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
     setReceivedQuantity(value)
 
     if (!racksEdited) {
-      setRackRows(suggestRacks({ quantity: Math.max((Number(value) || 0) - left, 0), caseVolume, racks: warehouseRacks, heldRackIds }).allocations)
+      setRackRows(planSlots(Math.max((Number(value) || 0) - left, 0)).allocations)
     }
   }
 
@@ -755,14 +741,14 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
     const stillHere = amount - left
 
     if (stillHere > 0 && rackRows.some((row) => !row.rackId)) {
-      toast.error('Please choose a rack for every row.')
+      toast.error('Please choose a slot for every row.')
       return
     }
 
     if (stillHere > 0 && placed !== stillHere) {
       toast.error(left
-        ? `The racks hold ${placed} but ${stillHere} ${unit} are in the warehouse (${amount} received, ${left} already left in a container).`
-        : `The racks hold ${placed} but you entered ${amount}. Every ${unit} needs a rack.`)
+        ? `The slots hold ${placed} but ${stillHere} ${unit} are in the warehouse (${amount} received, ${left} already left in a container).`
+        : `The slots hold ${placed} but you entered ${amount}. Every ${unit} needs a slot.`)
       return
     }
 
@@ -938,12 +924,12 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
           <div>
             <div className="mb-1 flex items-center justify-between">
               <label className="block text-sm font-medium text-gray-700">
-                Warehouse Racks
+                Warehouse Slots
               </label>
 
               {racksEdited && (
                 <button type="button" onClick={suggestAgain} className="text-xs font-medium text-[#2D5A42] hover:underline">
-                  Suggest racks again
+                  Suggest slots again
                 </button>
               )}
             </div>
@@ -951,10 +937,10 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
             {here === 0 ? (
               <p className="text-sm text-gray-500">
                 {left > 0 && quantity >= left
-                  ? `The ${left} ${unit} received so far already left in a container (rush shipment): no racks needed.`
+                  ? `The ${left} ${unit} received so far already left in a container (rush shipment): no slots needed.`
                   : currentReceived > 0
-                    ? 'Saving 0 undoes this receipt and frees its racks.'
-                    : 'Enter the quantity received, and racks will be suggested.'}
+                    ? 'Saving 0 undoes this receipt and frees its slots.'
+                    : 'Enter the quantity received, and slots will be suggested.'}
               </p>
             ) : (
               <>
@@ -968,7 +954,7 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
                 <div className="space-y-2">
                   {rackRows.map((row, index) => {
                     const chosenRack = warehouseRacks.find((rack) => rack.id === row.rackId)
-                    const fits = chosenRack ? casesThatFit(chosenRack.capacity_cbm, caseVolume) : Infinity
+                    const fits = chosenRack ? casesThatFit(slotRoom(chosenRack, item.id), caseVolume) : Infinity
 
                     return (
                       <div key={index}>
@@ -980,32 +966,35 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
                             className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#2D5A42] focus:ring-1 focus:ring-[#2D5A42]"
                           >
                             <option value="">
-                              Select a rack
+                              Select a slot
                             </option>
 
-                            {/* Inactive racks are hidden, except one this item already
-                                sits in, so it still shows as selected. */}
-                            {warehouseRacks
-                              .filter((rack) => rack.is_active || heldRackIds.includes(rack.id))
-                              .map((rack) => {
-                                const held = heldRackIds.includes(rack.id)
-                                const occupied = rack.is_occupied && !held
-                                const chosenElsewhere = rack.id !== row.rackId && rackRows.some((other) => other.rackId === rack.id)
-                                const rackFits = casesThatFit(rack.capacity_cbm, caseVolume)
+                            {/* By floor. Only slots this line can use: empty ones, ones
+                                holding this order's goods with room, and the ones it
+                                already sits in (043). */}
+                            {[...new Set(warehouseRacks.map((rack) => rack.floor ?? 0))].sort((a, b) => a - b).map((floor) => (
+                              <optgroup key={floor} label={floor ? `Floor ${floor}` : 'Racks'}>
+                                {warehouseRacks
+                                  .filter((rack) => (rack.floor ?? 0) === floor)
+                                  .map((rack) => {
+                                    const held = heldRackIds.includes(rack.id)
+                                    const other = slotOtherOrder(rack, item.id, item.order_id)
+                                    const shared = !other && (rack.contents || []).some((entry) => entry.lineId !== item.id)
+                                    const chosenElsewhere = rack.id !== row.rackId && rackRows.some((entry) => entry.rackId === rack.id)
+                                    const rackFits = casesThatFit(slotRoom(rack, item.id), caseVolume)
+                                    const usable = held || (rack.is_active && !other && rackFits > 0)
+                                    if (!usable && rack.id !== row.rackId) return null
 
-                                return (
-                                  <option
-                                    key={rack.id}
-                                    value={rack.id}
-                                    disabled={occupied || chosenElsewhere || rackFits <= 0}
-                                    className={occupied ? 'bg-gray-100 text-gray-400' : ''}
-                                  >
-                                    {rack.rack_id} — {rack.name}
-                                    {rack.section ? ` — ${rack.section}` : ''}
-                                    {occupied ? ' — Occupied' : Number.isFinite(rackFits) ? ` — fits ${rackFits}` : ''}
-                                  </option>
-                                )
-                              })}
+                                    return (
+                                      <option key={rack.id} value={rack.id} disabled={chosenElsewhere || !usable}>
+                                        {rack.rack_id}
+                                        {shared ? ' — this order\'s goods' : ''}
+                                        {Number.isFinite(rackFits) ? ` — fits ${rackFits}` : ''}
+                                      </option>
+                                    )
+                                  })}
+                              </optgroup>
+                            ))}
                           </select>
 
                           <input
@@ -1013,14 +1002,14 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
                             min="1"
                             value={row.quantity}
                             onChange={(e) => changeRackRow(index, { quantity: e.target.value })}
-                            aria-label="Quantity in this rack"
+                            aria-label="Quantity in this slot"
                             className="w-24 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-[#2D5A42] focus:ring-1 focus:ring-[#2D5A42]"
                           />
 
                           <button
                             type="button"
                             onClick={() => removeRackRow(index)}
-                            aria-label="Remove this rack"
+                            aria-label="Remove this slot"
                             className="rounded-md p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
                           >
                             <FontAwesomeIcon icon={faXmark}/>
@@ -1029,7 +1018,7 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
 
                         {Number(row.quantity) > fits && (
                           <p className="mt-1 text-xs font-medium text-red-600">
-                            This rack holds at most {fits} {unit} of this product.
+                            This slot has room for {fits} {unit} of this product.
                           </p>
                         )}
                       </div>
@@ -1042,20 +1031,20 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
                   onClick={addRackRow}
                   className="mt-2 text-sm font-medium text-[#2D5A42] hover:underline"
                 >
-                  + Add another rack
+                  + Add another slot
                 </button>
 
                 {placed !== here && (
                   <p className="mt-2 text-sm font-medium text-amber-700">
                     {placed < here
-                      ? `${here - placed} ${unit} still need a rack.`
-                      : `The racks hold ${placed - here} ${unit} too many.`}
+                      ? `${here - placed} ${unit} still need a slot.`
+                      : `The slots hold ${placed - here} ${unit} too many.`}
                   </p>
                 )}
 
                 {suggestion.unplaced > 0 && (
                   <p className="mt-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
-                    Not enough free rack space: {suggestion.unplaced} of {here} {unit} won't fit. Record what fits now and receive the rest when racks free up, or ask an admin to add a rack in Warehouse Locations.
+                    Not enough free slot space: {suggestion.unplaced} of {here} {unit} won't fit. Record what fits now and receive the rest when racks free up, or ask an admin to add a rack in Warehouse Locations.
                   </p>
                 )}
               </>

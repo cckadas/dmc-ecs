@@ -92,7 +92,7 @@ async function loadRacksByProduct(customerOrderIds, items = []) {
   const byProduct = {}
   const add = (line, rackId) => {
     const key = `${orderOfPo[line.purchase_order_id]}:${line.product_id}`
-    byProduct[key] = [...new Set([...(byProduct[key] || []), rackName[rackId] || 'a rack'])]
+    byProduct[key] = [...new Set([...(byProduct[key] || []), rackName[rackId] || 'a slot'])]
   }
 
   for (const link of links.data || []) {
@@ -460,7 +460,7 @@ export default function StagingTrackerPage() {
       }
 
       const freed = data?.[0]?.racks_freed ?? 0
-      toast.success(`Marked as loaded.${freed ? ` ${freed} ${freed === 1 ? 'rack' : 'racks'} freed.` : ''}`)
+      toast.success(`Marked as loaded.${freed ? ` ${freed} ${freed === 1 ? 'slot' : 'slots'} freed.` : ''}`)
       await loadCustomerOrders()
     }
 
@@ -1119,6 +1119,6 @@ const STAGING_COLUMNS = [
   { header: 'Cases', value: ({ item }) => casesShipping(item) },
   { header: 'Unit', value: ({ item }) => item.products?.unit },
   { header: 'Label status', value: ({ item }) => statusText(item.compliance_label_exchange?.status) },
-  { header: 'Racks', value: ({ item }) => (item.racks || []).join('; ') },
+  { header: 'Slots', value: ({ item }) => (item.racks || []).join('; ') },
   { header: 'Loaded', value: ({ item }) => dateTime(item.loaded_at) },
 ]

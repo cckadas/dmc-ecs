@@ -2327,7 +2327,7 @@ function AddPurchaseOrderModal({ customerOrders, suppliers, warehouseRacks, load
             <div className={`mb-4 rounded-lg border p-4 ${notEnoughSpace ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-white'}`}>
               <p className={`text-sm ${notEnoughSpace ? 'text-amber-800' : 'text-gray-700'}`}>
                 This order needs about {formatCbm(purchaseVolume)} of warehouse space. {formatCbm(capacity.freeCbm)} is free right now ({capacity.freeRacks} of {capacity.totalRacks} racks).
-                {notEnoughSpace && ' It won\'t all fit unless racks free up before the delivery date, so check with the warehouse first.'}
+                {notEnoughSpace && ' It won\'t all fit unless slots free up before the delivery date, so check with the warehouse first.'}
               </p>
             </div>
           )}
