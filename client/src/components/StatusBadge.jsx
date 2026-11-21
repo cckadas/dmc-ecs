@@ -74,6 +74,13 @@ export default function StatusBadge({ status }) {
       icon: faBan,
     },
 
+    // A quotation whose request's delivery location changed: priced again (037);
+    // or one still waiting for an answer when DMC stopped the customer's new orders (038).
+    'withdrawn': {
+      style: 'bg-gray-50 text-gray-600 border-gray-200',
+      icon: faBan,
+    },
+
     'processing': {
       style: 'bg-purple-50 text-purple-700 border-purple-200',
       icon: faSpinner,
@@ -141,6 +148,13 @@ export default function StatusBadge({ status }) {
     'ready for shipment': {
       style: 'bg-emerald-50 text-emerald-700 border-emerald-200',
       icon: faCartFlatbed,
+    },
+
+    // Its container left without the goods that hadn't arrived: they go with
+    // the customer's next order (rush shipment, db/migrations/034).
+    'partly shipped': {
+      style: 'bg-lime-50 text-lime-800 border-lime-200',
+      icon: faPlaneDeparture,
     },
 
     'shipped': {

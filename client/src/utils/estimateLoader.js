@@ -1,0 +1,490 @@
+// =============================================================================
+// Estimate loader — fetching what an estimate needs, with any Supabase client
+//
+// The browser's client for staff (services/predictionService.js) and the
+// server's for customers and the chatbot (server/estimates.js) load the same
+// rows here, so an order's estimate is the same wherever it's shown. The maths
+// is in utils/predictions.js, the shaping of the rows in utils/estimateInputs.js.
+//
+// Imports carry their .js extension so the server (Node) can load this too.
+// =============================================================================
+
+import { buildStageStatistics, lateChanceOf, predictOrder, supplierArrivals } from './predictions.js'
+import { estimateContext, sailingFor, sailingRecords, supplierHistories, supplierPool } from './estimateInputs.js'
+import { buildDeliveries, manilaDate } from './supplierScores.js'
+import { MODEL_KEYS, isOutdatedModel, modelPredictor } from './predictionModel.js'
+import { labelingKindOf, labelingKinds, productsOrderedBy } from './labelingKind.js'
+import { labelingContext, labelingRecords } from './labelingSteps.js'
+import { planContainer } from './containers.js'
+import { columnsIf, withNewColumns } from './newColumns.js'
+
+// Rows, or none when the table can't be read (no access, or its script not run yet).
+const rowsOf = (result) => (result?.error ? [] : result?.data || [])
+
+
+// Every row of a query. The API returns at most 1,000 rows per request, so the
+// rows come a page at a time until a page comes back empty. makeQuery builds a
+// fresh query each time, in a fixed order, so no row is missed or repeated.
+export async function allRows(makeQuery, pageSize = 1000) {
+  const rows = []
+
+  for (let from = 0; ; ) {
+    const { data, error } = await makeQuery().range(from, from + pageSize - 1)
+    if (error) throw error
+    if (!data?.length) return rows
+    rows.push(...data)
+    from += data.length
+  }
+}
+
+
+// Every finished delivery (utils/supplierScores.js), for one supplier or all.
+// All lines are loaded, since a delivery counts only once every line from that
+// supplier on the PO is in. Test runs (received within a day of the PO) are
+// left out; withTests brings them too, marked test, for screens that list them.
+export async function loadAllDeliveries(client, supplierId, { withTests = false } = {}) {
+  const lines = await allRows(() => {
+    let query = client
+      .from('purchase_order_items')
+      .select(`
+        supplier_id,
+        fully_received_at,
+        purchase_orders (
+          id,
+          po_number,
+          created_at,
+          expected_delivery_date
+        )
+      `)
+      .order('id')
+
+    if (supplierId) query = query.eq('supplier_id', supplierId)
+    return query
+  })
+
+  return buildDeliveries(lines, { withTests })
+}
+
+
+// Every supplier delivery not in yet (one supplier's part of one PO), with when
+// it should arrive: its promised date moved by how late that supplier usually
+// is, as in the estimates (with the model where it's in use). Also the cases
+// still to come and their volume, and whether it's likely to come late (late
+// at least half the time).
+// Soonest first. For Receiving, the Purchase Orders list and the overdue alerts.
+export async function loadOpenDeliveries(client, { now = Date.now() } = {}) {
+  const [lines, suppliers, models] = await Promise.all([
+    allRows(() => client
+      .from('purchase_order_items')
+      .select('purchase_order_id, supplier_id, ordered_quantity, received_quantity, fully_received_at, products ( cbm ), purchase_orders ( id, po_number, customer_order_id, created_at, expected_delivery_date )')
+      .order('id')),
+    client.from('suppliers').select('id, supplier_name'),
+    loadModels(client),
+  ])
+
+  // The same lines give each supplier's finished deliveries, for its lateness,
+  // and every supplier's together, which one with few deliveries leans on.
+  const finished = buildDeliveries(lines)
+  const histories = supplierHistories(finished)
+  const pool = supplierPool(finished)
+  const names = Object.fromEntries(rowsOf(suppliers).map((supplier) => [supplier.id, supplier.supplier_name]))
+  const fromNow = { typical: now, quick: now, slow: now }
+
+  // What each supplier was asked for on each PO, for the model.
+  const asked = new Map()
+  for (const line of lines) {
+    const key = `${line.purchase_orders?.id}:${line.supplier_id}`
+    const entry = asked.get(key) || { cases: 0, products: 0 }
+    entry.cases += Number(line.ordered_quantity) || 0
+    entry.products += 1
+    asked.set(key, entry)
+  }
+
+  // One delivery per supplier per PO, counting only what's still to come.
+  const open = new Map()
+  for (const line of lines) {
+    const order = line.purchase_orders
+    const remaining = Number(line.ordered_quantity || 0) - Number(line.received_quantity || 0)
+    if (!order?.expected_delivery_date || line.fully_received_at || remaining <= 0) continue
+
+    const key = `${order.id}:${line.supplier_id}`
+    if (!open.has(key)) open.set(key, { order, supplierId: line.supplier_id, cases: 0, volume: 0 })
+    const delivery = open.get(key)
+    delivery.cases += remaining
+    delivery.volume += remaining * (Number(line.products?.cbm) || 0)
+  }
+
+  return [...open.values()].map(({ order, supplierId, cases, volume }) => {
+    const whole = asked.get(`${order.id}:${supplierId}`) || { cases, products: 1 }
+    const supplier = {
+      supplierId,
+      name: names[supplierId] || 'A supplier',
+      promised: order.expected_delivery_date,
+      orderedOn: order.created_at ? manilaDate(order.created_at) : null,
+      cases: whole.cases,
+      products: whole.products,
+      history: histories[supplierId] || { leadDays: [], lateness: [] },
+    }
+    const { ends, overdue, usedModel } = supplierArrivals([supplier], fromNow, now, pool, null, models.supplier)
+    const expectedDay = manilaDate(ends.typical)
+    const promisedDay = String(order.expected_delivery_date).slice(0, 10)
+
+    return {
+      purchaseOrderId: order.id,
+      customerOrderId: order.customer_order_id,
+      poNumber: order.po_number,
+      supplierId,
+      supplierName: supplier.name,
+      promised: order.expected_delivery_date,
+      expectedOn: new Date(ends.typical),
+      expectedDay,
+      overdueDays: overdue[0]?.days ?? 0,
+      // Not overdue yet, but late at least half the time: by the model's middle
+      // case where it's in use, else by how often this supplier was late.
+      likelyLate: !overdue.length && (usedModel ? expectedDay > promisedDay : lateChanceOf(supplier, pool) >= 0.5),
+      cases,
+      volume,
+    }
+  }).sort((a, b) => a.expectedOn - b.expectedOn)
+}
+
+
+// The saved models (db/migrations/019). inUseOnly: only those that beat the
+// statistics, as the estimates use them; else all, for the accuracy check.
+// None when 019 isn't run, or the reader can't see them (customers).
+export async function loadModels(client, { inUseOnly = true } = {}) {
+  const result = await client.from('prediction_models').select('key, weights, spec, metrics, in_use, trained_at')
+  const rows = rowsOf(result)
+  const pick = (key) => {
+    const row = rows.find((entry) => entry.key === key)
+    return row && (!inUseOnly || row.in_use) ? modelPredictor(row) : null
+  }
+
+  return {
+    available: !result?.error,
+    supplier: pick(MODEL_KEYS.supplier),
+    labeling: pick(MODEL_KEYS.labeling),
+    // outdated: saved before the model's inputs changed, so not used.
+    rows: rows.map((row) => ({ key: row.key, metrics: row.metrics, inUse: row.in_use && !isOutdatedModel(row), trainedAt: row.trained_at, outdated: isOutdatedModel(row) })),
+  }
+}
+
+
+// Every order's labeling kind (utils/labelingKind.js), with the orders and
+// items it came from, for an order not placed yet. Empty when the reader can't
+// see every order (a customer), and the estimates then use all labeling times.
+export async function loadLabelingKinds(client) {
+  const [orders, items] = await Promise.all([
+    allRows(() => client.from('customer_orders').select('id, customer_id, created_at, status, container_size').order('id')).catch(() => []),
+    allRows(() => client.from('customer_order_items').select('id, customer_order_id, product_id').order('id')).catch(() => []),
+  ])
+
+  const kinds = labelingKinds(orders, items)
+  return { kinds, kindOf: kinds.size ? (orderId) => kinds.get(orderId) : null, orders, items }
+}
+
+
+// Every label's saved steps (db/migrations/026) and the order line each label
+// is for. Empty when 026 isn't run yet, or the reader can't see them (a
+// customer), and the estimates then go by labeling as a whole.
+export async function loadLabelSteps(client) {
+  const [labelHistory, exchanges] = await Promise.all([
+    allRows(() => client.from('label_exchange_history').select('id, exchange_id, to_status, happened_at').order('id')).catch(() => []),
+    allRows(() => client.from('compliance_label_exchanges').select('id, customer_order_item_id').order('id')).catch(() => []),
+  ])
+
+  return { labelHistory, exchanges }
+}
+
+
+// The labels shaped for the estimates (utils/labelingSteps.js), with the orders
+// and lines loadLabelingKinds read.
+function labelingFor(labels, labeling, historyByOrder) {
+  return labelingRecords({ ...labels, items: labeling.items, orders: labeling.orders, historyByOrder, kindOf: labeling.kindOf })
+}
+
+
+// The smallest container that holds a draft's cases (utils/containers.js), or
+// the largest when even that's too small. Null when a product isn't measured.
+async function plannedContainer(client, items, products) {
+  const [sizes, fill] = await Promise.all([
+    client.from('container_sizes').select('code, inside_cbm, max_weight_kg, sort_order').order('sort_order'),
+    client.from('business_settings').select('value').eq('key', 'container_fill_percent').maybeSingle(),
+  ])
+
+  const byId = Object.fromEntries(products.map((product) => [product.id, product]))
+  const plan = planContainer({
+    lines: items.map((item) => ({
+      name: item.product_id,
+      quantity: Number(item.quantity) || 0,
+      cbm: byId[item.product_id]?.cbm,
+      grossWeightKg: byId[item.product_id]?.gross_weight_kg,
+    })),
+    sizes: rowsOf(sizes),
+    fillPercent: fill?.data?.value ?? 100,
+  })
+
+  return plan.smallest?.code || (plan.tooBig ? plan.options.at(-1)?.code : null) || null
+}
+
+
+// The supplier names and every supplier's past deliveries: each supplier's own,
+// and all of them together.
+async function loadSupplierRecords(client) {
+  const [suppliers, deliveries] = await Promise.all([
+    client.from('suppliers').select('id, supplier_name'),
+    loadAllDeliveries(client).catch(() => []),
+  ])
+
+  return {
+    names: Object.fromEntries(rowsOf(suppliers).map((supplier) => [supplier.id, supplier.supplier_name])),
+    histories: supplierHistories(deliveries),
+    pool: supplierPool(deliveries),
+  }
+}
+
+
+// Every recorded arrival (db/migrations/025): the days at sea by country that
+// the arrival dates are learned from, and each arrived order's arrival, by id.
+// tests: the arrivals left out as test runs (utils/testRuns.js).
+// Empty when 025 isn't run yet; a customer's browser sees only their own.
+export async function loadArrivals(client, history) {
+  try {
+    const orders = await allRows(() => client
+      .from('customer_orders')
+      .select('id, delivery_location_id, arrived_on, arrival_recorded_at')
+      .not('arrived_on', 'is', null)
+      .order('id'))
+
+    const locationIds = [...new Set(orders.map((order) => order.delivery_location_id).filter(Boolean))]
+    const locations = []
+    for (let index = 0; index < locationIds.length; index += 100) {
+      const { data, error } = await client.from('delivery_locations').select('id, country').in('id', locationIds.slice(index, index + 100))
+      if (error) throw error
+      locations.push(...(data || []))
+    }
+
+    const every = sailingRecords({ orders, locations, history }, { withTests: true })
+
+    return {
+      records: every.filter((record) => !record.test).map(({ orderId, country, days }) => ({ orderId, country, days })),
+      tests: every.filter((record) => record.test).length,
+      byOrder: Object.fromEntries(orders.map((order) => [order.id, { arrived_on: order.arrived_on, arrival_recorded_at: order.arrival_recorded_at }])),
+    }
+  } catch {
+    return { records: [], tests: 0, byOrder: {} }
+  }
+}
+
+
+// The orders' items, delivery countries and purchase orders.
+//
+// Goods carried from an earlier order after a rush shipment (db/migrations/034)
+// come on that order's purchase order, and the order carrying them waits for
+// them too: those lines are added to it as one more purchase order of its own,
+// with only the lines it carries.
+async function loadOrderDetails(client, orders) {
+  const orderIds = orders.map((order) => order.id)
+  const locationIds = [...new Set(orders.map((order) => order.delivery_location_id).filter(Boolean))]
+
+  if (!orderIds.length) return { items: [], locations: [], purchaseOrders: [], poLines: [] }
+
+  const [items, locations, purchaseOrders] = await Promise.all([
+    withNewColumns((carried) => client
+      .from('customer_order_items')
+      .select(`customer_order_id, quantity, ${columnsIf(carried, ['po_item_id'])} products ( supplier_id )`)
+      .in('customer_order_id', orderIds), ['po_item_id']),
+    locationIds.length
+      ? client.from('delivery_locations').select('id, country').in('id', locationIds)
+      : Promise.resolve({ data: [] }),
+    client.from('purchase_orders').select('id, customer_order_id, created_at, expected_delivery_date').in('customer_order_id', orderIds),
+  ])
+
+  const poIds = rowsOf(purchaseOrders).map((order) => order.id)
+  const poLines = poIds.length
+    ? rowsOf(await client.from('purchase_order_items').select('purchase_order_id, supplier_id, ordered_quantity, fully_received_at').in('purchase_order_id', poIds))
+    : []
+
+  const carried = await carriedPurchaseOrders(client, rowsOf(items))
+
+  return {
+    items: rowsOf(items),
+    locations: rowsOf(locations),
+    purchaseOrders: [...rowsOf(purchaseOrders), ...carried.purchaseOrders],
+    poLines: [...poLines, ...carried.poLines],
+  }
+}
+
+
+// For each order carrying goods from an earlier one: the earlier order's
+// purchase order, as one of its own (an id of its own, so other orders don't
+// pick it up), with only the lines it carries.
+async function carriedPurchaseOrders(client, items) {
+  const carriedItems = items.filter((item) => item.po_item_id)
+  if (!carriedItems.length) return { purchaseOrders: [], poLines: [] }
+
+  const lines = rowsOf(await client
+    .from('purchase_order_items')
+    .select('id, purchase_order_id, supplier_id, ordered_quantity, fully_received_at')
+    .in('id', [...new Set(carriedItems.map((item) => item.po_item_id))]))
+  const lineById = new Map(lines.map((line) => [line.id, line]))
+
+  const poIds = [...new Set(lines.map((line) => line.purchase_order_id))]
+  const sources = poIds.length
+    ? rowsOf(await client.from('purchase_orders').select('id, created_at, expected_delivery_date').in('id', poIds))
+    : []
+  const sourceById = new Map(sources.map((order) => [order.id, order]))
+
+  const purchaseOrders = new Map()
+  const poLines = []
+  for (const item of carriedItems) {
+    const line = lineById.get(item.po_item_id)
+    const source = line && sourceById.get(line.purchase_order_id)
+    if (!source) continue
+
+    const id = `${source.id}:carried-by:${item.customer_order_id}`
+    if (!purchaseOrders.has(id)) purchaseOrders.set(id, { ...source, id, customer_order_id: item.customer_order_id })
+    poLines.push({ ...line, purchase_order_id: id })
+  }
+
+  return { purchaseOrders: [...purchaseOrders.values()], poLines }
+}
+
+
+// Each order's estimate, with every order's history. Orders need id, status
+// and created_at; requested_ship_date and delivery_location_id let it check the
+// customer's date and country. history = every status change: the browser reads
+// it through status_history_for_estimates, the server straight from the table.
+export async function estimateOrders(client, orders, history) {
+  const [records, details, models, labeling, arrivals, labels] = await Promise.all([
+    loadSupplierRecords(client),
+    loadOrderDetails(client, orders),
+    loadModels(client),
+    loadLabelingKinds(client),
+    loadArrivals(client, history),
+    loadLabelSteps(client),
+  ])
+
+  const { stageStatistics, historyByOrder } = buildStageStatistics(history, labeling.kindOf)
+  const labelData = labelingFor(labels, labeling, historyByOrder)
+
+  const predictions = orders.map((order) => {
+    const country = details.locations.find((location) => location.id === order.delivery_location_id)?.country
+    // A shipped order's recorded arrival, if any.
+    const withArrival = { ...order, ...(arrivals.byOrder[order.id] || {}) }
+    const kind = labeling.kinds.get(order.id) || null
+
+    return predictOrder(withArrival, stageStatistics, historyByOrder, estimateContext({
+      order: withArrival,
+      items: details.items.filter((item) => item.customer_order_id === order.id),
+      purchaseOrders: details.purchaseOrders.filter((purchaseOrder) => purchaseOrder.customer_order_id === order.id),
+      poLines: details.poLines,
+      histories: records.histories,
+      pool: records.pool,
+      supplierNames: records.names,
+      sailing: sailingFor(arrivals.records, country),
+      country,
+      models,
+      labelingKind: kind,
+      containerSize: labeling.orders.find((row) => row.id === order.id)?.container_size || null,
+      labelSteps: labelingContext(labelData.statistics, labelData.steps, {
+        orderId: order.id,
+        customerId: labelData.customerOf.get(order.id) || order.customer_id || null,
+        kind,
+      }),
+    }))
+  })
+
+  return { predictions, historyByOrder }
+}
+
+
+// An order not placed yet, as if its down payment were made today: for a
+// quotation request being filled in, or a quotation the customer is looking at.
+//   items:         [{ product_id, quantity }]
+//   customerId:    whose it is, to tell whether its products are new to them
+//   containerSize: the container chosen, if any; else the smallest that fits
+export async function estimateDraft(client, { items = [], deliveryLocationId, requestedShipDate, history = [], customerId = null, containerSize = null }) {
+  const productIds = [...new Set(items.map((item) => item.product_id).filter(Boolean))]
+
+  const [records, products, location, models, labeling, arrivals, labels] = await Promise.all([
+    loadSupplierRecords(client),
+    productIds.length
+      ? client.from('products').select('id, supplier_id, cbm, gross_weight_kg').in('id', productIds)
+      : Promise.resolve({ data: [] }),
+    deliveryLocationId
+      ? client.from('delivery_locations').select('country').eq('id', deliveryLocationId).maybeSingle()
+      : Promise.resolve({ data: null }),
+    loadModels(client),
+    loadLabelingKinds(client),
+    loadArrivals(client, history),
+    loadLabelSteps(client),
+  ])
+
+  // Its labeling kind: new unless the customer has ordered every product before.
+  const container = containerSize || (productIds.length ? await plannedContainer(client, items, rowsOf(products)).catch(() => null) : null)
+  const labelingKind = customerId
+    ? labelingKindOf({ productIds, earlierProductIds: productsOrderedBy(customerId, labeling.orders, labeling.items), containerSize: container })
+    : null
+
+  const supplierOf = Object.fromEntries(rowsOf(products).map((product) => [product.id, product.supplier_id]))
+  const draftItems = items.map((item) => ({ quantity: item.quantity, products: { supplier_id: supplierOf[item.product_id] } }))
+  const order = { id: 'draft', status: 'pending payment', created_at: new Date().toISOString(), requested_ship_date: requestedShipDate || null }
+
+  const { stageStatistics, historyByOrder } = buildStageStatistics(history, labeling.kindOf)
+  const labelData = labelingFor(labels, labeling, historyByOrder)
+
+  return predictOrder(order, stageStatistics, historyByOrder, estimateContext({
+    order,
+    items: draftItems,
+    purchaseOrders: [],
+    poLines: [],
+    histories: records.histories,
+    pool: records.pool,
+    supplierNames: records.names,
+    sailing: sailingFor(arrivals.records, location?.data?.country),
+    country: location?.data?.country,
+    models,
+    labelingKind,
+    containerSize: container,
+    // Its customer's pace at sending designs, from their past orders' labels.
+    labelSteps: labelingContext(labelData.statistics, labelData.steps, { customerId, kind: labelingKind }),
+  }))
+}
+
+
+// What a customer may see of an estimate: the dates and plain words. Never the
+// reasons, which can name suppliers, or the confidence (customers get the range).
+export function forCustomer(prediction) {
+  if (!prediction) return null
+
+  if (prediction.shipped) {
+    return {
+      orderId: prediction.id,
+      shipped: true,
+      shippedOn: prediction.shippedOn || null,
+      // The day its container arrived, once recorded; until then, when it should.
+      arrivedOn: prediction.arrivedOn || null,
+      estimatedArrivalDate: prediction.estimatedArrivalDate || null,
+      arrivalRange: prediction.arrivalRange || null,
+    }
+  }
+
+  return {
+    orderId: prediction.id,
+    shipped: false,
+    ifPaidToday: Boolean(prediction.ifPaidToday),
+    estimatedReadyDate: prediction.estimatedReadyDate || null,
+    estimatedShipDate: prediction.estimatedShipDate || null,
+    shipDateRange: prediction.shipDateRange || null,
+    estimatedArrivalDate: prediction.estimatedArrivalDate || null,
+    arrivalRange: prediction.arrivalRange || null,
+    requestedShipDate: prediction.requestedShipDate || null,
+    daysPastRequested: prediction.daysPastRequested ?? null,
+    customerNote: prediction.customerNote || null,
+    roughEstimate: Boolean(prediction.roughEstimate),
+    // Only later than the date they asked for, never "at risk" for other reasons.
+    late: (prediction.daysPastRequested ?? 0) > 0,
+    stepsAhead: (prediction.stepsAhead || []).map(({ key, label, expectedEnd }) => ({ key, label, expectedEnd })),
+  }
+}

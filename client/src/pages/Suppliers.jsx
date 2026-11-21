@@ -2,11 +2,15 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
+import ExportButton from '../components/ExportButton'
+import { dateTime, exportList } from '../utils/csvExport'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faFolderOpen, faPen, faTrash, faFileImport } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from '../context/ToastContext'
 
 import IconButton from '../components/IconButton'
+import TableScroll from '../components/TableScroll'
+import { formatDateTime } from '../utils/dates'
 
 
 export default function SuppliersPage() {
@@ -194,6 +198,8 @@ export default function SuppliersPage() {
           <p className="mt-1 text-gray-500">
             Manage supplier records.
           </p>
+
+          <ExportButton className="mt-3" count={suppliers.length} onExport={(how) => exportList(how, 'suppliers', SUPPLIER_COLUMNS, suppliers)} />
         </div>
 
         <div className="flex items-center gap-2">
@@ -216,7 +222,7 @@ export default function SuppliersPage() {
 
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+      <TableScroll className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
           
           <thead className="bg-[#F4F8F5]">
@@ -334,7 +340,7 @@ export default function SuppliersPage() {
             )}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
 
       {showModal && (
@@ -424,7 +430,7 @@ function AddSupplierModal({ onClose, onSubmit }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-xl">
 
         {/* Header */}
         <div className="border-b bg-[#F4F8F5] px-6 py-4">
@@ -585,7 +591,7 @@ function AddSupplierModal({ onClose, onSubmit }) {
 function ViewSupplierModal({ supplier, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-xl">
 
         {/* Header */}
         <div className="border-b bg-[#F4F8F5] px-6 py-4">
@@ -680,7 +686,7 @@ function ViewSupplierModal({ supplier, onClose }) {
               </p>
 
               <p className="mt-1 text-gray-800">
-                {supplier.created_at ? new Date(supplier.created_at).toLocaleDateString() : '-'}
+                {formatDateTime(supplier.created_at)}
               </p>
             </div>
 
@@ -754,7 +760,7 @@ function EditSupplierModal({ supplier, onClose, onSubmit }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-xl">
 
         {/* Header */}
         <div className="border-b bg-[#F4F8F5] px-6 py-4">
@@ -1097,7 +1103,7 @@ function ImportSuppliersModal({ onClose, onSubmit }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-3xl overflow-hidden rounded-xl bg-white shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl bg-white shadow-xl">
 
         {/* Header */}
         <div className="border-b bg-[#F4F8F5] px-6 py-4">
@@ -1270,3 +1276,18 @@ function ImportSuppliersModal({ onClose, onSubmit }) {
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per supplier, as listed.
+// =============================================
+const SUPPLIER_COLUMNS = [
+  { header: 'Supplier', value: (supplier) => supplier.supplier_name },
+  { header: 'Type', value: (supplier) => supplier.supplier_type },
+  { header: 'Contact person', value: (supplier) => supplier.contact_person },
+  { header: 'Email', value: (supplier) => supplier.email },
+  { header: 'Phone', value: (supplier) => supplier.phone },
+  { header: 'Address', value: (supplier) => supplier.address },
+  { header: 'Added', value: (supplier) => dateTime(supplier.created_at) },
+]

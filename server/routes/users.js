@@ -12,8 +12,11 @@ router.post('/', async (req, res) => {
       company = null,
       address = null,
       country = null,
-      role = 'customer',
     } = req.body
+
+    // This route only ever creates customers. Staff accounts go through
+    // routes/staffs.js, which is admin only.
+    const role = 'customer'
 
     if (!name || !email) {
       return res.status(400).json({
@@ -49,7 +52,7 @@ router.post('/', async (req, res) => {
         email,
         {
           redirectTo:
-            `${process.env.CLIENT_URL}/set-password`,
+            `${process.env.CLIENT_URL || 'http://localhost:5173'}/set-password`,
         }
       )
 

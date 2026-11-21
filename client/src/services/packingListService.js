@@ -4,6 +4,9 @@ import autoTable from 'jspdf-autotable'
 import logo from '../assets/logo.png?inline'
 import seal from '../assets/seal.png?inline'
 
+// Lossless. Without it, jsPDF stores the images uncompressed and each PDF is about 9 MB.
+const IMAGE_COMPRESSION = 'FAST'
+
 // ============================================================
 // FORMATTER
 // ============================================================
@@ -65,7 +68,9 @@ export function generatePackingList(order, items) {
       168,
       17,
       logoWidth,
-      logoHeight
+      logoHeight,
+      undefined,
+      IMAGE_COMPRESSION
     )
   } catch (error) {
     console.warn('Unable to load packing list logo:', error)
@@ -238,7 +243,9 @@ export function generatePackingList(order, items) {
       sealX,
       sealY,
       sealSize,
-      sealSize
+      sealSize,
+      undefined,
+      IMAGE_COMPRESSION
     )
 
     doc.setFont('helvetica', 'bold')

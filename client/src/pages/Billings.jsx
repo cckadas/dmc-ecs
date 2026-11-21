@@ -7,6 +7,10 @@ import { faFileInvoice } from '@fortawesome/free-solid-svg-icons'
 
 import StatusBadge from '../components/StatusBadge'
 import IconButton from '../components/IconButton'
+import TableScroll from '../components/TableScroll'
+import ListControls from '../components/ListControls'
+import { dateTime, exportList, money, statusText } from '../utils/csvExport'
+import { ALL, applySearch, applyShow, applySort, byHighest, byNewest, byOldest, byStatus, showChoices, showingOf } from '../utils/listControls'
 
 
 export default function BillingsPage() {
@@ -14,6 +18,10 @@ export default function BillingsPage() {
   const { toast } = useToast()
 
   const [orders, setOrders] = useState([])
+  // Show (a payment status), Sort by and Search, above the list.
+  const [show, setShow] = useState(ALL)
+  const [sortBy, setSortBy] = useState('status')
+  const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
 
 
@@ -126,14 +134,20 @@ export default function BillingsPage() {
   function getPaymentStatus(order) {
 
     const total = Number(order.total_amount || 0)
-    const downPayment = Number(order.down_payment_amount || 0)
     const settled = Number(order.settled_amount || 0)
+
+    // Its down payment never came (db/migrations/028): nothing is owed.
+    if (String(order.status || '').trim().toLowerCase() === 'cancelled') {
+      return 'cancelled'
+    }
 
     if (total > 0 && settled >= total) {
       return 'fully paid'
     }
 
-    if (downPayment > 0 || settled > 0) {
+    // down_payment_amount is what is required, not what was paid, so only
+    // the settled amount says whether a down payment came in.
+    if (settled > 0) {
       return 'down payment received'
     }
 
@@ -166,6 +180,9 @@ export default function BillingsPage() {
   // CALCULATE REMAINING BALANCE
   // =====================================================
   function getRemainingBalance(order) {
+    // A cancelled order owes nothing (db/migrations/028).
+    if (String(order.status || '').trim().toLowerCase() === 'cancelled') return 0
+
     const total = Number(order.total_amount || 0)
     const settled = Number(order.settled_amount || 0)
 
@@ -193,6 +210,24 @@ export default function BillingsPage() {
   // =====================================================
   // MAIN CONTENT
   // =====================================================
+  // The list as chosen above it: unpaid first, then down payment received,
+  // fully paid, cancelled.
+  const BILLING_ORDER = ['unpaid', 'down payment received', 'fully paid', 'cancelled']
+  const billingList = { statusOf: getPaymentStatus, order: BILLING_ORDER }
+  const choices = showChoices(orders, billingList)
+  const showing = showingOf(choices, show)
+  const shownOrders = applySort(
+    applySearch(applyShow(orders, showing, billingList), search, (order) =>
+      [order.order_number, order.quotation_number, order.customer?.name, order.customer?.company].join(' ')),
+    sortBy,
+    {
+      status: byStatus(getPaymentStatus, BILLING_ORDER, (order) => order.created_at),
+      balance: byHighest(getRemainingBalance),
+      newest: byNewest((order) => order.created_at),
+      oldest: byOldest((order) => order.created_at),
+    }
+  )
+
   return (
     <div>
 
@@ -210,11 +245,34 @@ export default function BillingsPage() {
       </div>
 
 
+      <ListControls
+        choices={choices}
+        show={showing}
+        onShow={setShow}
+        sorts={[
+          { value: 'status', label: 'Status (unpaid first, newest first in each)' },
+          { value: 'balance', label: 'Balance (highest first)' },
+          { value: 'newest', label: 'Newest first' },
+          { value: 'oldest', label: 'Oldest first' },
+        ]}
+        sortBy={sortBy}
+        onSort={setSortBy}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="Order number or customer"
+        shown={shownOrders.length}
+        total={orders.length}
+        onExport={(how) => exportList(how, 'billings', billingColumns(getPaymentStatus, getRemainingBalance), shownOrders)}
+        noun={orders.length === 1 ? 'order' : 'orders'}
+        loading={loading}
+      />
+
+
       {/* =================================================
           TABLE
       ================================================= */}
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-        <div className="overflow-x-auto">
+      <div className="overflow-clip rounded-xl border border-gray-200 bg-white shadow-sm">
+        <TableScroll>
           <table className="min-w-full">
 
             <thead className="bg-[#F4F8F5]">
@@ -262,9 +320,9 @@ export default function BillingsPage() {
                   </td>
                 </tr>
 
-              ) : orders.length > 0 ? (
+              ) : shownOrders.length > 0 ? (
 
-                orders.map((order) => {
+                shownOrders.map((order) => {
 
                   const balance =  getRemainingBalance(order)
 
@@ -314,9 +372,13 @@ export default function BillingsPage() {
 
                       {/* BALANCE */}
                       <td className="px-5 py-4">
-                        <span className={balance > 0 ? 'font-semibold text-amber-600' : 'font-semibold text-green-600'}>
-                          {formatCurrency(balance)}
-                        </span>
+                        {getPaymentStatus(order) === 'cancelled' ? (
+                          <span className="text-sm text-gray-400">None (cancelled)</span>
+                        ) : (
+                          <span className={balance > 0 ? 'font-semibold text-amber-600' : 'font-semibold text-green-600'}>
+                            {formatCurrency(balance)}
+                          </span>
+                        )}
                       </td>
 
                       {/* PAYMENT STATUS */}
@@ -358,15 +420,34 @@ export default function BillingsPage() {
               ) : (
                 <tr>
                   <td colSpan="8" className="py-10 text-center text-sm text-gray-500">
-                    No customer orders found.
+                    {orders.length > 0 ? 'Nothing matches what is chosen above.' : 'No customer orders found.'}
                   </td>
                 </tr>
               )}
             </tbody>
 
           </table>
-        </div>
+        </TableScroll>
       </div>
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per order, as listed.
+// =============================================
+const billingColumns = (paymentStatusOf, balanceOf) => [
+  { header: 'Order', value: (order) => order.order_number },
+  { header: 'Quotation', value: (order) => order.quotation_number },
+  { header: 'Customer', value: (order) => order.customer?.name },
+  { header: 'Company', value: (order) => order.customer?.company },
+  { header: 'Order status', value: (order) => statusText(order.status) },
+  { header: 'Payment', value: (order) => statusText(paymentStatusOf(order)) },
+  { header: 'Total (PHP)', value: (order) => money(order.total_amount) },
+  { header: 'Down payment due (PHP)', value: (order) => money(order.down_payment_amount) },
+  { header: 'Paid (PHP)', value: (order) => money(order.settled_amount) },
+  { header: 'Balance (PHP)', value: (order) => money(balanceOf(order)) },
+  { header: 'Placed', value: (order) => dateTime(order.created_at) },
+]

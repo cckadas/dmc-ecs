@@ -5,8 +5,16 @@ import cors from 'cors'
 
 import customersRouter from './routes/users.js'
 import staffsRouter from './routes/staffs.js'
+import customerAccountsRouter from './routes/customerAccounts.js'
 import purchaseOrderEmailRouter from './routes/emails.js'
 import paymentProofRouter from './routes/payment.js'
+import chatRouter from './routes/chat.js'
+import estimatesRouter from './routes/estimates.js'
+import { requireRole } from './auth.js'
+import { startPredictionAlerts } from './alerts.js'
+import { startPaymentDeadlines } from './paymentDeadlines.js'
+import { startQuotationExpiry } from './quotationExpiry.js'
+import { startWaitingGoodsDeadlines } from './waitingGoods.js'
 
 const app = express()
 
@@ -29,11 +37,18 @@ app.use(express.json())
 
 // =============================================
 // ROUTES
+//
+// Each lists who can call it. These roles match the pages that use each route
+// (client/src/components/layout/navigation.js).
 // =============================================
-app.use('/api/users', customersRouter)
-app.use('/api/staffs', staffsRouter)
-app.use('/api/send-email', purchaseOrderEmailRouter)
-app.use('/api/send-payment-proof', paymentProofRouter)
+app.use('/api/users', requireRole('admin', 'sales'), customersRouter)
+app.use('/api/staffs', requireRole('admin'), staffsRouter)
+// Stopping a customer's new orders, deactivating and deleting them (db/migrations/038).
+app.use('/api/customer-accounts', requireRole('admin'), customerAccountsRouter)
+app.use('/api/send-email', requireRole('admin', 'procurement'), purchaseOrderEmailRouter)
+app.use('/api/send-payment-proof', requireRole('admin', 'procurement'), paymentProofRouter)
+app.use('/api/customer/chat', requireRole('customer'), chatRouter)
+app.use('/api/customer/estimates', requireRole('customer'), estimatesRouter)
 
 
 // =============================================
@@ -52,4 +67,16 @@ app.get('/api/health', (req, res) => {
 // =============================================
 app.listen(PORT, () => {
   console.log(`DMC ECS server running on http://localhost:${PORT}`)
+
+  // Staff alerts about late orders and overdue deliveries, checked every 5 minutes (alerts.js).
+  startPredictionAlerts()
+
+  // Down payment reminders, and cancelling orders not paid 7 days after the deadline (paymentDeadlines.js).
+  startPaymentDeadlines()
+
+  // Quotation reminders 2 days before expiry, and marking expired ones (quotationExpiry.js).
+  startQuotationExpiry()
+
+  // Rush shipments' waiting goods: reminders, and DMC's after 6 months (waitingGoods.js).
+  startWaitingGoodsDeadlines()
 })

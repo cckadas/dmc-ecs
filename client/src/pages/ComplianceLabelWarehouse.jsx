@@ -5,10 +5,18 @@ import { supabase } from '../supabase'
 import { useToast } from '../context/ToastContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { createNotification } from '../services/notificationService'
+import { linesShippingNow } from '../services/rushService'
+import { casesShipping, casesWaiting } from '../utils/rushLines'
 import { faBoxOpen, faFileLines, faUpload, faXmark, faImage, faCheck, faStickyNote } from '@fortawesome/free-solid-svg-icons'
 
 import StatusBadge from '../components/StatusBadge'
 import IconButton from '../components/IconButton'
+import TableScroll from '../components/TableScroll'
+import ListControls from '../components/ListControls'
+import { dateTime, exportList, statusText } from '../utils/csvExport'
+import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, showChoices, showingOf } from '../utils/listControls'
+import { LABEL_STAGES, labelStageLabel, labelStageOf } from '../utils/labelStage'
+import { LabelHistory } from '../components/HistoryList'
 
 
 export default function ComplianceLabelWarehouse() {
@@ -16,6 +24,10 @@ export default function ComplianceLabelWarehouse() {
   const { toast } = useToast()
 
   const [customerOrders, setCustomerOrders] = useState([])
+  // Show (where its labels are), Sort by and Search, above the list.
+  const [show, setShow] = useState(ALL)
+  const [sortBy, setSortBy] = useState('status')
+  const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [selectedOrder, setSelectedOrder] = useState(null)
@@ -119,7 +131,7 @@ async function loadCustomerOrders() {
     // LOAD CUSTOMER ORDER ITEMS
     // =================================================
     const {
-      data: orderItems,
+      data: loadedItems,
       error: orderItemsError
     } = await supabase
       .from('customer_order_items')
@@ -147,6 +159,9 @@ async function loadCustomerOrders() {
     if (orderItemsError) {
       throw orderItemsError
     }
+
+    // A rushed order: only the lines going in its container.
+    const orderItems = await linesShippingNow(loadedItems)
 
 
     // =================================================
@@ -631,7 +646,7 @@ async function loadCustomerOrders() {
       // =================================================
       // GET ALL ITEMS FROM THIS CUSTOMER ORDER
       // =================================================
-      const { data: orderItems, error: orderItemsError } = await supabase
+      const { data: loadedItems, error: orderItemsError } = await supabase
         .from('customer_order_items')
         .select(`
           id
@@ -641,6 +656,9 @@ async function loadCustomerOrders() {
       if (orderItemsError) {
         throw orderItemsError
       }
+
+      // A rushed order is ready once the lines going in its container are.
+      const orderItems = await linesShippingNow(loadedItems)
 
 
       // =================================================
@@ -805,6 +823,22 @@ async function loadCustomerOrders() {
   }, [])
 
 
+  // The list as chosen above it: each order by its least advanced label.
+  const stageOf = (group) => labelStageOf(group.items)
+  const labelList = { statusOf: stageOf, order: LABEL_STAGES, labelOf: (stage) => labelStageLabel(stage, { forCustomer: false }), allLabel: 'All orders' }
+  const choices = showChoices(customerOrders, labelList)
+  const showing = showingOf(choices, show)
+  const shownGroups = applySort(
+    applySearch(applyShow(customerOrders, showing, labelList), search, (group) => [group.customer_order?.order_number, group.customer_order?.quotation_number, group.customer_order?.profile?.name, group.customer_order?.profile?.company, ...(group.items || []).map((item) => item.products?.product_name)].join(' ')),
+    sortBy,
+    {
+      status: byStatus(stageOf, LABEL_STAGES, (group) => group.customer_order?.created_at),
+      newest: byNewest((group) => group.customer_order?.created_at),
+      oldest: byOldest((group) => group.customer_order?.created_at),
+    }
+  )
+
+
   // =====================================================
   // MAIN CONTENT
   // =====================================================
@@ -825,6 +859,28 @@ async function loadCustomerOrders() {
       </div>
 
 
+      <ListControls
+        choices={choices}
+        show={showing}
+        onShow={setShow}
+        sorts={[
+          { value: 'status', label: 'Status (least advanced first)' },
+          { value: 'newest', label: 'Newest first' },
+          { value: 'oldest', label: 'Oldest first' },
+        ]}
+        sortBy={sortBy}
+        onSort={setSortBy}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="Order number, customer, product"
+        shown={shownGroups.length}
+        total={customerOrders.length}
+        onExport={(how) => exportList(how, 'compliance-labels', LABEL_COLUMNS, shownGroups.flatMap((group) => (group.items || []).map((item) => ({ group, item }))))}
+        noun={customerOrders.length === 1 ? 'order' : 'orders'}
+        loading={loading}
+      />
+
+
       {/* =================================================
           LOADING
       ================================================= */}
@@ -834,20 +890,20 @@ async function loadCustomerOrders() {
           Loading customer orders...
         </div>
 
-      ) : customerOrders.length === 0 ? (
+      ) : shownGroups.length === 0 ? (
 
         <div className="rounded-xl border border-gray-200 bg-white py-12 text-center shadow-sm">
           <FontAwesomeIcon icon={faBoxOpen} className="mb-3 h-8 w-8 text-gray-300"/>
 
           <p className="text-sm text-gray-500">
-            No customer orders are ready for compliance labeling.
+            {customerOrders.length > 0 ? 'Nothing matches what is chosen above.' : 'No customer orders are ready for compliance labeling.'}
           </p>
         </div>
 
       ) : (
 
         <div className="space-y-6">
-          {customerOrders.map(
+          {shownGroups.map(
             (orderGroup) => {
               const customerOrder = orderGroup.customer_order
               const purchaseOrder = orderGroup.purchase_order
@@ -855,7 +911,7 @@ async function loadCustomerOrders() {
               const exchangeCount = items.filter((item) => item.compliance_label_exchange?.status === 'applied to units').length
 
               return (
-                <div key={customerOrder.id} className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+                <div key={customerOrder.id} className="overflow-clip rounded-xl border border-gray-200 bg-white shadow-sm">
 
                   {/* =================================================
                       CUSTOMER ORDER HEADER
@@ -946,7 +1002,7 @@ async function loadCustomerOrders() {
                   {/* =================================================
                       ITEMS TABLE
                   ================================================= */}
-                  <div className="overflow-x-auto">
+                  <TableScroll>
                     <table className="min-w-full">
 
                       <thead className="bg-white">
@@ -995,12 +1051,22 @@ async function loadCustomerOrders() {
                                   )}
                                 </td>
 
-                                {/* QUANTITY */}
+                                {/* QUANTITY: a rushed order's cases going in this container */}
                                 <td className="px-6 py-4 text-left font-medium text-gray-700">
-                                  {item.quantity}
+                                  {casesShipping(item)}
                                   {item.products?.unit && (
                                     <span className="ml-1 text-xs text-gray-500">
                                       {item.products.unit}
+                                    </span>
+                                  )}
+                                  {casesWaiting(item) > 0 && (
+                                    <span className="mt-0.5 block text-xs font-normal text-amber-700">
+                                      of {item.quantity}: the rest wait for the customer's next order
+                                    </span>
+                                  )}
+                                  {item.carried_from_item_id && (
+                                    <span className="mt-0.5 block text-xs font-normal text-amber-700">
+                                      Waited from an earlier order (rush shipment)
                                     </span>
                                   )}
                                 </td>
@@ -1054,7 +1120,7 @@ async function loadCustomerOrders() {
                       </tbody>
 
                     </table>
-                  </div>
+                  </TableScroll>
                 </div>
               )
             }
@@ -1068,7 +1134,7 @@ async function loadCustomerOrders() {
       ===================================================== */}
       {showModal && selectedItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-xl">
 
             {/* =================================================
                 MODAL HEADER
@@ -1194,6 +1260,12 @@ async function loadCustomerOrders() {
                   </div>
                 )}
               </div>
+
+
+              {/* =================================================
+                  HISTORY (each step's date and time)
+              ================================================= */}
+              <LabelHistory exchangeId={selectedExchange?.id}/>
             </div>
 
 
@@ -1227,3 +1299,22 @@ async function loadCustomerOrders() {
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per product, as listed (a rushed order: only what ships now).
+// =============================================
+const LABEL_COLUMNS = [
+  { header: 'Order', value: ({ group }) => group.customer_order?.order_number },
+  { header: 'Quotation', value: ({ group }) => group.customer_order?.quotation_number },
+  { header: 'Company', value: ({ group }) => group.customer_order?.profile?.company || group.customer_order?.profile?.name },
+  { header: 'Country', value: ({ group }) => group.customer_order?.delivery_location?.country },
+  { header: 'Order status', value: ({ group }) => statusText(group.customer_order?.status) },
+  { header: 'Product', value: ({ item }) => item.products?.product_name },
+  { header: 'Brand', value: ({ item }) => item.products?.brand },
+  { header: 'Cases', value: ({ item }) => casesShipping(item) },
+  { header: 'Unit', value: ({ item }) => item.products?.unit },
+  { header: 'Label status', value: ({ item }) => statusText(item.compliance_label_exchange?.status) || 'Not started' },
+  { header: 'Label updated', value: ({ item }) => dateTime(item.compliance_label_exchange?.updated_at) },
+]
