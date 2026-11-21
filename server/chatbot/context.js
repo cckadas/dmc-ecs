@@ -172,20 +172,21 @@ export async function buildCustomerContext(customerId, message) {
       .select(`name, company${withAccount ? ', new_orders_stopped_at' : ''}`)
       .eq('id', customerId)
       .limit(1), ['new_orders_stopped_at']), 'profile'),
-    // When and why an order was cancelled (028), and what a rush shipment
-    // split (034): asked again without them until those scripts are run.
+    // When and why an order was cancelled (028), what a rush shipment split
+    // (034) and which waiting goods became DMC's (039): asked again without
+    // them until those scripts are run.
     must(
-      withNewColumns((withRush) => withNewColumns((withCancellation) => supabaseAdmin
+      withNewColumns((withGiven) => withNewColumns((withRush) => withNewColumns((withCancellation) => supabaseAdmin
         .from('customer_orders')
         .select(`
           id, order_number, quotation_number, status, created_at, requested_ship_date, delivery_location_id, expiry_date,
           ${columnsIf(withCancellation, CANCELLATION_COLUMNS)}
           total_amount, down_payment_amount, settled_amount, pending_payment_amount, rejection_reason,
           pfi_file_path, pack_list_path, cert_shipment_path, cert_clearance_path,
-          customer_order_items ( id, quantity, unit_price, subtotal, ${columnsIf(withRush, RUSH_ITEM_COLUMNS)} products ( product_name, family, pack_size, unit ) )
+          customer_order_items ( id, quantity, unit_price, subtotal, ${columnsIf(withRush, RUSH_ITEM_COLUMNS)} ${columnsIf(withRush && withGiven, ['given_to_dmc_at'])} products ( product_name, family, pack_size, unit ) )
         `)
         .eq('customer_id', customerId)
-        .order('created_at', { ascending: false }), CANCELLATION_COLUMNS), RUSH_ITEM_COLUMNS),
+        .order('created_at', { ascending: false }), CANCELLATION_COLUMNS), RUSH_ITEM_COLUMNS), ['given_to_dmc_at']),
       'orders'
     ),
     must(
@@ -266,7 +267,8 @@ export async function buildCustomerContext(customerId, message) {
     return hasShipped(next.status) ? null : next.order_number
   }
   const goodsWaiting = orders.flatMap((other) => (other.customer_order_items || [])
-    .filter((item) => casesWaiting(item) > 0 && waitingFor(item))
+    // Goods that became DMC's after 6 months (039) don't wait any more.
+    .filter((item) => casesWaiting(item) > 0 && !item.given_to_dmc_at && waitingFor(item))
     .map((item) => ({
       product: productName(item.products),
       cases: quantityText(casesWaiting(item), item.products?.unit),
@@ -371,7 +373,7 @@ export async function buildCustomerContext(customerId, message) {
             agreed: true,
             note: 'The customer agreed to a rush shipment: only the goods already in DMC\'s warehouse went in this order\'s container; the rest go in the container of their next order, already paid for.',
             casesInThisOrdersContainer: (order.customer_order_items || []).reduce((sum, item) => sum + casesShipping(item), 0),
-            waitingGoods: (order.customer_order_items || []).filter((item) => casesWaiting(item) > 0).map((item) => ({
+            waitingGoods: (order.customer_order_items || []).filter((item) => casesWaiting(item) > 0 && !item.given_to_dmc_at).map((item) => ({
               product: productName(item.products),
               cases: quantityText(casesWaiting(item), item.products?.unit),
               goesWith: waitingFor(item) || 'already left with a later order',

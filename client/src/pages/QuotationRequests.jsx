@@ -11,7 +11,8 @@ import { getCreditStatus, formatPeso } from '../services/creditService'
 import { getMinimumOrderQuantities } from '../services/pricingService'
 import { groupByFamily, sizeLabel } from '../utils/productGroups'
 import { previewMyEstimate } from '../services/predictionService'
-import { loadCarriedFrom } from '../services/rushService'
+import { deadlineText, loadCarriedFrom, loadWaitingGoods, waitingState } from '../services/rushService'
+import { formatVolume, formatWeight } from '../utils/containers'
 import { RUSH_ITEM_COLUMNS, columnsIf, isMissingColumn, withNewColumns } from '../utils/newColumns'
 import { ACCOUNT_COLUMNS, newOrdersStopped } from '../utils/customerAccount'
 
@@ -49,6 +50,9 @@ export default function QuotationRequestsPage() {
   // DMC stopped this customer's new orders (038): no new requests, approvals
   // or new quotes. Read again on load: admin may have done it since sign-in.
   const [stopped, setStopped] = useState(() => newOrdersStopped(profile))
+  // Goods a rush shipment left waiting (034), not taken by an order yet: they
+  // go in the next request's container, with other products or alone (039).
+  const [waitingGoods, setWaitingGoods] = useState([])
 
 
   // =============================================
@@ -61,6 +65,14 @@ export default function QuotationRequestsPage() {
       .eq('id', profile.id)
       .maybeSingle()
     if (!error && data) setStopped(newOrdersStopped(data))
+  }
+
+  async function loadWaiting() {
+    try {
+      setWaitingGoods((await loadWaitingGoods(profile.id)).filter((row) => waitingState(row) === 'waiting'))
+    } catch (error) {
+      console.error('Failed to load the goods waiting from rush shipments:', error)
+    }
   }
 
 
@@ -217,9 +229,10 @@ export default function QuotationRequestsPage() {
       notes: item.notes,
     }))
 
-    const { error: itemError } = await supabase
-      .from('quotation_request_items')
-      .insert(items)
+    // No products of its own: a request for the waiting goods alone (039).
+    const { error: itemError } = items.length
+      ? await supabase.from('quotation_request_items').insert(items)
+      : { error: null }
 
     if (itemError) {
       // The request was saved but its products weren't (e.g. one is below
@@ -231,6 +244,8 @@ export default function QuotationRequestsPage() {
 
     if (formData.replaces_request_id) {
       toast.success(`New quote requested: ${quotationReference}. DMC prices it again with today's prices.`)
+    } else if (!items.length) {
+      toast.success(`${quotationReference} sent for your waiting goods alone. DMC prices only their container and shipping.`)
     }
 
     setShowModal(false)
@@ -514,6 +529,7 @@ export default function QuotationRequestsPage() {
       loadProducts()
       loadCredit()
       loadAccount()
+      loadWaiting()
     }
   }, [profile])
 
@@ -698,7 +714,7 @@ export default function QuotationRequestsPage() {
                           </div>
                         ))
                       ) : (
-                        <span className="text-gray-400">No items</span>
+                        <span className="text-gray-600">Only your goods waiting from a rush shipment</span>
                       )}
                     </div>
                   </td>
@@ -744,6 +760,7 @@ export default function QuotationRequestsPage() {
       <QuotationRequestModal
         deliveryLocations={deliveryLocations}
         products={products}
+        waiting={waitingGoods}
         initial={requestAgain && {
           delivery_location_id: requestAgain.delivery_location_id,
           items: (requestAgain.quotation_request_items || []).map((item) => ({ product_id: item.product_id, quantity: item.quantity, notes: item.notes || '' })),
@@ -1319,9 +1336,16 @@ function QuotationModal({ quotation, loading, creating, onClose, onApprove, onRe
 // =============================================
 // initial: a new quote for an expired request (035): its delivery location
 // and products, filled in, and which request it replaces.
-function QuotationRequestModal({ deliveryLocations, products, initial = null, onClose, onSubmit }) {
+// waiting: the customer's goods waiting from rush shipments (034), not taken by
+// an order yet. They go in this order's container (counted in its volume) at
+// no product cost, so the request may have no products of its own (039).
+function QuotationRequestModal({ deliveryLocations, products, waiting = [], initial = null, onClose, onSubmit }) {
   const { toast } = useToast()
   const [selectedProducts, setSelectedProducts] = useState(initial?.items || [])
+  const waitingCases = waiting.reduce((sum, row) => sum + Number(row.cases || 0), 0)
+  const waitingVolume = waiting.reduce((sum, row) => sum + Number(row.cbm || 0) * Number(row.cases || 0), 0)
+  const waitingWeight = waiting.reduce((sum, row) => sum + Number(row.gross_weight_kg || 0) * Number(row.cases || 0), 0)
+  const waitingDeadline = waiting.filter((row) => row.deadline).sort((a, b) => String(a.deadline).localeCompare(String(b.deadline)))[0]
   const [minimums, setMinimums] = useState({})
   const [productSearch, setProductSearch] = useState('')
 
@@ -1422,11 +1446,13 @@ function QuotationRequestModal({ deliveryLocations, products, initial = null, on
   function handleSubmit(e) {
     e.preventDefault()
 
-    if (
-      !form.delivery_location_id ||
-      !form.preferred_ship_date ||
-      selectedProducts.length === 0
-    ) {
+    if (!form.delivery_location_id || !form.preferred_ship_date) {
+      return
+    }
+
+    // Products, or the waiting goods alone.
+    if (selectedProducts.length === 0 && waiting.length === 0) {
+      toast.error('Please add at least one product.')
       return
     }
 
@@ -1494,6 +1520,25 @@ function QuotationRequestModal({ deliveryLocations, products, initial = null, on
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-6 p-6">
+          {waiting.length > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              <p className="font-semibold">
+                Also in this order's container: your goods waiting from a rush shipment ({[...new Set(waiting.map((row) => row.order_number))].join(', ')})
+              </p>
+              <ul className="mt-1 list-disc pl-5">
+                {waiting.map((row) => (
+                  <li key={row.item_id}>{row.product_name}{row.pack_size ? ` (${row.pack_size})` : ''}: {Number(row.cases).toLocaleString()} {row.unit || 'cases'}</li>
+                ))}
+              </ul>
+              <p className="mt-2">
+                {waitingCases.toLocaleString()} cases, about {formatVolume(waitingVolume)} and {formatWeight(waitingWeight)}, already paid for.
+                The container is chosen to fit them plus what you add below; this order's container and shipping are yours to pay.
+                You can also send this request with only them.
+                {waitingDeadline ? ` Send it by ${deadlineText(waitingDeadline)}: after that, as you agreed, DMC may do what it wants with them.` : ''}
+              </p>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-sm font-medium">
@@ -1763,7 +1808,7 @@ function QuotationRequestModal({ deliveryLocations, products, initial = null, on
               onClick={openSelected}
               className="rounded-lg bg-[#1F3A2C] px-4 py-2 text-white transition hover:bg-[#2D5A42]"
             >
-              Submit Request
+              {selectedProducts.length === 0 && waiting.length > 0 ? 'Send for the Waiting Goods Only' : 'Submit Request'}
             </button>
           </div>
 

@@ -90,7 +90,7 @@ export const PORTAL_FAQ = [
   },
   {
     topic: 'Rush shipment',
-    answer: 'While an order waits for its goods (Procurement) and some of them are already in DMC\'s warehouse, the customer can ask for a rush shipment on My Orders: what is in ships now, and the rest goes in the container of their next order with DMC, whenever they place it. The order\'s price and balance stay the same, and the waiting goods are not charged again. The customer sees exactly what ships and what waits before agreeing, and once agreed it cannot be undone. If they don\'t agree, the order keeps waiting for everything.',
+    answer: 'While an order waits for its goods (Procurement) and some of them are already in DMC\'s warehouse, the customer can ask for a rush shipment on My Orders: what is in ships now, and the rest goes in the container of their next order with DMC. That next order can have other products or only the waiting goods (a quotation request with no products of its own); either way its container and shipping are the customer\'s to pay, and the waiting goods are not charged again. The customer has 6 months from when the waiting goods are all in DMC\'s warehouse and the first container has left, and is reminded a month and a week before; after that, as agreed, DMC may do what it wants with them. The order\'s price and balance stay the same. The customer sees exactly what ships and what waits before agreeing, and once agreed it cannot be undone. If they don\'t agree, the order keeps waiting for everything.',
   },
   {
     topic: 'Compliance labels',

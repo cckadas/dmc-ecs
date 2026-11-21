@@ -183,7 +183,9 @@ export async function linesShippingNow(items) {
 //   'joined'   goes in the container of carried_into (not shipped yet)
 //   'left'     left with carried_into: shipped (any cases that wait again are
 //              that order's own waiting goods)
+//   'given'    DMC's: no order took it within 6 months (db/migrations/039)
 export function waitingState(row) {
+  if (row?.given_at) return 'given'
   if (!row?.carried_into) return 'waiting'
   const status = String(row.carried_into_status || '').trim().toLowerCase()
   if (status === 'shipped' || status === 'partly shipped') return 'left'
@@ -192,7 +194,14 @@ export function waitingState(row) {
 }
 
 // Still to ship: waiting, or joined to an order that hasn't shipped.
-export const stillToShip = (rows) => (rows || []).filter((row) => waitingState(row) !== 'left')
+export const stillToShip = (rows) => (rows || []).filter((row) => !['left', 'given'].includes(waitingState(row)))
+
+// The last day a next order can take a waiting line (6 months from when the
+// goods were all in and the rushed order's container left; 039), or null when
+// that hasn't started yet. As "Nov 20, 2026".
+export const deadlineText = (row) => (row?.deadline
+  ? new Date(`${String(row.deadline).slice(0, 10)}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  : null)
 
 // How many cases and products, of these lines.
 export function countOf(rows) {

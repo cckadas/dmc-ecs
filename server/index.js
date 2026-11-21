@@ -14,6 +14,7 @@ import { requireRole } from './auth.js'
 import { startPredictionAlerts } from './alerts.js'
 import { startPaymentDeadlines } from './paymentDeadlines.js'
 import { startQuotationExpiry } from './quotationExpiry.js'
+import { startWaitingGoodsDeadlines } from './waitingGoods.js'
 
 const app = express()
 
@@ -75,4 +76,7 @@ app.listen(PORT, () => {
 
   // Quotation reminders 2 days before expiry, and marking expired ones (quotationExpiry.js).
   startQuotationExpiry()
+
+  // Rush shipments' waiting goods: reminders, and DMC's after 6 months (waitingGoods.js).
+  startWaitingGoodsDeadlines()
 })

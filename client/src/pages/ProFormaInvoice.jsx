@@ -1177,6 +1177,7 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                   This customer agreed to a rush shipment on {[...new Set(carriedItems.map((item) => item.carried_from))].join(', ')}:
                   the goods that hadn't arrived then go in the container of their next order. They're added below at ₱0 (already paid),
                   counted in the container, and can't be left out.
+                  {request.quotation_request_items.length === 0 && ' This request is for them alone: only its container and shipping are priced, and the customer pays them.'}
                 </div>
               )}
 
@@ -1499,9 +1500,15 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                             (item) => !item.carried_from_item_id && !(Number(item.unit_price) > 0)
                           )
 
-                          // Something to order besides the waiting goods.
-                          if (!items.some((item) => !item.carried_from_item_id)) {
-                            alert('This quotation has only goods waiting from a rush shipment. It needs at least one product the customer asked for.')
+                          // Something to quote: the customer's products, or their
+                          // waiting goods alone when the request has none (039).
+                          if (!items.length) {
+                            alert("Nothing to quote: this request has no products, and the customer's waiting goods already go with another order.")
+                            return
+                          }
+
+                          if (request.quotation_request_items.length > 0 && !items.some((item) => !item.carried_from_item_id)) {
+                            alert('This quotation has only goods waiting from a rush shipment, but the customer asked for products too.')
                             return
                           }
 

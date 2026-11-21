@@ -4,7 +4,7 @@ import { faTruckFast, faXmark } from '@fortawesome/free-solid-svg-icons'
 
 import { useToast } from '../context/ToastContext'
 import { formatDateTime } from '../utils/dates'
-import { agreeRushShipment, countOf, loadRushPreview, stillToShip, waitingState } from '../services/rushService'
+import { agreeRushShipment, countOf, deadlineText, loadRushPreview, stillToShip, waitingState } from '../services/rushService'
 
 
 // =============================================================================
@@ -234,9 +234,10 @@ export function RushAgreement({ agreement, waiting = [], forStaff = false }) {
   const next = forStaff ? "the customer's next order" : 'your next order'
   const stateText = (row) => {
     const state = waitingState(row)
+    if (state === 'given') return `DMC's since ${formatDateTime(row.given_at)} (no order within 6 months)`
     if (state === 'left') return `Left with ${row.carried_into}`
     if (state === 'joined') return `Goes with ${row.carried_into}`
-    return `Waits for ${next}`
+    return deadlineText(row) ? `Waits for ${next}, by ${deadlineText(row)}` : `Waits for ${next}`
   }
 
   return (
@@ -292,6 +293,9 @@ export function WaitingGoods({ rows, forStaff = false, customerName = null }) {
   const waiting = toShip.filter((row) => waitingState(row) === 'waiting')
   const joined = toShip.filter((row) => waitingState(row) === 'joined')
   const customers = new Set(toShip.map((row) => row.customer_id).filter(Boolean)).size
+  // The soonest last day for an order to take them (039), if it has started.
+  const soonest = waiting.filter((row) => row.deadline).sort((a, b) => String(a.deadline).localeCompare(String(b.deadline)))[0]
+  const notStarted = waiting.some((row) => !row.deadline)
 
   return (
     <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
@@ -308,6 +312,18 @@ export function WaitingGoods({ rows, forStaff = false, customerName = null }) {
               ? `From rush shipments. ${waiting.length ? `${plural(countOf(waiting).cases, 'case')} wait for the customer's next quotation` : ''}${waiting.length && joined.length ? '; ' : ''}${joined.length ? `${plural(countOf(joined).cases, 'case')} go with orders already placed` : ''}. They're already paid for, and go in the container of the customer's next order.`
               : `From your rush shipment${total.orders.length > 1 ? 's' : ''} (${total.orders.join(', ')}). They're already paid for, and go in the container of your next order${joined.length ? ` (${[...new Set(joined.map((row) => row.carried_into))].join(', ')} already has ${plural(countOf(joined).cases, 'case')} of them)` : ''}.`}
           </p>
+          {waiting.length > 0 && (
+            <p className="mt-1">
+              {forStaff
+                ? soonest
+                  ? `If no order takes them, they become DMC's after their deadline (the soonest: ${deadlineText(soonest)}).`
+                  : 'Their 6 months start once they are all in and the rushed order\'s container has left.'
+                : soonest
+                  ? `Send a quotation request by ${deadlineText(soonest)}, with other products or with only these. That order's container and shipping are yours to pay. After that date, as you agreed, DMC may do what it wants with them.`
+                  : 'Send a quotation request for them, with other products or with only these; that order\'s container and shipping are yours to pay. You have 6 months from when they are all in DMC\'s warehouse and your rushed order\'s container has left.'}
+              {!forStaff && soonest && notStarted ? ' Goods not in yet get their 6 months once they arrive.' : ''}
+            </p>
+          )}
         </div>
 
         <button type="button" onClick={() => setOpen((value) => !value)} className="shrink-0 font-medium underline">
@@ -325,6 +341,7 @@ export function WaitingGoods({ rows, forStaff = false, customerName = null }) {
                 <th className="px-3 py-2">Product</th>
                 <th className="px-3 py-2">Cases</th>
                 <th className="px-3 py-2">Goes with</th>
+                <th className="px-3 py-2">Order by</th>
               </tr>
             </thead>
             <tbody>
@@ -336,6 +353,9 @@ export function WaitingGoods({ rows, forStaff = false, customerName = null }) {
                   <td className="px-3 py-2">{Number(row.cases).toLocaleString()} {row.unit || 'cases'}</td>
                   <td className="px-3 py-2">
                     {waitingState(row) === 'joined' ? row.carried_into : forStaff ? "The customer's next order" : 'Your next order'}
+                  </td>
+                  <td className="px-3 py-2">
+                    {waitingState(row) === 'joined' ? '-' : deadlineText(row) || 'Once all in'}
                   </td>
                 </tr>
               ))}
