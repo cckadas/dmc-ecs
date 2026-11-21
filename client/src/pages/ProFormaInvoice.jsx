@@ -12,6 +12,7 @@ import { localDateExcludingSundays, formatDateString, QUOTATION_VALIDITY_DAYS, f
 import { getQuotationPricing, pricingErrorMessage } from '../services/pricingService'
 import { formatVolume, formatWeight } from '../utils/containers'
 import { previewEstimate } from '../services/predictionService'
+import { creditRoom, formatPeso, getCreditStatus, overLimitBy } from '../services/creditService'
 import { loadCarriedFrom, loadWaitingGoods, waitingState } from '../services/rushService'
 import { RUSH_ITEM_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
 
@@ -44,8 +45,9 @@ export default function ProFormaInvoicePage() {
   // LOAD QUEUES
   // =============================================
   async function loadQueues() {
-    // Which request a new quote replaces (035), asked for until that script is run.
-    const { data, error } = await withNewColumns((withLink) => supabase
+    // Which request a new quote replaces (035) and whether it's on hold for the
+    // customer's credit limit (040), asked for until those scripts are run.
+    const { data, error } = await withNewColumns((withHold) => withNewColumns((withLink) => supabase
       .from('quotation_requests')
       .select(`
         id,
@@ -53,6 +55,7 @@ export default function ProFormaInvoicePage() {
         preferred_ship_date,
         delivery_location_id,
         ${columnsIf(withLink, ['replaces_request_id'])}
+        ${columnsIf(withHold, ['credit_hold_at', 'credit_hold_by_name'])}
         status,
         created_at,
         profiles (
@@ -83,7 +86,7 @@ export default function ProFormaInvoicePage() {
           )
         )
       `)
-      .order('created_at', { ascending: false }), ['replaces_request_id'])
+      .order('created_at', { ascending: false }), ['replaces_request_id']), ['credit_hold_at'])
 
 
     if (error) {
@@ -290,6 +293,27 @@ export default function ProFormaInvoicePage() {
   // =============================================
   // OPEN QUOTATION MODAL
   // =============================================
+  // =============================================
+  // PUT ON HOLD UNTIL THE CUSTOMER PAYS (040)
+  // Its total would take the customer over the credit limit if approved.
+  // =============================================
+  async function holdRequest(request) {
+    const { data, error } = await supabase.rpc('hold_request_for_credit', { p_request_id: request.id })
+
+    if (error) {
+      toast.error(error.code === 'PGRST202' || /hold_request_for_credit/.test(error.message || '')
+        ? 'Putting a request on hold needs db/migrations/040 to be run first.'
+        : error.message)
+      return
+    }
+
+    toast.success(`${request.quotation_reference} is on hold until the customer pays. You'll be told when their balance goes down.${data?.already ? ' (It was already on hold.)' : ''}`)
+    setShowModal(false)
+    setCurrentRequest(null)
+    loadQueues()
+  }
+
+
   async function openInfoModal(request) {
     setCurrentRequest(request)
 
@@ -500,6 +524,9 @@ export default function ProFormaInvoicePage() {
 
                   <td className="px-5 py-3">
                     <StatusBadge status={request.status} />
+                    {request.credit_hold_at && request.status === 'awaiting pricing' && (
+                      <span className="mt-1 block text-xs font-medium text-amber-700">On hold: over the credit limit</span>
+                    )}
                   </td>
 
                   <td className="px-5 py-3">
@@ -542,6 +569,7 @@ export default function ProFormaInvoicePage() {
             setCurrentRequest(null)
           }}
           onSubmit={generateQuotation}
+          onHold={holdRequest}
         />
       )}
 
@@ -904,7 +932,22 @@ function ShipEstimateCheck({ estimate, preferredDate }) {
 }
 
 
-function QuotationModal({ request, creating, onClose, onSubmit }) {
+// onHold(request): puts it on hold until the customer pays (040), when its
+// total would take them over the credit limit if they approved it.
+function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
+  // The customer's unpaid balance and credit limit, for the hold check.
+  const [credit, setCredit] = useState(null)
+
+  useEffect(() => {
+    let active = true
+    if (request.profiles?.id) {
+      getCreditStatus(request.profiles.id)
+        .then((status) => { if (active) setCredit(status) })
+        .catch((error) => console.error('Failed to load the customer\'s credit status:', error))
+    }
+    return () => { active = false }
+  }, [request.profiles?.id])
+
   // Fixed, like the prices: the country's shipping cost, and the cost of the
   // container the order needs: the smallest that holds it, worked out from each
   // product's volume and weight per case. Nobody picks it (DMC, Nov 2026).
@@ -1082,6 +1125,14 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
   const total = subtotal + Number(containerCost || 0) + Number(shipping.cost || 0)
   const downPayment = Math.round(total * 50) / 100
 
+  // Sending these prices would take the customer over the credit limit if they
+  // approved: it can't be sent, only put on hold until they pay (040). Priced
+  // from the current price list each time, so a hold is never out of date.
+  const priced = !loadingPrices && !pricingError && container && containerCost != null && shipping.cost != null
+  const overBy = priced ? overLimitBy(credit, total) : 0
+  const room = creditRoom(credit)
+  const company = request.profiles?.company || 'The customer'
+
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -1113,6 +1164,29 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
             CONTENT
         ================================================= */}
         <div className="flex-1 overflow-y-auto p-6">
+
+          {overBy > 0 && (
+            <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+              <p className="font-semibold">Over the credit limit: these prices can't be sent yet.</p>
+              <p className="mt-1">
+                This quotation ({formatPeso(total)}) would take {company} over their credit limit if they approved it:
+                they owe {formatPeso(credit.outstanding)} of {formatPeso(credit.creditLimit)}, so their room is {formatPeso(room)}.
+                They have to pay first.
+              </p>
+              <p className="mt-1">
+                {request.credit_hold_at
+                  ? `On hold since ${formatDateTime(request.credit_hold_at)}${request.credit_hold_by_name ? ` (${request.credit_hold_by_name})` : ''}. You'll be told when their balance goes down.`
+                  : 'Put it on hold: the customer is told to pay their open orders, without seeing any prices, and you\'re told when their balance goes down.'}
+                {' '}Nothing is fixed while it's on hold: it's priced from the current price list each time it's opened.
+              </p>
+            </div>
+          )}
+
+          {overBy === 0 && priced && request.credit_hold_at && (
+            <div className="mb-4 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800">
+              On hold since {formatDateTime(request.credit_hold_at)}: their balance now leaves room for it ({formatPeso(room)}), at today's prices. It can be sent.
+            </div>
+          )}
 
 
 
@@ -1491,6 +1565,21 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                         Cancel
                       </button>
 
+                      {overBy > 0 ? (
+                        <button
+                          disabled={creating || Boolean(request.credit_hold_at)}
+                          onClick={() => {
+                            const confirmed = window.confirm(
+                              `Put ${request.quotation_reference} on hold until ${company} pays?\n\n` +
+                              'They are told to pay their open orders first, without seeing any prices.'
+                            )
+                            if (confirmed) onHold(request)
+                          }}
+                          className="rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                        >
+                          {request.credit_hold_at ? 'On Hold Until They Pay' : 'Put on Hold Until They Pay'}
+                        </button>
+                      ) : (
                       <button
                         disabled={creating || loadingPrices}
                         onClick={() => {
@@ -1550,6 +1639,7 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                         <FontAwesomeIcon icon={faFileInvoice} />
                         {creating ? ' Generating Quotation...': ' Generate Quotation'}
                       </button>
+                      )}
                     </div>
                   </div>
 

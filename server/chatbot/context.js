@@ -189,12 +189,14 @@ export async function buildCustomerContext(customerId, message) {
         .order('created_at', { ascending: false }), CANCELLATION_COLUMNS), RUSH_ITEM_COLUMNS), ['given_to_dmc_at']),
       'orders'
     ),
+    // Whether DMC holds a request for the credit limit (040): asked again
+    // without it until that's run.
     must(
-      supabaseAdmin
+      withNewColumns((withHold) => supabaseAdmin
         .from('quotation_requests')
-        .select('id, quotation_reference, status, created_at, preferred_ship_date, quotation_request_items ( quantity, products ( product_name, family, pack_size, unit ) )')
+        .select(`id, quotation_reference, status, created_at, preferred_ship_date, ${withHold ? 'credit_hold_at, ' : ''}quotation_request_items ( quantity, products ( product_name, family, pack_size, unit ) )`)
         .eq('customer_id', customerId)
-        .order('created_at', { ascending: false }),
+        .order('created_at', { ascending: false }), ['credit_hold_at']),
       'quotation requests'
     ),
     // Every order's history, for the prediction statistics; only this
@@ -430,6 +432,9 @@ export async function buildCustomerContext(customerId, message) {
     quotationRequests: [...openRequests, ...closedRequests].slice(0, MAX_ORDERS).map((request) => ({
       reference: request.quotation_reference,
       status: label(request.status),
+      // On hold for the credit limit (040): DMC sends prices once the customer
+      // pays enough of their open orders. No prices exist to share.
+      onHoldUntilPaid: Boolean(request.credit_hold_at) && String(request.status).trim().toLowerCase() === 'awaiting pricing',
       requestedOn: formatTimestamp(request.created_at),
       preferredShipDate: formatDateOnly(request.preferred_ship_date),
       items: (request.quotation_request_items || []).slice(0, MAX_ITEMS).map((item) => ({

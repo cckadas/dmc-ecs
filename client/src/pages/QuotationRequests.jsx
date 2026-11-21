@@ -7,7 +7,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlus, faTrash, faFileSignature, faDownload, faXmark, faChevronDown, faLocationDot } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 import { MIN_PREFERRED_SHIP_DAYS, localDateString, formatDateTime } from '../utils/dates'
-import { getCreditStatus, formatPeso } from '../services/creditService'
+import { getCreditStatus, formatPeso, overLimitBy } from '../services/creditService'
 import { getMinimumOrderQuantities } from '../services/pricingService'
 import { groupByFamily, sizeLabel } from '../utils/productGroups'
 import { previewMyEstimate } from '../services/predictionService'
@@ -100,8 +100,9 @@ export default function QuotationRequestsPage() {
   // LOAD REQUESTS
   // =============================================
   async function loadRequests() {
-    // Which request a new quote replaces (035), asked for until that script is run.
-    const { data, error } = await withNewColumns((withLink) => supabase
+    // Which request a new quote replaces (035) and whether DMC holds it for the
+    // credit limit (040), asked for until those scripts are run.
+    const { data, error } = await withNewColumns((withHold) => withNewColumns((withLink) => supabase
       .from('quotation_requests')
       .select(`
         id,
@@ -110,6 +111,7 @@ export default function QuotationRequestsPage() {
         created_at,
         delivery_location_id,
         ${columnsIf(withLink, ['replaces_request_id'])}
+        ${columnsIf(withHold, ['credit_hold_at'])}
         delivery_locations (
           location_name,
           address,
@@ -128,7 +130,7 @@ export default function QuotationRequestsPage() {
         )
       `)
       .eq('customer_id', profile.id)
-      .order('created_at', { ascending: false }), ['replaces_request_id'])
+      .order('created_at', { ascending: false }), ['replaces_request_id']), ['credit_hold_at'])
 
     if (error) {
       toast.error(error.message)
@@ -464,14 +466,14 @@ export default function QuotationRequestsPage() {
       return
     }
 
-    // Approving creates an order, which a customer at their credit limit
-    // can't place. Re-checked here in case they paid or ordered elsewhere.
+    // Approving creates an order, which can't take the unpaid balance over the
+    // credit limit (040: the new order counts too). Re-checked here in case
+    // they paid or ordered elsewhere; the database checks it again.
     const creditStatus = await loadCredit()
+    const approveProblem = approveCreditProblem(creditStatus, quotation)
 
-    if (creditStatus?.blocked) {
-      alert(
-        `Your unpaid balance of ${formatPeso(creditStatus.outstanding)} has reached your credit limit of ${formatPeso(creditStatus.creditLimit)}. Please pay your open orders before approving this quotation.`
-      )
+    if (approveProblem) {
+      alert(approveProblem)
       return
     }
 
@@ -592,6 +594,21 @@ export default function QuotationRequestsPage() {
           </p>
           <p className="mt-1 text-sm text-amber-700">
             You can still pay what you owe and follow your current orders on My Orders. Please contact DMC about new orders.
+          </p>
+        </div>
+      )}
+
+
+      {/* On hold for the credit limit (040): no prices of them shown */}
+      {!stopped && requests.some((request) => request.credit_hold_at && request.status === 'awaiting pricing') && (
+        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <p className="text-sm font-medium text-amber-800">
+            {requests.filter((request) => request.credit_hold_at && request.status === 'awaiting pricing').map((request) => request.quotation_reference).join(', ')} on hold until you pay
+          </p>
+          <p className="mt-1 text-sm text-amber-700">
+            Approving {requests.filter((request) => request.credit_hold_at && request.status === 'awaiting pricing').length === 1 ? 'it' : 'them'} would take your unpaid balance over your credit limit
+            {credit?.creditLimit != null ? ` (you owe ${formatPeso(credit.outstanding)} of ${formatPeso(credit.creditLimit)})` : ''}.
+            Pay your open orders on the Payments page, and DMC sends its prices once there's room.
           </p>
         </div>
       )}
@@ -721,6 +738,9 @@ export default function QuotationRequestsPage() {
 
                   <td className="px-5 py-3">
                     <StatusBadge status={request.status} />
+                    {request.credit_hold_at && request.status === 'awaiting pricing' && (
+                      <span className="mt-1 block max-w-[12rem] text-xs font-medium text-amber-700">On hold: pay your open orders first</span>
+                    )}
                   </td>
 
                   <td className="px-5 py-3">
@@ -803,6 +823,7 @@ export default function QuotationRequestsPage() {
         newQuote={selectedQuotation ? replacementOf(selectedQuotation.quotation_request_id)?.quotation_reference || null : null}
         blocked={Boolean(credit?.blocked) || stopped}
         blockedReason={stopped ? 'DMC has stopped new orders on your account' : undefined}
+        approveProblem={selectedQuotation ? approveCreditProblem(credit, selectedQuotation) : null}
         creating={creatingCO}
         onClose={() => {
           if (creatingCO) { return }
@@ -891,7 +912,9 @@ function QuotationShipEstimate({ quotation }) {
 }
 
 
-function QuotationModal({ quotation, loading, creating, onClose, onApprove, onReject, onRequestAgain, onChangeLocation, newQuote = null, blocked = false, blockedReason = 'Your unpaid balance has reached your credit limit' }) {
+// approveProblem: why approving it would take the unpaid balance over the
+// credit limit (040), or null.
+function QuotationModal({ quotation, loading, creating, onClose, onApprove, onReject, onRequestAgain, onChangeLocation, newQuote = null, blocked = false, blockedReason = 'Your unpaid balance has reached your credit limit', approveProblem = null }) {
   if (loading) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -1273,6 +1296,10 @@ function QuotationModal({ quotation, loading, creating, onClose, onApprove, onRe
               </div>
             </div>
           ) : (
+            <div className="w-full space-y-3">
+            {approveProblem && (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{approveProblem}</p>
+            )}
             <div className="flex w-full items-center justify-between">
               <button
                 type="button"
@@ -1314,12 +1341,14 @@ function QuotationModal({ quotation, loading, creating, onClose, onApprove, onRe
 
                 <button
                   onClick={() => onApprove(quotation.id)}
-                  disabled={creating}
+                  disabled={creating || Boolean(approveProblem)}
+                  title={approveProblem || undefined}
                   className="rounded-lg bg-[#2D5A42] px-5 py-2 text-sm font-medium text-white hover:bg-[#234633] disabled:opacity-50"
                 >
                   {creating ? 'Creating Your Order...': 'Approve Quotation'}
                 </button>
               </div>
+            </div>
             </div>
           )}
         </div>
@@ -1336,6 +1365,21 @@ function QuotationModal({ quotation, loading, creating, onClose, onApprove, onRe
 // =============================================
 // initial: a new quote for an expired request (035): its delivery location
 // and products, filled in, and which request it replaces.
+// Approving this quotation would take the unpaid balance over the credit limit
+// (040: the new order counts too): why, and how much to pay first; or null.
+function approveCreditProblem(status, quotation) {
+  const over = overLimitBy(status, quotation?.total_amount)
+  if (!over) return null
+
+  const after = Number(status.outstanding || 0) + Number(quotation.total_amount || 0)
+  const until = quotation.expiry_date
+    ? ` It can be approved until ${new Date(`${quotation.expiry_date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}.`
+    : ''
+
+  return `Approving this would bring your unpaid balance to ${formatPeso(after)}, over your credit limit of ${formatPeso(status.creditLimit)}. Pay at least ${formatPeso(over)} of your open orders first, then approve it.${until}`
+}
+
+
 // waiting: the customer's goods waiting from rush shipments (034), not taken by
 // an order yet. They go in this order's container (counted in its volume) at
 // no product cost, so the request may have no products of its own (039).

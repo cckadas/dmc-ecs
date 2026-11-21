@@ -89,6 +89,10 @@ export const PORTAL_FAQ = [
     answer: 'DMC can stop new orders on a customer\'s account. The customer can still sign in, pay what they owe, handle labels and follow their orders until they\'re done, but can\'t send quotation requests, approve quotations, ask for a new quote or ask for a rush shipment. Orders confirmed but not paid yet were cancelled, and quotations waiting for an answer were withdrawn. When newOrders in the customer\'s records says stopped, never suggest sending a request: they contact DMC about new orders.',
   },
   {
+    topic: 'Request on hold for the credit limit',
+    answer: 'A customer\'s unpaid balance (what they still owe on their orders) can\'t go over DMC\'s credit limit. If DMC\'s prices for a request would take it over the limit once approved, DMC puts the request on hold instead of sending the prices (onHoldUntilPaid in the records): the customer pays their open orders on the Payments page, and DMC sends the prices, at that day\'s prices, once there is room. There are no prices to share for a request on hold. Approving any quotation is also refused if it would take the balance over the limit, with how much to pay first.',
+  },
+  {
     topic: 'Rush shipment',
     answer: 'While an order waits for its goods (Procurement) and some of them are already in DMC\'s warehouse, the customer can ask for a rush shipment on My Orders: what is in ships now, and the rest goes in the container of their next order with DMC. That next order can have other products or only the waiting goods (a quotation request with no products of its own); either way its container and shipping are the customer\'s to pay, and the waiting goods are not charged again. The customer has 6 months from when the waiting goods are all in DMC\'s warehouse and the first container has left, and is reminded a month and a week before; after that, as agreed, DMC may do what it wants with them. The order\'s price and balance stay the same. The customer sees exactly what ships and what waits before agreeing, and once agreed it cannot be undone. If they don\'t agree, the order keeps waiting for everything.',
   },

@@ -58,6 +58,20 @@ export async function saveCreditLimit(value, userId) {
 }
 
 
+// How much more the customer may owe before reaching the limit (Infinity when
+// no limit is set).
+export const creditRoom = (status) => (status?.creditLimit == null
+  ? Infinity
+  : Math.max(status.creditLimit - Number(status.outstanding || 0), 0))
+
+// An order of this total would take the customer over the limit: by how much
+// (0 when it fits). Approving it is refused, and sending its quotation is held
+// (db/migrations/040).
+export const overLimitBy = (status, total) => (status?.creditLimit == null
+  ? 0
+  : Math.max(Number(status.outstanding || 0) + Number(total || 0) - status.creditLimit, 0))
+
+
 export function formatPeso(value) {
   return `₱${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
