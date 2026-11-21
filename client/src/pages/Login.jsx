@@ -50,7 +50,11 @@ export default function LoginPage() {
 
     if (error) {
       setLoading(false)
-      toast.error(error.message)
+      // A deactivated account's sign-in is blocked (staff: Accounts page;
+      // customers: db/migrations/038).
+      toast.error(error.code === 'user_banned' || /banned/i.test(error.message || '')
+        ? 'This account has been deactivated. Please contact DMC.'
+        : error.message)
       return
     }
 

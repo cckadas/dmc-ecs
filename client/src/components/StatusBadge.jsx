@@ -74,7 +74,8 @@ export default function StatusBadge({ status }) {
       icon: faBan,
     },
 
-    // A quotation whose request's delivery location changed: priced again (037).
+    // A quotation whose request's delivery location changed: priced again (037);
+    // or one still waiting for an answer when DMC stopped the customer's new orders (038).
     'withdrawn': {
       style: 'bg-gray-50 text-gray-600 border-gray-200',
       icon: faBan,

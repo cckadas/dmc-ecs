@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { supabase } from '../supabase'
 import { useToast } from '../context/ToastContext'
+import { newOrdersStopped } from '../utils/customerAccount'
 import { faCartFlatbed, faCreditCard, faCartShopping, faWarehouse, faHouse, faClipboardList, faTruck, faBoxesStacked, faFileLines, faShop, faChartLine, faDolly, faTags, faUserTag, faBagShopping, faWallet, faFileSignature } from '@fortawesome/free-solid-svg-icons'
 
 import CustomerOrderCard from '../components/CustomerOrderCard'
@@ -532,6 +533,15 @@ export default function DashboardPage() {
         </div>
       </div>
 
+
+
+      {/* DMC stopped this customer's new orders (db/migrations/038) */}
+      {isCustomer && newOrdersStopped(profile) && (
+        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <p className="text-sm font-medium text-amber-800">DMC has stopped new orders on your account.</p>
+          <p className="mt-1 text-sm text-amber-700">You can still pay what you owe and follow your current orders until they're done. Please contact DMC about new orders.</p>
+        </div>
+      )}
 
 
       {/* =================================================

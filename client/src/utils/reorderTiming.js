@@ -221,9 +221,12 @@ export function productTiming({ orders = [], items = [], now = Date.now() }) {
 //   orders:    [{ id, customer_id, status, created_at, order_number }]
 //   customers: { customer_id: { name, company } }
 //   items:     [{ customer_order_id, quantity }]  for each customer's usual order size
+//   notOrdering: ids of customers DMC stopped taking new orders from (038):
+//              their gaps still count toward everyone's pace, but they aren't
+//              listed as due to order (counted in `stopped`)
 // state: 'overdue' (past its likely range), 'due' (inside it), 'soon' (expected
 // within REORDER_SOON_DAYS), 'later'. Soonest expected first.
-export function reorderTiming({ orders = [], customers = {}, items = null, now = Date.now() }) {
+export function reorderTiming({ orders = [], customers = {}, items = null, notOrdering = new Set(), now = Date.now() }) {
   const today = manilaDate(now)
   const quietSince = addDays(today, -QUIET_DAYS)
   const daysByCustomer = orderingDays(orders)
@@ -237,8 +240,14 @@ export function reorderTiming({ orders = [], customers = {}, items = null, now =
 
   const rows = []
   let quiet = 0
+  let stopped = 0
 
   for (const [customerId, days] of daysByCustomer) {
+    if (notOrdering.has(customerId)) {
+      stopped++
+      continue
+    }
+
     const last = days.at(-1)
     if (last.day < quietSince) {
       quiet++
@@ -286,6 +295,7 @@ export function reorderTiming({ orders = [], customers = {}, items = null, now =
     needed: MIN_RECORDS,
     customers: rows,
     quiet,
+    stopped,
     everyone: everyone ? { usual: everyone.typical, quick: everyone.quick, slow: everyone.slow } : null,
     check: checkReorders(gapsByCustomer),
   }

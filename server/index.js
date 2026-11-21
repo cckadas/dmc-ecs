@@ -5,6 +5,7 @@ import cors from 'cors'
 
 import customersRouter from './routes/users.js'
 import staffsRouter from './routes/staffs.js'
+import customerAccountsRouter from './routes/customerAccounts.js'
 import purchaseOrderEmailRouter from './routes/emails.js'
 import paymentProofRouter from './routes/payment.js'
 import chatRouter from './routes/chat.js'
@@ -41,6 +42,8 @@ app.use(express.json())
 // =============================================
 app.use('/api/users', requireRole('admin', 'sales'), customersRouter)
 app.use('/api/staffs', requireRole('admin'), staffsRouter)
+// Stopping a customer's new orders, deactivating and deleting them (db/migrations/038).
+app.use('/api/customer-accounts', requireRole('admin'), customerAccountsRouter)
 app.use('/api/send-email', requireRole('admin', 'procurement'), purchaseOrderEmailRouter)
 app.use('/api/send-payment-proof', requireRole('admin', 'procurement'), paymentProofRouter)
 app.use('/api/customer/chat', requireRole('customer'), chatRouter)

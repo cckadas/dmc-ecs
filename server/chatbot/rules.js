@@ -85,6 +85,10 @@ export const PORTAL_FAQ = [
     answer: 'A saved delivery location that a request or order already uses can\'t be edited, so those keep the address they were made with; the customer adds the new address as a new location in Delivery Locations. A quotation request can be moved to another saved location from Quotation Requests (the location button) until it becomes an order: before DMC prices it, it is simply priced for the new location; after DMC priced it, that quotation is withdrawn and DMC prices the request again, and the price can change, since the markup and shipping cost go by country. Changing where a confirmed order goes isn\'t possible in the system yet: the customer contacts DMC.',
   },
   {
+    topic: 'New orders stopped on an account',
+    answer: 'DMC can stop new orders on a customer\'s account. The customer can still sign in, pay what they owe, handle labels and follow their orders until they\'re done, but can\'t send quotation requests, approve quotations, ask for a new quote or ask for a rush shipment. Orders confirmed but not paid yet were cancelled, and quotations waiting for an answer were withdrawn. When newOrders in the customer\'s records says stopped, never suggest sending a request: they contact DMC about new orders.',
+  },
+  {
     topic: 'Rush shipment',
     answer: 'While an order waits for its goods (Procurement) and some of them are already in DMC\'s warehouse, the customer can ask for a rush shipment on My Orders: what is in ships now, and the rest goes in the container of their next order with DMC, whenever they place it. The order\'s price and balance stay the same, and the waiting goods are not charged again. The customer sees exactly what ships and what waits before agreeing, and once agreed it cannot be undone. If they don\'t agree, the order keeps waiting for everything.',
   },

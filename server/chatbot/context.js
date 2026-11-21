@@ -166,7 +166,12 @@ export async function buildCustomerContext(customerId, message) {
   const { predictions, progress } = await loadSharedModules()
 
   const [profiles, orders, requests, history, settings] = await Promise.all([
-    must(supabaseAdmin.from('profiles').select('name, company').eq('id', customerId).limit(1), 'profile'),
+    // Whether DMC stopped their new orders (038): asked again without it until that's run.
+    must(withNewColumns((withAccount) => supabaseAdmin
+      .from('profiles')
+      .select(`name, company${withAccount ? ', new_orders_stopped_at' : ''}`)
+      .eq('id', customerId)
+      .limit(1), ['new_orders_stopped_at']), 'profile'),
     // When and why an order was cancelled (028), and what a rush shipment
     // split (034): asked again without them until those scripts are run.
     must(
@@ -405,6 +410,12 @@ export async function buildCustomerContext(customerId, message) {
   return {
     today: formatDateOnly(today),
     customer: { name: profiles[0]?.name || null, company: profiles[0]?.company || null },
+    // 038: DMC stopped this customer's new orders. They can pay and follow
+    // their orders, but can't send requests, approve quotations, ask for a new
+    // quote or a rush shipment.
+    newOrders: profiles[0]?.new_orders_stopped_at
+      ? 'stopped by DMC: the customer can pay and follow their current orders, but cannot send quotation requests, approve quotations, ask for a new quote or a rush shipment; they contact DMC about new orders'
+      : 'open',
     totals: {
       orders: orders.length,
       ordersShown: orderContext.length,

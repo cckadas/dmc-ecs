@@ -20,6 +20,7 @@ import {
   supplierOnTime,
 } from '../utils/analytics'
 import { isSimulated } from '../utils/simulated'
+import { ACCOUNT_COLUMNS, newOrdersStopped } from '../utils/customerAccount'
 import { demandForecast, withProductTiming } from '../utils/demandForecast'
 import { productTiming, reorderTiming } from '../utils/reorderTiming'
 import { labelingPieceTimes, labelingRecords } from '../utils/labelingSteps'
@@ -143,11 +144,19 @@ export async function loadAnalytics(parts = ALL_PARTS) {
     if (want('accuracy')) accuracy.labeling = labelingCheck({ history, labels, kinds: labeling.kinds })
   }
 
-  // The customers' names, for the next-order list and each product's orders.
+  // The customers' names, for the next-order list and each product's orders,
+  // and whether DMC stopped their new orders (038): their past orders still
+  // teach the predictions, but nobody waits for their next one.
+  const customerIds = [...new Set(allOrders.map((order) => order.customer_id).filter(Boolean))]
+  const customerRows = ['reorders', 'demand', 'ahead'].some(want)
+    ? await rowsByIds('profiles', `id, name, company, is_active, ${ACCOUNT_COLUMNS.join(', ')}`, 'id', customerIds)
+      .catch(() => rowsByIds('profiles', 'id, name, company', 'id', customerIds))
+      .catch(() => [])
+    : []
   const customerNames = ['reorders', 'demand'].some(want)
-    ? Object.fromEntries((await rowsByIds('profiles', 'id, name, company', 'id', [...new Set(allOrders.map((order) => order.customer_id).filter(Boolean))]).catch(() => []))
-      .map((customer) => [customer.id, customer]))
+    ? Object.fromEntries(customerRows.map((customer) => [customer.id, customer]))
     : {}
+  const notOrdering = new Set(customerRows.filter(newOrdersStopped).map((customer) => customer.id))
 
   // The demand forecast and sales by product: every order's lines and each
   // product's category. And each product's orders and how often it's ordered.
@@ -171,7 +180,7 @@ export async function loadAnalytics(parts = ALL_PARTS) {
 
     if (want('demand') && demand.enough) {
       // Who orders each product, with when each of them is likely to order next.
-      const nextOrders = new Map(reorderTiming({ orders: allOrders, items }).customers.map((customer) => [customer.id, customer]))
+      const nextOrders = new Map(reorderTiming({ orders: allOrders, items, notOrdering }).customers.map((customer) => [customer.id, customer]))
       const nameOf = (id) => customerNames[id]?.company || customerNames[id]?.name || null
       const timing = productTiming({ orders: allOrders, items })
       for (const entry of timing.products.values()) {
@@ -188,7 +197,7 @@ export async function loadAnalytics(parts = ALL_PARTS) {
   // When each customer will likely order next, from the days between its orders.
   let reorders = null
   if (want('reorders') || want('ahead')) {
-    reorders = reorderTiming({ orders: allOrders, customers: want('reorders') ? customerNames : {}, items: orderItems })
+    reorders = reorderTiming({ orders: allOrders, customers: want('reorders') ? customerNames : {}, items: orderItems, notOrdering })
   }
 
   // How long each piece of labeling takes, from every finished order's labels

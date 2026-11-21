@@ -13,6 +13,7 @@ import { groupByFamily, sizeLabel } from '../utils/productGroups'
 import { previewMyEstimate } from '../services/predictionService'
 import { loadCarriedFrom } from '../services/rushService'
 import { RUSH_ITEM_COLUMNS, columnsIf, isMissingColumn, withNewColumns } from '../utils/newColumns'
+import { ACCOUNT_COLUMNS, newOrdersStopped } from '../utils/customerAccount'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
@@ -45,6 +46,22 @@ export default function QuotationRequestsPage() {
   // request's changes so far.
   const [movingRequest, setMovingRequest] = useState(null)
   const [locationChanges, setLocationChanges] = useState({})
+  // DMC stopped this customer's new orders (038): no new requests, approvals
+  // or new quotes. Read again on load: admin may have done it since sign-in.
+  const [stopped, setStopped] = useState(() => newOrdersStopped(profile))
+
+
+  // =============================================
+  // WHETHER NEW ORDERS ARE STOPPED (db/migrations/038)
+  // =============================================
+  async function loadAccount() {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select(`is_active, ${ACCOUNT_COLUMNS.join(', ')}`)
+      .eq('id', profile.id)
+      .maybeSingle()
+    if (!error && data) setStopped(newOrdersStopped(data))
+  }
 
 
   // =============================================
@@ -496,6 +513,7 @@ export default function QuotationRequestsPage() {
       loadDeliveryLocations()
       loadProducts()
       loadCredit()
+      loadAccount()
     }
   }, [profile])
 
@@ -540,8 +558,8 @@ export default function QuotationRequestsPage() {
 
         <button
           onClick={() => setShowModal(true)}
-          disabled={credit?.blocked}
-          title={credit?.blocked ? 'Your unpaid balance has reached your credit limit' : undefined}
+          disabled={credit?.blocked || stopped}
+          title={stopped ? 'DMC has stopped new orders on your account' : credit?.blocked ? 'Your unpaid balance has reached your credit limit' : undefined}
           className="flex items-center gap-2 rounded-lg bg-[#2D5A42] px-4 py-2 text-sm font-medium text-white hover:bg-[#234633] disabled:cursor-not-allowed disabled:opacity-50"
         >
           <FontAwesomeIcon icon={faPlus}/>
@@ -550,8 +568,21 @@ export default function QuotationRequestsPage() {
       </div>
 
 
+      {/* New orders stopped by DMC (038) */}
+      {stopped && (
+        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <p className="text-sm font-medium text-amber-800">
+            DMC has stopped new orders on your account.
+          </p>
+          <p className="mt-1 text-sm text-amber-700">
+            You can still pay what you owe and follow your current orders on My Orders. Please contact DMC about new orders.
+          </p>
+        </div>
+      )}
+
+
       {/* Credit limit */}
-      {credit?.blocked && (
+      {credit?.blocked && !stopped && (
         <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4">
           <p className="text-sm font-medium text-red-800">
             Your unpaid balance of {formatPeso(credit.outstanding)} has reached your credit limit of {formatPeso(credit.creditLimit)}.
@@ -753,7 +784,8 @@ export default function QuotationRequestsPage() {
           setMovingRequest(request)
         }}
         newQuote={selectedQuotation ? replacementOf(selectedQuotation.quotation_request_id)?.quotation_reference || null : null}
-        blocked={Boolean(credit?.blocked)}
+        blocked={Boolean(credit?.blocked) || stopped}
+        blockedReason={stopped ? 'DMC has stopped new orders on your account' : undefined}
         creating={creatingCO}
         onClose={() => {
           if (creatingCO) { return }
@@ -842,7 +874,7 @@ function QuotationShipEstimate({ quotation }) {
 }
 
 
-function QuotationModal({ quotation, loading, creating, onClose, onApprove, onReject, onRequestAgain, onChangeLocation, newQuote = null, blocked = false }) {
+function QuotationModal({ quotation, loading, creating, onClose, onApprove, onReject, onRequestAgain, onChangeLocation, newQuote = null, blocked = false, blockedReason = 'Your unpaid balance has reached your credit limit' }) {
   if (loading) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -1207,7 +1239,7 @@ function QuotationModal({ quotation, loading, creating, onClose, onApprove, onRe
                     type="button"
                     onClick={() => onRequestAgain(quotation)}
                     disabled={creating || blocked}
-                    title={blocked ? 'Your unpaid balance has reached your credit limit' : undefined}
+                    title={blocked ? blockedReason : undefined}
                     className="rounded-lg bg-[#2D5A42] px-5 py-2 text-sm font-medium text-white hover:bg-[#234633] disabled:opacity-50"
                   >
                     Request a new quote
