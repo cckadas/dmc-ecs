@@ -15,6 +15,7 @@ import ShipDateSummary from '../components/ShipDateSummary'
 import LabelDesignsNote from '../components/LabelDesignsNote'
 import DownPaymentDeadline from '../components/DownPaymentDeadline'
 import { CANCELLATION_COLUMNS, RUSH_ITEM_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
+import { containerText, containerCount } from '../utils/containers'
 import { RushAgreement, RushShipmentModal, WaitingGoods } from '../components/RushShipment'
 import { loadMyRushOptions, loadRushAgreements, loadWaitingGoods, stillToShip } from '../services/rushService'
 import { lineNote, orderNumberByItem } from '../utils/rushLines'
@@ -60,7 +61,7 @@ export default function MyOrdersPage() {
 
     // When and why an order was cancelled (028), and what a rush shipment
     // split (034): asked again without them until those scripts are run.
-    const { data, error } = await withNewColumns((withRush) => withNewColumns((withCancellation) => supabase
+    const { data, error } = await withNewColumns((withPlan) => withNewColumns((withRush) => withNewColumns((withCancellation) => supabase
       .from('customer_orders')
       .select(`
         id,
@@ -68,6 +69,7 @@ export default function MyOrdersPage() {
         quotation_number,
         subtotal,
         container_size,
+        ${columnsIf(withPlan, ['container_plan'])}
         container_cost,
         shipping_cost,
         estimated_ship_date,
@@ -107,7 +109,7 @@ export default function MyOrdersPage() {
       .eq('customer_id', profile.id)
       .order('created_at', {
         ascending: false,
-      }), CANCELLATION_COLUMNS), RUSH_ITEM_COLUMNS)
+      }), CANCELLATION_COLUMNS), RUSH_ITEM_COLUMNS), ['container_plan'])
 
     if (error) {
       toast.error('Failed to load your orders.')
@@ -568,7 +570,7 @@ function MyOrderModal({ order, estimate, rushOption = null, agreement = null, wa
                 {order.container_cost != null && (
                   <div className="mb-3 flex justify-between text-sm">
                     <span className="font-semibold text-gray-700">
-                      Container ({order.container_size})
+                      Container{containerCount(order) > 1 ? 's' : ''} ({containerText(order)})
                     </span>
 
                     <span className="text-lg font-bold text-gray-800">
@@ -682,7 +684,7 @@ const myOrderColumns = (estimates) => [
   { header: 'Requested ship date', value: (order) => day(order.requested_ship_date) },
   { header: 'Estimated ship date', value: (order) => (estimates[order.id]?.shipped ? '' : day(estimates[order.id]?.estimatedShipDate)) },
   { header: 'Shipped', value: (order) => day(estimates[order.id]?.shippedOn) },
-  { header: 'Container', value: (order) => order.container_size },
+  { header: 'Container', value: (order) => containerText(order) },
   { header: 'Total (PHP)', value: (order) => money(order.total_amount) },
   { header: 'Down payment (PHP)', value: (order) => money(order.down_payment_amount) },
   { header: 'Paid (PHP)', value: (order) => money(order.settled_amount) },

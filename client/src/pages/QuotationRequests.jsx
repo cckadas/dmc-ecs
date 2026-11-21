@@ -13,7 +13,7 @@ import { groupByFamily, sizeLabel } from '../utils/productGroups'
 import { previewMyEstimate } from '../services/predictionService'
 import { approveByOf, deadlineText, loadCarriedFrom, loadWaitingGoods, waitingState } from '../services/rushService'
 import { formatDay, manilaToday } from '../utils/paymentDeadline'
-import { formatVolume, formatWeight } from '../utils/containers'
+import { containerCount, containerText, formatVolume, formatWeight } from '../utils/containers'
 import { RUSH_ITEM_COLUMNS, columnsIf, isMissingColumn, withNewColumns } from '../utils/newColumns'
 import { ACCOUNT_COLUMNS, newOrdersStopped } from '../utils/customerAccount'
 
@@ -352,7 +352,7 @@ export default function QuotationRequestsPage() {
     setLoadingQuotation(true)
 
     // Lines for goods waiting from a rush shipment (034) are asked for until then.
-    const { data, error } = await withNewColumns((withRush) => supabase
+    const { data, error } = await withNewColumns((withPlan) => withNewColumns((withRush) => supabase
       .from('quotations')
       .select(`
         id,
@@ -360,6 +360,7 @@ export default function QuotationRequestsPage() {
         quotation_number,
         subtotal,
         container_size,
+        ${columnsIf(withPlan, ['container_plan'])}
         container_cost,
         shipping_cost,
         total_amount,
@@ -398,7 +399,7 @@ export default function QuotationRequestsPage() {
       // location changed (037).
       .order('created_at', { ascending: false })
       .limit(1)
-      .single(), RUSH_ITEM_COLUMNS)
+      .single(), RUSH_ITEM_COLUMNS), ['container_plan'])
 
     if (error) {
       setLoadingQuotation(false)
@@ -1178,7 +1179,7 @@ function QuotationModal({ quotation, loading, creating, onClose, onApprove, onRe
                 {quotation.container_cost != null && (
                   <div className="mb-3 flex justify-between text-sm">
                     <span className="font-semibold text-gray-700">
-                      Container ({quotation.container_size})
+                      Container{containerCount(quotation) > 1 ? 's' : ''} ({containerText(quotation)})
                     </span>
 
                     <span className="text-lg font-bold text-gray-800">

@@ -10,12 +10,12 @@ import { useToast } from "../context/ToastContext"
 import { generatePFI } from '../services/pfiService'
 import { localDateExcludingSundays, formatDateString, QUOTATION_VALIDITY_DAYS, formatDateTime } from '../utils/dates'
 import { getQuotationPricing, pricingErrorMessage } from '../services/pricingService'
-import { formatVolume, formatWeight } from '../utils/containers'
+import { containerCount, containerText, formatVolume, formatWeight } from '../utils/containers'
 import { previewEstimate } from '../services/predictionService'
 import { creditRoom, formatPeso, getCreditStatus, overLimitBy } from '../services/creditService'
 import { loadCarriedFrom, loadWaitingGoods, waitingState } from '../services/rushService'
 import { formatDay } from '../utils/paymentDeadline'
-import { RUSH_ITEM_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
+import { RUSH_ITEM_COLUMNS, columnsIf, isMissingColumn, withNewColumns } from '../utils/newColumns'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
@@ -132,21 +132,27 @@ export default function ProFormaInvoicePage() {
 
       // Create quotation. The database gives it its number (QT-2026-00001), its
       // fixed expiry date, and sets the container and shipping costs itself.
-      const { data: quotation, error } = await supabase
-        .from('quotations')
-        .insert({
-          quotation_request_id: currentRequest.id,
-          subtotal: data.subtotal,
-          container_size: data.containerSize,
-          container_cost: data.containerCost,
-          shipping_cost: data.shippingCost,
-          total_amount: data.total,
-          down_payment_amount: data.downPayment,
-          expiry_date: data.expiryDate,
-          status: 'pending approval',
-        })
-        .select()
-        .single()
+      const row = {
+        quotation_request_id: currentRequest.id,
+        subtotal: data.subtotal,
+        container_size: data.containerSize,
+        container_cost: data.containerCost,
+        shipping_cost: data.shippingCost,
+        total_amount: data.total,
+        down_payment_amount: data.downPayment,
+        expiry_date: data.expiryDate,
+        status: 'pending approval',
+      }
+      // Its containers (044). One container can still be saved before 044 is run.
+      const insertQuotation = (values) => supabase.from('quotations').insert(values).select().single()
+      let { data: quotation, error } = await insertQuotation({ ...row, container_plan: data.containerPlan })
+      if (error && isMissingColumn(error, ['container_plan'])) {
+        if ((data.containerPlan || []).reduce((total, entry) => total + entry.count, 0) > 1) {
+          toast.error('An order that needs more than one container can be quoted once db/migrations/044 is run.')
+          return
+        }
+        ;({ data: quotation, error } = await insertQuotation(row))
+      }
 
       if (error) {
         console.error(error)
@@ -325,7 +331,7 @@ export default function ProFormaInvoicePage() {
 
     // Every other status has a quotation on record, kept even after it's
     // answered. Its lines for waiting goods (034) are asked for until then.
-    const { data, error } = await withNewColumns((withRush) => supabase
+    const { data, error } = await withNewColumns((withPlan) => withNewColumns((withRush) => supabase
       .from('quotations')
       .select(`
         id,
@@ -333,6 +339,7 @@ export default function ProFormaInvoicePage() {
         quotation_number,
         subtotal,
         container_size,
+        ${columnsIf(withPlan, ['container_plan'])}
         container_cost,
         shipping_cost,
         total_amount,
@@ -360,7 +367,7 @@ export default function ProFormaInvoicePage() {
       // changed the delivery location (037).
       .order('created_at', { ascending: false })
       .limit(1)
-      .single(), RUSH_ITEM_COLUMNS)
+      .single(), RUSH_ITEM_COLUMNS), ['container_plan'])
 
     if (error) {
       toast.error('Failed to load quotation.')
@@ -802,7 +809,7 @@ function QuotationViewModal({ quotation, onClose }) {
                 {quotation.container_cost != null && (
                   <div className="mb-3 flex justify-between text-sm">
                     <span className="font-semibold text-gray-700">
-                      Container ({quotation.container_size})
+                      Container{containerCount(quotation) > 1 ? 's' : ''} ({containerText(quotation)})
                     </span>
 
                     <span className="text-lg font-bold text-gray-800">
@@ -1053,7 +1060,7 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
 
         setShipping(shippingPrice)
         setContainers(containerPlan)
-        setContainerCode(containerPlan.smallest?.code || '')
+        setContainerCode(containerPlan.plan?.[0]?.code || '')
 
         setItems((current) => [
           ...current
@@ -1109,8 +1116,19 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
     0
   )
 
-  const container = containers?.options.find((option) => option.code === containerCode) || null
-  const containerCost = container?.cost == null ? null : Number(container.cost)
+  // The containers it goes in (044): one when it fits, else full 40-ft high
+  // cubes and the smallest size for the rest. `container` is the biggest one.
+  const plan = containers?.plan || null
+  const container = plan?.[0] || null
+  const containerCount = containers?.count || 0
+  const containerCost = plan && plan.every((entry) => entry.cost != null)
+    ? plan.reduce((total, entry) => total + Number(entry.cost) * entry.count, 0)
+    : null
+  // Every container pays the destination's shipping (DMC's rule).
+  const shippingCost = shipping.cost == null ? null : Number(shipping.cost) * Math.max(containerCount, 1)
+  const planVolume = plan ? plan.reduce((total, entry) => total + entry.usableVolume * entry.count, 0) : 0
+  const planWeight = plan ? plan.reduce((total, entry) => total + entry.maxWeight * entry.count, 0) : 0
+  const noCost = plan?.find((entry) => entry.cost == null) || null
   const firstSize = containers?.options[0] || null
   const largestSize = containers?.options.at(-1) || null
 
@@ -1123,11 +1141,11 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
     containerProblem = `Too big for the largest container (${largestSize.name}: ${formatVolume(largestSize.usableVolume)}, ${formatWeight(largestSize.maxWeight)}) — ask the customer to reduce the quantity`
   } else if (containers && containers.options.length === 0) {
     containerProblem = 'No container sizes are set up — admin or management must add them in Markups & Credit'
-  } else if (container && containerCost == null) {
-    containerProblem = `No cost for the ${container.name} container yet — admin or management must set it in Markups & Credit`
+  } else if (noCost) {
+    containerProblem = `No cost for the ${noCost.name} container yet — admin or management must set it in Markups & Credit`
   }
 
-  const total = subtotal + Number(containerCost || 0) + Number(shipping.cost || 0)
+  const total = subtotal + Number(containerCost || 0) + Number(shippingCost || 0)
   const downPayment = Math.round(total * 50) / 100
 
   // Sending these prices would take the customer over the credit limit if they
@@ -1421,9 +1439,9 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
 
                         {loadingPrices ? (
                           <span className="font-medium text-gray-800">Loading...</span>
-                        ) : containers?.smallest ? (
-                          <span className="font-medium text-gray-800" title="The smallest container that holds the order, from each product's volume and weight per case">
-                            {containers.smallest.name}
+                        ) : plan ? (
+                          <span className="text-right font-medium text-gray-800" title="Chosen by the system from each product's volume and weight per case">
+                            {plan.map((entry) => (plan.length > 1 || entry.count > 1 ? `${entry.count} × ${entry.name}` : entry.name)).join(' + ')}
                           </span>
                         ) : (
                           <span className="font-medium text-gray-800">-</span>
@@ -1433,12 +1451,18 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
                       {containers && containers.load.unmeasured.length === 0 && (
                         <p className="mt-1 text-right text-xs text-gray-500">
                           Load: {formatVolume(containers.load.volume)}
-                          {container ? ` of ${formatVolume(container.usableVolume)}` : ''}, {formatWeight(containers.load.weight)}
-                          {container ? ` of ${formatWeight(container.maxWeight)}` : ''}
+                          {plan ? ` of ${formatVolume(planVolume)}` : ''}, {formatWeight(containers.load.weight)}
+                          {plan ? ` of ${formatWeight(planWeight)}` : ''}
                         </p>
                       )}
 
-                      {container && firstSize && containers.smallest.code !== firstSize.code && (
+                      {plan && containers.multiple && (
+                        <p className="mt-1 text-right text-xs font-medium text-amber-700">
+                          Too big for one {largestSize.name}: it takes {containerCount} containers, and each pays its own cost and shipping.
+                        </p>
+                      )}
+
+                      {plan && !containers.multiple && firstSize && container.code !== firstSize.code && (
                         <p className="mt-1 text-right text-xs font-medium text-amber-700">
                           Too big for a {firstSize.name}, so it goes in a {container.name}.
                         </p>
@@ -1464,9 +1488,11 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
                         </span>
                       </div>
 
-                      {container && containerCost != null && (
+                      {plan && containerCost != null && (
                         <p className="mt-1 text-right text-xs text-gray-500">
-                          Fixed cost of a {container.name}
+                          {containers.multiple
+                            ? `Fixed costs: ${plan.map((entry) => `₱${Number(entry.cost).toLocaleString()}${entry.count > 1 ? ` × ${entry.count}` : ''}`).join(' + ')}`
+                            : `Fixed cost of a ${container.name}`}
                         </p>
                       )}
                     </div>
@@ -1482,11 +1508,17 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
                         <span className="font-medium text-gray-800">
                           {loadingPrices
                             ? 'Loading...'
-                            : shipping.cost != null
-                              ? `₱${shipping.cost.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                            : shippingCost != null
+                              ? `₱${shippingCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
                               : '-'}
                         </span>
                       </div>
+
+                      {shipping.cost != null && containerCount > 1 && (
+                        <p className="mt-1 text-right text-xs text-gray-500">
+                          ₱{Number(shipping.cost).toLocaleString()} × {containerCount} containers
+                        </p>
+                      )}
 
                       {shipping.source && (
                         <p className={`mt-1 text-right text-xs ${shipping.cost != null ? 'text-gray-500' : 'font-medium text-red-700'}`}>
@@ -1541,7 +1573,7 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
                       </span>
 
                       <span className="font-semibold text-gray-800">
-                        ₱{Number(shipping.cost || 0).toLocaleString()}
+                        ₱{Number(shippingCost || 0).toLocaleString()}
                       </span>
                     </div>
 
@@ -1636,8 +1668,9 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
                           onSubmit({
                             items,
                             containerSize: container.code,
+                            containerPlan: plan.map((entry) => ({ code: entry.code, count: entry.count })),
                             containerCost,
-                            shippingCost: shipping.cost,
+                            shippingCost,
                             expiryDate,
                             subtotal,
                             total,

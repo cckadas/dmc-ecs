@@ -15,6 +15,7 @@ import ShipDateSummary from '../components/ShipDateSummary'
 import TableScroll from '../components/TableScroll'
 import DownPaymentDeadline from '../components/DownPaymentDeadline'
 import { CANCELLATION_COLUMNS, RUSH_ITEM_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
+import { containerText, containerCount } from '../utils/containers'
 import { RushAgreement, WaitingGoods } from '../components/RushShipment'
 import { loadAllWaitingGoods, loadRushAgreements, stillToShip } from '../services/rushService'
 import { lineNote, orderNumberByItem } from '../utils/rushLines'
@@ -78,7 +79,7 @@ export default function CustomerOrdersPage() {
 
     // When and why an order was cancelled (028), and what a rush shipment
     // split (034): asked again without them until those scripts are run.
-    const { data, error } = await withNewColumns((withRush) => withNewColumns((withCancellation) => supabase
+    const { data, error } = await withNewColumns((withPlan) => withNewColumns((withRush) => withNewColumns((withCancellation) => supabase
       .from('customer_orders')
       .select(`
         id,
@@ -87,6 +88,7 @@ export default function CustomerOrdersPage() {
         quotation_number,
         subtotal,
         container_size,
+        ${columnsIf(withPlan, ['container_plan'])}
         container_cost,
         shipping_cost,
         estimated_ship_date,
@@ -120,7 +122,7 @@ export default function CustomerOrdersPage() {
           )
         )
       `)
-      .order('created_at', { ascending: false }), CANCELLATION_COLUMNS), RUSH_ITEM_COLUMNS)
+      .order('created_at', { ascending: false }), CANCELLATION_COLUMNS), RUSH_ITEM_COLUMNS), ['container_plan'])
 
 
     if (error) {
@@ -818,7 +820,7 @@ function CustomerOrderModal({ order, estimate, agreement = null, waiting = [], f
                 {order.container_cost != null && (
                   <div className="mb-3 flex justify-between text-sm">
                     <span className="font-semibold text-gray-700">
-                      Container ({order.container_size})
+                      Container{containerCount(order) > 1 ? 's' : ''} ({containerText(order)})
                     </span>
 
                     <span className="text-lg font-bold text-gray-800">
@@ -1117,7 +1119,7 @@ function PaymentModal({ order, estimate, onClose, onReview, reviewing, canCheck 
                 {order.container_cost != null && (
                   <div className="mb-3 flex justify-between text-sm">
                     <span className="font-semibold text-gray-700">
-                      Container ({order.container_size})
+                      Container{containerCount(order) > 1 ? 's' : ''} ({containerText(order)})
                     </span>
 
                     <span className="text-lg font-bold text-gray-800">
@@ -1240,7 +1242,7 @@ const customerOrderColumns = (estimates, agreements) => [
   { header: 'Placed', value: (order) => dateTime(order.created_at) },
   { header: 'Requested ship date', value: (order) => day(order.requested_ship_date) },
   { header: 'Estimated ship date', value: (order) => (estimates[order.id]?.shipped ? '' : day(estimates[order.id]?.estimatedShipDate)) },
-  { header: 'Container', value: (order) => order.container_size, pdf: false },
+  { header: 'Container', value: (order) => containerText(order), pdf: false },
   { header: 'Products subtotal (PHP)', value: (order) => money(order.subtotal), pdf: false },
   { header: 'Container cost (PHP)', value: (order) => money(order.container_cost), pdf: false },
   { header: 'Shipping (PHP)', value: (order) => money(order.shipping_cost), pdf: false },

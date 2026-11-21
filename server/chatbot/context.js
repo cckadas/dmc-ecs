@@ -4,6 +4,7 @@ import { describePayment } from './describe.js'
 import { CANCELLATION_COLUMNS, RUSH_ITEM_COLUMNS, columnsIf, withNewColumns } from '../../client/src/utils/newColumns.js'
 import { casesShipping, casesWaiting } from '../../client/src/utils/rushLines.js'
 import { hasShipped, lastShipEntry } from '../../client/src/utils/orderShipping.js'
+import { containerText } from '../../client/src/utils/containers.js'
 
 
 // =============================================================================
@@ -209,11 +210,12 @@ export async function buildCustomerContext(customerId, message) {
 
   const quotations = requests.length
     ? await must(
-        supabaseAdmin
+        // Its containers (044), asked again without them until that's run.
+        withNewColumns((withPlan) => supabaseAdmin
           .from('quotations')
-          .select('quotation_request_id, quotation_number, status, expiry_date, total_amount, down_payment_amount, shipping_cost, container_size, container_cost, created_at')
+          .select(`quotation_request_id, quotation_number, status, expiry_date, total_amount, down_payment_amount, shipping_cost, container_size, container_cost, created_at${withPlan ? ', container_plan' : ''}`)
           .in('quotation_request_id', requests.map((request) => request.id))
-          .order('created_at', { ascending: false }),
+          .order('created_at', { ascending: false }), ['container_plan']),
         'quotations'
       )
     : []
@@ -471,7 +473,7 @@ export async function buildCustomerContext(customerId, message) {
       total: peso(quotation.total_amount),
       downPayment: peso(quotation.down_payment_amount),
       shipping: peso(quotation.shipping_cost),
-      container: quotation.container_cost == null ? null : `${quotation.container_size}, ${peso(quotation.container_cost)}`,
+      container: quotation.container_cost == null ? null : `${containerText(quotation)}, ${peso(quotation.container_cost)}`,
       expiresOn: formatDateOnly(quotation.expiry_date),
       expired: Boolean(quotation.expiry_date && String(quotation.expiry_date).slice(0, 10) < today),
     })),

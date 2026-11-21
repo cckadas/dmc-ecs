@@ -13,6 +13,7 @@ import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
 import TableScroll from '../components/TableScroll'
 import { CANCELLATION_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
+import { containerText, containerCount } from '../utils/containers'
 import DownPaymentDeadline from '../components/DownPaymentDeadline'
 import { deadlineNote } from '../utils/deadlineNote'
 import { downPaymentDates, downPaymentStatus, formatDay } from '../utils/paymentDeadline'
@@ -60,7 +61,7 @@ export default function PaymentsPage() {
 
     // When and why an order was cancelled: asked again without them until
     // db/migrations/028 is run.
-    const { data, error } = await withNewColumns((withCancellation) => supabase
+    const { data, error } = await withNewColumns((withPlan) => withNewColumns((withCancellation) => supabase
       .from('customer_orders')
       .select(`
         id,
@@ -69,6 +70,7 @@ export default function PaymentsPage() {
         quotation_number,
         subtotal,
         container_size,
+        ${columnsIf(withPlan, ['container_plan'])}
         container_cost,
         shipping_cost,
         total_amount,
@@ -114,7 +116,7 @@ export default function PaymentsPage() {
         'shipped',
         'cancelled'
       ])
-      .order('created_at', { ascending: false }), CANCELLATION_COLUMNS)
+      .order('created_at', { ascending: false }), CANCELLATION_COLUMNS), ['container_plan'])
 
     if (error) {
       console.error(error)
@@ -954,7 +956,7 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted, onRefused }) {
                 {payment.container_cost != null && (
                   <div className="mb-3 flex justify-between text-sm">
                     <span className="font-semibold text-gray-700">
-                      Container ({payment.container_size})
+                      Container{containerCount(payment) > 1 ? 's' : ''} ({containerText(payment)})
                     </span>
 
                     <span className="text-lg font-bold text-gray-800">

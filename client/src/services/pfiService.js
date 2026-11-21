@@ -2,6 +2,7 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import logo from '../assets/logo.png'
 import seal from '../assets/seal.png'
+import { containerCount, containerText } from '../utils/containers'
 
 // Lossless. Without it, jsPDF stores the images uncompressed and each PDF is about 9 MB.
 const IMAGE_COMPRESSION = 'FAST'
@@ -305,7 +306,7 @@ export async function generatePFI(quotation, items) {
   )
 
   doc.text(
-    `Container: ${quotation.container_size || '-'}`,
+    `Container${containerCount(quotation) > 1 ? 's' : ''}: ${containerText(quotation, { short: true })}`,
     145,
     129
   )
@@ -554,7 +555,7 @@ export async function generatePFI(quotation, items) {
   doc.setFont('helvetica', 'bold')
 
   doc.text(
-    `Container (${quotation.container_size || '-'})`,
+    containerCount(quotation) > 1 ? `Containers (${containerCount(quotation)})` : `Container (${quotation.container_size || '-'})`,
     totalBoxX + 4,
     totalBoxY + 16
   )
@@ -579,7 +580,7 @@ export async function generatePFI(quotation, items) {
   doc.setFont('helvetica', 'bold')
 
   doc.text(
-    'Shipping',
+    containerCount(quotation) > 1 ? `Shipping (${containerCount(quotation)} containers)` : 'Shipping',
     totalBoxX + 4,
     totalBoxY + 24
   )
