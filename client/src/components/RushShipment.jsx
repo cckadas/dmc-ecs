@@ -234,10 +234,10 @@ export function RushAgreement({ agreement, waiting = [], forStaff = false }) {
   const next = forStaff ? "the customer's next order" : 'your next order'
   const stateText = (row) => {
     const state = waitingState(row)
-    if (state === 'given') return `DMC's since ${formatDateTime(row.given_at)} (no order within 6 months)`
+    if (state === 'given') return `DMC's since ${formatDateTime(row.given_at)} (no approved order within 2 weeks)`
     if (state === 'left') return `Left with ${row.carried_into}`
     if (state === 'joined') return `Goes with ${row.carried_into}`
-    return deadlineText(row) ? `Waits for ${next}, by ${deadlineText(row)}` : `Waits for ${next}`
+    return deadlineText(row) ? `Waits for ${next}, approved by ${deadlineText(row)}` : `Waits for ${next}`
   }
 
   return (
@@ -293,7 +293,8 @@ export function WaitingGoods({ rows, forStaff = false, customerName = null }) {
   const waiting = toShip.filter((row) => waitingState(row) === 'waiting')
   const joined = toShip.filter((row) => waitingState(row) === 'joined')
   const customers = new Set(toShip.map((row) => row.customer_id).filter(Boolean)).size
-  // The soonest last day for an order to take them (039), if it has started.
+  // The soonest last day for an approved order to take them (041), if their
+  // 2 weeks have started.
   const soonest = waiting.filter((row) => row.deadline).sort((a, b) => String(a.deadline).localeCompare(String(b.deadline)))[0]
   const notStarted = waiting.some((row) => !row.deadline)
 
@@ -316,12 +317,12 @@ export function WaitingGoods({ rows, forStaff = false, customerName = null }) {
             <p className="mt-1">
               {forStaff
                 ? soonest
-                  ? `If no order takes them, they become DMC's after their deadline (the soonest: ${deadlineText(soonest)}).`
-                  : 'Their 6 months start once they are all in and the rushed order\'s container has left.'
+                  ? `The customer's next order must be approved within their 2 weeks, or they become DMC's (the soonest last day: ${deadlineText(soonest)}). Price their requests promptly.`
+                  : 'Their 2 weeks start once they are all in and the rushed order\'s container has left.'
                 : soonest
-                  ? `Send a quotation request by ${deadlineText(soonest)}, with other products or with only these. That order's container and shipping are yours to pay. After that date, as you agreed, DMC may do what it wants with them.`
-                  : 'Send a quotation request for them, with other products or with only these; that order\'s container and shipping are yours to pay. You have 6 months from when they are all in DMC\'s warehouse and your rushed order\'s container has left.'}
-              {!forStaff && soonest && notStarted ? ' Goods not in yet get their 6 months once they arrive.' : ''}
+                  ? `Your next order must be approved by ${deadlineText(soonest)}: send a quotation request soon, with other products or with only these, so DMC can price it in time. That order's container and shipping are yours to pay. After that date, as you agreed, DMC may do what it wants with them.`
+                  : 'Send a quotation request for them, with other products or with only these; that order\'s container and shipping are yours to pay. Once they are all in DMC\'s warehouse and your rushed order\'s container has left, you have 2 weeks to approve that order\'s quotation.'}
+              {!forStaff && soonest && notStarted ? ' Goods not in yet get their 2 weeks once they are all in.' : ''}
             </p>
           )}
         </div>

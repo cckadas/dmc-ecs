@@ -183,7 +183,8 @@ export async function linesShippingNow(items) {
 //   'joined'   goes in the container of carried_into (not shipped yet)
 //   'left'     left with carried_into: shipped (any cases that wait again are
 //              that order's own waiting goods)
-//   'given'    DMC's: no order took it within 6 months (db/migrations/039)
+//   'given'    DMC's: no approved order took it within its 2 weeks
+//              (db/migrations/039, 041)
 export function waitingState(row) {
   if (row?.given_at) return 'given'
   if (!row?.carried_into) return 'waiting'
@@ -196,12 +197,24 @@ export function waitingState(row) {
 // Still to ship: waiting, or joined to an order that hasn't shipped.
 export const stillToShip = (rows) => (rows || []).filter((row) => !['left', 'given'].includes(waitingState(row)))
 
-// The last day a next order can take a waiting line (6 months from when the
-// goods were all in and the rushed order's container left; 039), or null when
-// that hasn't started yet. As "Nov 20, 2026".
+// The last day the next order can be approved to take a waiting line (2 weeks
+// from when the goods were all in and the rushed order's container left; 041),
+// or null when that hasn't started yet. As "Nov 20, 2026".
 export const deadlineText = (row) => (row?.deadline
   ? new Date(`${String(row.deadline).slice(0, 10)}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
   : null)
+
+// The last day a quotation with waiting goods in it can be approved (041): the
+// soonest last day of the waiting goods it carries, as YYYY-MM-DD, or null.
+// items: the quotation's lines; rows: the customer's waiting_goods rows.
+export function approveByOf(items, rows) {
+  const carried = new Set((items || []).map((item) => item.carried_from_item_id).filter(Boolean))
+  const days = (rows || [])
+    .filter((row) => carried.has(row.item_id) && row.deadline)
+    .map((row) => String(row.deadline).slice(0, 10))
+    .sort()
+  return days[0] || null
+}
 
 // How many cases and products, of these lines.
 export function countOf(rows) {

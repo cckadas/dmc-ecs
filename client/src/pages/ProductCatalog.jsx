@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../supabase'
 import ExportButton from '../components/ExportButton'
 import { exportList, number } from '../utils/csvExport'
@@ -70,6 +71,9 @@ export default function ProductCatalogPage() {
   // Staff can look up every transaction a product is in (quotations, orders,
   // purchase orders). Customers can't: those are other customers' and DMC's own.
   const seesTransactions = ['admin', 'sales', 'procurement', 'management', 'warehouse'].includes(profile?.role)
+  // A product's minimum order (MOQ) is its supplier's, kept with the price on
+  // Price Lists (005), which admin and procurement change: they get a link there.
+  const setsPrices = ['admin', 'procurement'].includes(profile?.role)
 
   const [products, setProducts] = useState([])
   const [search, setSearch] = useState('')
@@ -694,6 +698,16 @@ export default function ProductCatalogPage() {
                     {/* MINIMUM ORDER */}
                     <td className="px-5 py-3">
                       {minimums[product.id] ? `${minimums[product.id]} ${product.unit || 'units'}` : '-'}
+
+                      {setsPrices && product.supplier_id && (
+                        <Link
+                          to={`/${profile.role}/price-lists?supplier=${product.supplier_id}&product=${product.id}`}
+                          className="mt-0.5 block text-xs font-medium text-[#2D5A42] underline hover:text-[#1F3A2C]"
+                          title="The MOQ is the supplier's, set with its price"
+                        >
+                          Set in Price Lists
+                        </Link>
+                      )}
                     </td>
 
                     {/* AVAILABILITY */}

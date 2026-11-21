@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
@@ -32,6 +33,11 @@ const th = 'px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide te
 export default function SupplierPriceLists() {
   const { profile } = useAuth()
   const { toast } = useToast()
+  // Opened from a product's MOQ on the Products page: ?supplier=…&product=…
+  // picks that supplier and points at the product's row.
+  const [searchParams] = useSearchParams()
+  const linkedSupplierId = searchParams.get('supplier') || ''
+  const linkedProductId = searchParams.get('product') || ''
 
   const [suppliers, setSuppliers] = useState([])
   const [supplierId, setSupplierId] = useState('')
@@ -360,6 +366,19 @@ export default function SupplierPriceLists() {
     }
   }, [profile])
 
+  // The supplier a link from Products names, once the suppliers are in.
+  useEffect(() => {
+    if (linkedSupplierId && !supplierId && suppliers.some((supplier) => supplier.id === linkedSupplierId)) {
+      handleSupplierChange(linkedSupplierId)
+    }
+  }, [suppliers, linkedSupplierId])
+
+  // ...and that product's row, once the supplier's list is showing.
+  useEffect(() => {
+    if (!linkedProductId || loadingCatalog || supplierId !== linkedSupplierId) return
+    document.getElementById(`price-row-${linkedProductId}`)?.scrollIntoView({ block: 'center' })
+  }, [linkedProductId, linkedSupplierId, supplierId, loadingCatalog, products])
+
 
   const readyCount = preview.filter((line) => READY_STATUSES.includes(line.status)).length
   const unchangedCount = preview.filter((line) => line.status === 'Unchanged').length
@@ -518,9 +537,18 @@ export default function SupplierPriceLists() {
                       )
                     }
 
+                    const linked = product.id === linkedProductId
+
                     return (
-                      <tr key={product.id} className="border-t border-gray-200 text-sm hover:bg-gray-50">
-                        <td className="px-5 py-3 font-medium text-gray-800">{product.product_name}</td>
+                      <tr
+                        key={product.id}
+                        id={`price-row-${product.id}`}
+                        className={`border-t border-gray-200 text-sm ${linked ? 'bg-amber-50 ring-2 ring-inset ring-amber-300' : 'hover:bg-gray-50'}`}
+                      >
+                        <td className="px-5 py-3 font-medium text-gray-800">
+                          {product.product_name}
+                          {linked && <p className="text-xs font-normal text-amber-800">From Products: use the pencil to change its MOQ.</p>}
+                        </td>
                         <td className="px-5 py-3">{product.sku}</td>
                         <td className="px-5 py-3">
                           {current

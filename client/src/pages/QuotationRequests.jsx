@@ -11,7 +11,8 @@ import { getCreditStatus, formatPeso, overLimitBy } from '../services/creditServ
 import { getMinimumOrderQuantities } from '../services/pricingService'
 import { groupByFamily, sizeLabel } from '../utils/productGroups'
 import { previewMyEstimate } from '../services/predictionService'
-import { deadlineText, loadCarriedFrom, loadWaitingGoods, waitingState } from '../services/rushService'
+import { approveByOf, deadlineText, loadCarriedFrom, loadWaitingGoods, waitingState } from '../services/rushService'
+import { formatDay, manilaToday } from '../utils/paymentDeadline'
 import { formatVolume, formatWeight } from '../utils/containers'
 import { RUSH_ITEM_COLUMNS, columnsIf, isMissingColumn, withNewColumns } from '../utils/newColumns'
 import { ACCOUNT_COLUMNS, newOrdersStopped } from '../utils/customerAccount'
@@ -470,7 +471,8 @@ export default function QuotationRequestsPage() {
     // credit limit (040: the new order counts too). Re-checked here in case
     // they paid or ordered elsewhere; the database checks it again.
     const creditStatus = await loadCredit()
-    const approveProblem = approveCreditProblem(creditStatus, quotation)
+    // Waiting goods from a rush shipment (041): only within their 2 weeks.
+    const approveProblem = approveCreditProblem(creditStatus, quotation) || waitingGoodsProblem(quotation, waitingGoods)
 
     if (approveProblem) {
       alert(approveProblem)
@@ -823,7 +825,8 @@ export default function QuotationRequestsPage() {
         newQuote={selectedQuotation ? replacementOf(selectedQuotation.quotation_request_id)?.quotation_reference || null : null}
         blocked={Boolean(credit?.blocked) || stopped}
         blockedReason={stopped ? 'DMC has stopped new orders on your account' : undefined}
-        approveProblem={selectedQuotation ? approveCreditProblem(credit, selectedQuotation) : null}
+        approveProblem={selectedQuotation ? approveCreditProblem(credit, selectedQuotation) || waitingGoodsProblem(selectedQuotation, waitingGoods) : null}
+        approveBy={selectedQuotation ? approveByOf(selectedQuotation.quotation_items, waitingGoods) : null}
         creating={creatingCO}
         onClose={() => {
           if (creatingCO) { return }
@@ -912,9 +915,19 @@ function QuotationShipEstimate({ quotation }) {
 }
 
 
+// Why a quotation with goods waiting from a rush shipment can't be approved:
+// their 2 weeks are over (041), even if the server hasn't withdrawn it yet.
+function waitingGoodsProblem(quotation, waitingRows) {
+  const approveBy = approveByOf(quotation?.quotation_items, waitingRows)
+  if (!approveBy || approveBy >= manilaToday()) return null
+  return `The 2 weeks for your goods waiting from a rush shipment ended on ${formatDay(approveBy)}, so they are DMC's now and this quotation can't be approved. DMC prices your request again without them.`
+}
+
+
 // approveProblem: why approving it would take the unpaid balance over the
-// credit limit (040), or null.
-function QuotationModal({ quotation, loading, creating, onClose, onApprove, onReject, onRequestAgain, onChangeLocation, newQuote = null, blocked = false, blockedReason = 'Your unpaid balance has reached your credit limit', approveProblem = null }) {
+// credit limit (040), or its waiting goods' 2 weeks are over (041), or null.
+// approveBy: the last day it can be approved to keep the waiting goods in it.
+function QuotationModal({ quotation, loading, creating, onClose, onApprove, onReject, onRequestAgain, onChangeLocation, newQuote = null, blocked = false, blockedReason = 'Your unpaid balance has reached your credit limit', approveProblem = null, approveBy = null }) {
   if (loading) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -1300,6 +1313,11 @@ function QuotationModal({ quotation, loading, creating, onClose, onApprove, onRe
             {approveProblem && (
               <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{approveProblem}</p>
             )}
+            {!approveProblem && approveBy && (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                Approve by {formatDay(approveBy)} to keep your goods waiting from a rush shipment in this order. After that date, as you agreed, DMC may do what it wants with them, and this quotation can't be approved.
+              </p>
+            )}
             <div className="flex w-full items-center justify-between">
               <button
                 type="button"
@@ -1578,7 +1596,7 @@ function QuotationRequestModal({ deliveryLocations, products, waiting = [], init
                 {waitingCases.toLocaleString()} cases, about {formatVolume(waitingVolume)} and {formatWeight(waitingWeight)}, already paid for.
                 The container is chosen to fit them plus what you add below; this order's container and shipping are yours to pay.
                 You can also send this request with only them.
-                {waitingDeadline ? ` Send it by ${deadlineText(waitingDeadline)}: after that, as you agreed, DMC may do what it wants with them.` : ''}
+                {waitingDeadline ? ` This order must be approved by ${deadlineText(waitingDeadline)}, so send it soon: DMC prices it, then you approve its quotation. After that date, as you agreed, DMC may do what it wants with them.` : ''}
               </p>
             </div>
           )}

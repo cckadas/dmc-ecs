@@ -14,6 +14,7 @@ import { formatVolume, formatWeight } from '../utils/containers'
 import { previewEstimate } from '../services/predictionService'
 import { creditRoom, formatPeso, getCreditStatus, overLimitBy } from '../services/creditService'
 import { loadCarriedFrom, loadWaitingGoods, waitingState } from '../services/rushService'
+import { formatDay } from '../utils/paymentDeadline'
 import { RUSH_ITEM_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
 
 import IconButton from '../components/IconButton'
@@ -980,6 +981,8 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
   // The customer's goods waiting from a rush shipment (034), not yet joined
   // to an order: they go in this quotation's container, at ₱0.
   const carriedItems = items.filter((item) => item.carried_from_item_id)
+  // The soonest last day the customer can approve it to keep them (041).
+  const approveBy = carriedItems.map((item) => item.approve_by).filter(Boolean).sort()[0] || null
 
 
   // ===================================================
@@ -1080,6 +1083,8 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
             moq: null,
             carried_from_item_id: row.item_id,
             carried_from: row.order_number,
+            // The last day this next order can be approved to take them (041).
+            approve_by: row.deadline ? String(row.deadline).slice(0, 10) : null,
             // Under the product's name on the PFI.
             description: `From ${row.order_number} (rush shipment): already paid`,
           })),
@@ -1252,6 +1257,11 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
                   the goods that hadn't arrived then go in the container of their next order. They're added below at ₱0 (already paid),
                   counted in the container, and can't be left out.
                   {request.quotation_request_items.length === 0 && ' This request is for them alone: only its container and shipping are priced, and the customer pays them.'}
+                  {approveBy && (
+                    <span className="mt-1 block font-semibold">
+                      The customer must approve this quotation by {formatDay(approveBy)}, or the waiting goods become DMC's. Price it promptly.
+                    </span>
+                  )}
                 </div>
               )}
 

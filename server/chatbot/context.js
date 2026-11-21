@@ -268,14 +268,36 @@ export async function buildCustomerContext(customerId, message) {
     if (!next) return 'your next order (not placed yet)'
     return hasShipped(next.status) ? null : next.order_number
   }
+  // The last day the next order can be approved to take each rushed order's
+  // waiting goods (041), from the database's own clock: null until their 2
+  // weeks start, undefined if it can't be read (then it's left out).
+  const rushedWaiting = orders
+    .filter((other) => (other.customer_order_items || []).some((item) => casesWaiting(item) > 0 && !item.given_to_dmc_at && !takenBy.get(item.id)))
+    .map((other) => other.id)
+  const lastDayOf = new Map(await Promise.all(rushedWaiting.map(async (orderId) => {
+    const { data, error } = await supabaseAdmin.rpc('rush_waiting_clock', { p_order: orderId })
+    if (error) return [orderId, undefined]
+    const row = Array.isArray(data) ? data[0] : data
+    return [orderId, row?.deadline ? String(row.deadline).slice(0, 10) : null]
+  })))
+  const approvedBy = (orderId) => {
+    const lastDay = lastDayOf.get(orderId)
+    if (lastDay === undefined) return {}
+    return {
+      nextOrderMustBeApprovedBy: lastDay
+        ? formatDateOnly(lastDay)
+        : 'not started yet: 2 weeks from when they are all in DMC\'s warehouse and the first container has left',
+    }
+  }
   const goodsWaiting = orders.flatMap((other) => (other.customer_order_items || [])
-    // Goods that became DMC's after 6 months (039) don't wait any more.
+    // Goods that became DMC's after their 2 weeks (039, 041) don't wait any more.
     .filter((item) => casesWaiting(item) > 0 && !item.given_to_dmc_at && waitingFor(item))
     .map((item) => ({
       product: productName(item.products),
       cases: quantityText(casesWaiting(item), item.products?.unit),
       fromOrder: other.order_number,
       goesWith: waitingFor(item),
+      ...(takenBy.get(item.id) ? {} : approvedBy(other.id)),
     })))
 
   const orderContext = shownOrders.map((order) => {
