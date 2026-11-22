@@ -39,7 +39,7 @@ export default function PricingCreditPage() {
         </h1>
 
         <p className="mt-1 text-gray-500">
-          The markups, shipping and container costs that set every quotation, in US dollars, and how much a customer can owe before they can't order more.
+          The markups, and DMC's shipping and container costs in pesos, that set every quotation in US dollars, and how much a customer can owe before they can't order more.
         </p>
       </div>
 
@@ -370,7 +370,7 @@ function ContainersSection() {
 
     // Required: a missing cost would stop quotations that need this size.
     if (draft.cost === '' || !(cost >= 0)) {
-      toast.error(`Enter a cost of US$0 or more for the ${size.name}.`)
+      toast.error(`Enter a cost of ₱0 or more for the ${size.name}.`)
       return
     }
 
@@ -439,7 +439,7 @@ function ContainersSection() {
       </h2>
 
       <p className="mb-3 text-sm text-gray-500">
-        Each quotation also pays the fixed cost of its container: the smallest size that holds the order's cases by volume and weight, or a bigger one if the customer wants to upgrade. The sizes are the global standard ones, so change them only if DMC's differ.
+        Each quotation also pays the fixed cost of its container: the smallest size that holds the order's cases by volume and weight, or a bigger one if the customer wants to upgrade. The sizes are the global standard ones, so change them only if DMC's differ. The costs are DMC's, in pesos; customers pay them in US dollars at their quotation's exchange rate.
       </p>
 
       {loadError && (
@@ -455,7 +455,7 @@ function ContainersSection() {
               <th className={th}>Container</th>
               <th className={th}>Inside Volume (m³)</th>
               <th className={th}>Weight Limit (kg)</th>
-              <th className={th}>Cost (US$)</th>
+              <th className={th}>Cost (₱)</th>
               <th className={th}>Actions</th>
             </tr>
           </thead>

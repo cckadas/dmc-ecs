@@ -80,7 +80,7 @@ To build the web app for a server: `npm run build` in `client`, which writes
 Customers are charged in US dollars; suppliers are paid in pesos. A product's
 price for a customer is the supplier's peso price divided by the day's exchange
 rate (pesos per US dollar), plus the country's markup. Container and shipping
-costs are in US dollars. The rate is the European Central Bank's, fetched by
+costs are DMC's, in pesos, converted at the same rate. The rate is the European Central Bank's, fetched by
 the server through the free Frankfurter service (no key needed); nobody types
 it. Admin, management and sales are told when it changes, and each quotation
 keeps the rate it was priced with.

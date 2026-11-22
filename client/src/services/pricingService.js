@@ -19,7 +19,8 @@ import { rateText } from '../utils/money'
 // database sets the container and shipping costs itself (db/migrations/016).
 // Customers pay in US dollars: each line is the supplier's peso price divided by
 // today's exchange rate (the European Central Bank's, fetched by the server),
-// plus the markup; containers and shipping are in US dollars (db/migrations/048).
+// plus the markup; DMC's container and shipping costs are in pesos, converted at
+// the same rate (db/migrations/048, 050).
 // =============================================================================
 
 const priceKey = (supplierId, productId) => `${supplierId}:${productId}`
@@ -197,19 +198,25 @@ export async function getQuotationPricing({ country, lines, carriedLines = [] })
     prices[line.productId] = { price, source, moq }
   }
 
-  const shipping = markup?.shipping_cost_usd == null
+  // DMC's costs are in pesos: shipping and containers in US dollars at today's rate (050).
+  const shipping = markup?.shipping_cost == null || !rate
     ? {
         cost: null,
-        source: `No shipping cost in US dollars for ${country || 'this country'} — admin or management must set one`,
+        source: !rate ? 'No exchange rate yet — the server fetches it from the European Central Bank' : `No shipping cost for ${country || 'this country'} — admin or management must set one`,
       }
     : {
-        cost: roundMoney(Number(markup.shipping_cost_usd)),
+        cost: roundMoney(Number(markup.shipping_cost) / rate.phpPerUsd),
         source: markup.country.trim().toLowerCase() === 'default'
           ? `Default shipping cost${country ? ` (none set for ${country})` : ''}`
           : `Fixed shipping cost for ${markup.country}`,
       }
 
-  const containers = planContainer({ lines: [...lines, ...carriedLines], sizes: containerSizes, fillPercent })
+  // Each container size's peso cost in US dollars at today's rate (050).
+  const sizesInUsd = containerSizes.map((size) => ({
+    ...size,
+    cost: size.cost == null || !rate ? null : roundMoney(Number(size.cost) / rate.phpPerUsd),
+  }))
+  const containers = planContainer({ lines: [...lines, ...carriedLines], sizes: sizesInUsd, fillPercent })
 
   return { prices, shipping, containers, rate }
 }
