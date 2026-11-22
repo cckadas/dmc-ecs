@@ -31,7 +31,7 @@ async function getImageData(url) {
 // FORMATTERS
 // ============================================================
 function formatCurrency(value) {
-  return `PHP ${Number(value || 0).toLocaleString(undefined, {
+  return `USD ${Number(value || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`

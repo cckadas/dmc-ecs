@@ -7,7 +7,7 @@
 // =============================================================================
 
 const peso = (value) =>
-  `₱${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  `US$${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 
 // What happened, in words. An order's first payment is its down payment (or all

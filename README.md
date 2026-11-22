@@ -16,7 +16,7 @@ admin, management, sales, procurement, warehouse, or customer.
 | Folder | What it is |
 |---|---|
 | `client/` | The web app (React and Vite): every screen. |
-| `server/` | The server (Node.js and Express). It creates accounts, emails suppliers their purchase orders and payment proofs, runs the customer assistant and the customer's estimates, and every few minutes it applies payment deadlines, quotation expiry, the waiting-goods deadline of rush shipments, and the prediction alerts. |
+| `server/` | The server (Node.js and Express). It creates accounts, emails suppliers their purchase orders and payment proofs, runs the customer assistant and the customer's estimates, and every few minutes it applies payment deadlines, quotation expiry, the waiting-goods deadline of rush shipments, and the prediction alerts. Every 3 hours it fetches the day's exchange rate from the European Central Bank. |
 | `db/migrations/` | The database scripts, `001` to `047`, run in number order on Supabase (PostgreSQL). Each one says at the top what it does, is safe to run again, and ends with a check query and the result to expect. |
 | `db/demo/` | Tools for a made-up order history, for demos and testing. Everything made up is labelled "simulated" on the screens. |
 
@@ -73,6 +73,17 @@ admin or sales add customers (Customers).
 
 To build the web app for a server: `npm run build` in `client`, which writes
 `client/dist`.
+
+
+## Money
+
+Customers are charged in US dollars; suppliers are paid in pesos. A product's
+price for a customer is the supplier's peso price divided by the day's exchange
+rate (pesos per US dollar), plus the country's markup. Container and shipping
+costs are in US dollars. The rate is the European Central Bank's, fetched by
+the server through the free Frankfurter service (no key needed); nobody types
+it. Admin, management and sales are told when it changes, and each quotation
+keeps the rate it was priced with.
 
 
 ## The database

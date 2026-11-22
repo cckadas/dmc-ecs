@@ -201,7 +201,7 @@ export default function DocumentsPage() {
 
                   {/* TOTAL */}
                   <td className="px-5 py-3 font-medium">
-                    ₱ {Number(order.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    US$ {Number(order.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </td>
 
 
@@ -308,8 +308,8 @@ const DOCUMENT_COLUMNS = [
   { header: 'Order', value: (order) => order.order_number },
   { header: 'Quotation', value: (order) => order.quotation_number },
   { header: 'Status', value: (order) => statusText(order.status) },
-  { header: 'Total (PHP)', value: (order) => money(order.total_amount) },
-  { header: 'Paid (PHP)', value: (order) => money(order.settled_amount) },
+  { header: 'Total (USD)', value: (order) => money(order.total_amount) },
+  { header: 'Paid (USD)', value: (order) => money(order.settled_amount) },
   { header: 'PFI', value: (order) => ready(order.pfi_file_path) },
   { header: 'Packing list', value: (order) => ready(order.pack_list_path) },
   { header: 'Certificate of shipment', value: (order) => ready(order.cert_shipment_path) },

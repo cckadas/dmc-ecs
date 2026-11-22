@@ -7,7 +7,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlus, faTrash, faFileSignature, faDownload, faXmark, faChevronDown, faLocationDot } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 import { MIN_PREFERRED_SHIP_DAYS, localDateString, formatDateTime } from '../utils/dates'
-import { getCreditStatus, formatPeso, overLimitBy } from '../services/creditService'
+import { getCreditStatus, formatUsd, overLimitBy } from '../services/creditService'
 import { getMinimumOrderQuantities } from '../services/pricingService'
 import { groupByFamily, sizeLabel } from '../utils/productGroups'
 import { previewMyEstimate } from '../services/predictionService'
@@ -615,13 +615,13 @@ export default function QuotationRequestsPage() {
           </p>
           {credit?.hasCredit === false ? (
             <p className="mt-1 text-sm text-amber-700">
-              Until DMC gives you credit, you can have one unpaid order at a time, and you still owe {formatPeso(credit.outstanding)} on your open orders.
+              Until DMC gives you credit, you can have one unpaid order at a time, and you still owe {formatUsd(credit.outstanding)} on your open orders.
               Pay them on the Payments page, and DMC sends its prices then.
             </p>
           ) : (
             <p className="mt-1 text-sm text-amber-700">
               Approving {requests.filter((request) => request.credit_hold_at && request.status === 'awaiting pricing').length === 1 ? 'it' : 'them'} would take your unpaid balance over your credit limit
-              {credit?.creditLimit != null ? ` (you owe ${formatPeso(credit.outstanding)} of ${formatPeso(credit.creditLimit)})` : ''}.
+              {credit?.creditLimit != null ? ` (you owe ${formatUsd(credit.outstanding)} of ${formatUsd(credit.creditLimit)})` : ''}.
               Pay your open orders on the Payments page, and DMC sends its prices once there's room.
             </p>
           )}
@@ -637,7 +637,7 @@ export default function QuotationRequestsPage() {
           </p>
           <p className="mt-1 text-sm text-gray-600">
             You can have one unpaid order at a time: pay each order in full before approving another. Each order ships only once it's paid in full
-            {Number(credit.outstanding || 0) > 0.009 ? ` (you owe ${formatPeso(credit.outstanding)} now)` : ''}.
+            {Number(credit.outstanding || 0) > 0.009 ? ` (you owe ${formatUsd(credit.outstanding)} now)` : ''}.
           </p>
         </div>
       )}
@@ -647,7 +647,7 @@ export default function QuotationRequestsPage() {
       {credit?.blocked && !stopped && (
         <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4">
           <p className="text-sm font-medium text-red-800">
-            Your unpaid balance of {formatPeso(credit.outstanding)} has reached your credit limit of {formatPeso(credit.creditLimit)}.
+            Your unpaid balance of {formatUsd(credit.outstanding)} has reached your credit limit of {formatUsd(credit.creditLimit)}.
           </p>
           <p className="mt-1 text-sm text-red-700">
             You can't send new quotation requests or approve quotations until you pay your open orders on the Payments page.
@@ -1158,13 +1158,13 @@ function QuotationModal({ quotation, loading, creating, onClose, onApprove, onRe
 
                     {/* UNIT PRICE */}
                     <td className="px-4 py-4 text-left">
-                      ₱ {Number(item.unit_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {Number(item.unit_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
 
 
                     {/* SUBTOTAL */}
                     <td className="px-4 py-4 text-right">
-                      ₱ {Number(item.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {Number(item.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
                   </tr>
                 ))}
@@ -1191,7 +1191,7 @@ function QuotationModal({ quotation, loading, creating, onClose, onApprove, onRe
                   </span>
 
                   <span className="text-lg font-bold text-gray-800">
-                    ₱ {Number(quotation.subtotal || 0).toLocaleString(undefined, {
+                    US$ {Number(quotation.subtotal || 0).toLocaleString(undefined, {
                       minimumFractionDigits: 2
                     })}
                   </span>
@@ -1204,7 +1204,7 @@ function QuotationModal({ quotation, loading, creating, onClose, onApprove, onRe
                     </span>
 
                     <span className="text-lg font-bold text-gray-800">
-                      ₱ {Number(quotation.container_cost).toLocaleString(undefined, {
+                      US$ {Number(quotation.container_cost).toLocaleString(undefined, {
                         minimumFractionDigits: 2
                       })}
                     </span>
@@ -1217,7 +1217,7 @@ function QuotationModal({ quotation, loading, creating, onClose, onApprove, onRe
                   </span>
 
                   <span className="text-lg font-bold text-gray-800">
-                    ₱ {Number(quotation.shipping_cost || 0).toLocaleString(undefined, {
+                    US$ {Number(quotation.shipping_cost || 0).toLocaleString(undefined, {
                       minimumFractionDigits: 2
                     })}
                   </span>
@@ -1230,7 +1230,7 @@ function QuotationModal({ quotation, loading, creating, onClose, onApprove, onRe
                     </span>
 
                     <span className="text-xl font-bold text-gray-800">
-                      ₱ {Number(quotation.total_amount || 0).toLocaleString(undefined, {
+                      US$ {Number(quotation.total_amount || 0).toLocaleString(undefined, {
                         minimumFractionDigits: 2
                       })}
                     </span>
@@ -1242,7 +1242,7 @@ function QuotationModal({ quotation, loading, creating, onClose, onApprove, onRe
                     </span>
 
                     <span className="text-lg font-bold text-green-800">
-                      ₱ {Number(quotation.down_payment_amount || 0).toLocaleString(undefined, {
+                      US$ {Number(quotation.down_payment_amount || 0).toLocaleString(undefined, {
                         minimumFractionDigits: 2
                       })}
                     </span>
@@ -1423,10 +1423,10 @@ function approveCreditProblem(status, quotation) {
 
   // Without credit (047): one unpaid order at a time.
   if (status?.hasCredit === false) {
-    return `DMC hasn't given you credit yet, so you can have one unpaid order at a time: pay the ${formatPeso(over)} you still owe on your open orders first, then approve it.${until}`
+    return `DMC hasn't given you credit yet, so you can have one unpaid order at a time: pay the ${formatUsd(over)} you still owe on your open orders first, then approve it.${until}`
   }
 
-  return `Approving this would bring your unpaid balance to ${formatPeso(after)}, over your credit limit of ${formatPeso(status.creditLimit)}. Pay at least ${formatPeso(over)} of your open orders first, then approve it.${until}`
+  return `Approving this would bring your unpaid balance to ${formatUsd(after)}, over your credit limit of ${formatUsd(status.creditLimit)}. Pay at least ${formatUsd(over)} of your open orders first, then approve it.${until}`
 }
 
 

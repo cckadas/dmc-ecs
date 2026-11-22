@@ -6,7 +6,7 @@
 // been sent, so the customer must not be told to pay it again.
 // =============================================================================
 
-export const NOTHING_PAID = 'PHP 0.00'
+export const NOTHING_PAID = 'USD 0.00'
 
 export function describePayment(payment) {
   const parts = []

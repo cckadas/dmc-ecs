@@ -2,6 +2,7 @@ import { supabase } from '../supabase'
 import { planContainer } from '../utils/containers'
 import { withNewColumns } from '../utils/newColumns'
 import { countryKey } from '../utils/countryPlaces'
+import { rateText } from '../utils/money'
 
 
 // =============================================================================
@@ -16,6 +17,9 @@ import { countryKey } from '../utils/countryPlaces'
 // its own. Sales cannot change them, so a wrong price can't be entered by
 // accident or on purpose. Rates are set by admin and management only, and the
 // database sets the container and shipping costs itself (db/migrations/016).
+// Customers pay in US dollars: each line is the supplier's peso price divided by
+// today's exchange rate (the European Central Bank's, fetched by the server),
+// plus the markup; containers and shipping are in US dollars (db/migrations/048).
 // =============================================================================
 
 const priceKey = (supplierId, productId) => `${supplierId}:${productId}`
@@ -87,12 +91,25 @@ export async function getMarkups() {
   // (db/migrations/030); asked again without it until that script is run.
   const { data, error } = await withNewColumns((withSimulated) => supabase
     .from('market_markups')
-    .select(`country, markup_percent, shipping_cost${withSimulated ? ', is_simulated' : ''}`)
-    .order('country'), ['is_simulated'])
+    .select(`country, markup_percent, shipping_cost${withSimulated ? ', is_simulated, shipping_cost_usd' : ''}`)
+    .order('country'), ['is_simulated', 'shipping_cost_usd'])
 
   if (error) throw error
 
   return data || []
+}
+
+
+// Today's exchange rate, pesos per US dollar: the European Central Bank's,
+// fetched by the server by itself (db/migrations/048). Null before 048 is run.
+export async function getExchangeRate() {
+  const { data, error } = await supabase.rpc('current_exchange_rate')
+  if (error) {
+    if (/42883|PGRST202|could not find|does not exist/i.test(`${error.code || ''} ${error.message || ''}`)) return null
+    throw error
+  }
+  const row = data?.[0]
+  return row ? { rateDate: row.rate_date, phpPerUsd: Number(row.php_per_usd), fetchedAt: row.fetched_at } : null
 }
 
 
@@ -147,11 +164,12 @@ function findMarkup(markups, country) {
 export async function getQuotationPricing({ country, lines, carriedLines = [] }) {
   const productIds = lines.map((line) => line.productId)
 
-  const [supplierPrices, markups, containerSizes, fillPercent] = await Promise.all([
+  const [supplierPrices, markups, containerSizes, fillPercent, rate] = await Promise.all([
     getCurrentSupplierPrices(productIds),
     getMarkups(),
     getContainerSizes(),
     getContainerFillPercent(),
+    getExchangeRate(),
   ])
 
   const markup = findMarkup(markups, country)
@@ -168,21 +186,24 @@ export async function getQuotationPricing({ country, lines, carriedLines = [] })
       source = 'No supplier price yet — procurement must add it in Price Lists'
     } else if (!markup) {
       source = `No markup for ${country || 'this country'} — admin or management must set one`
+    } else if (!rate) {
+      source = 'No exchange rate yet — the server fetches it from the European Central Bank'
     } else {
-      price = roundMoney(supplierPrice.cost * (1 + Number(markup.markup_percent) / 100))
-      source = `${markup.country} markup ${Number(markup.markup_percent)}%`
+      // The supplier's peso price in US dollars at today's rate, plus the markup (048).
+      price = roundMoney((supplierPrice.cost / rate.phpPerUsd) * (1 + Number(markup.markup_percent) / 100))
+      source = `${markup.country} markup ${Number(markup.markup_percent)}%, at ${rateText(rate.phpPerUsd)}`
     }
 
     prices[line.productId] = { price, source, moq }
   }
 
-  const shipping = markup?.shipping_cost == null
+  const shipping = markup?.shipping_cost_usd == null
     ? {
         cost: null,
-        source: `No shipping cost for ${country || 'this country'} — admin or management must set one`,
+        source: `No shipping cost in US dollars for ${country || 'this country'} — admin or management must set one`,
       }
     : {
-        cost: roundMoney(Number(markup.shipping_cost)),
+        cost: roundMoney(Number(markup.shipping_cost_usd)),
         source: markup.country.trim().toLowerCase() === 'default'
           ? `Default shipping cost${country ? ` (none set for ${country})` : ''}`
           : `Fixed shipping cost for ${markup.country}`,
@@ -190,7 +211,7 @@ export async function getQuotationPricing({ country, lines, carriedLines = [] })
 
   const containers = planContainer({ lines: [...lines, ...carriedLines], sizes: containerSizes, fillPercent })
 
-  return { prices, shipping, containers }
+  return { prices, shipping, containers, rate }
 }
 
 
@@ -217,7 +238,7 @@ export function pricingErrorMessage(error) {
   const text = `${error?.code || ''} ${error?.message || ''}`
 
   if (/PGRST20[25]|42P01|42883|does not exist|could not find/i.test(text)) {
-    return 'Prices, shipping or container costs are not fully set up in the database yet — run the scripts in db/migrations (001 and 016) in Supabase.'
+    return 'Prices, shipping or container costs are not fully set up in the database yet — run the scripts in db/migrations (001, 016 and 048) in Supabase.'
   }
 
   return error?.message || 'Could not load prices.'

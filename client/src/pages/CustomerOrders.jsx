@@ -232,7 +232,7 @@ export default function CustomerOrdersPage() {
     const action = approve ? 'accept' : 'reject'
     const isFirstPayment = order.status === 'submitted'
     const pendingAmount = Number(order.pending_payment_amount || 0)
-    const amountText = `₱ ${pendingAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+    const amountText = `US$ ${pendingAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
 
     if (pendingAmount <= 0 && !isFirstPayment) {
       toast.error('There is no payment waiting for verification.')
@@ -516,7 +516,7 @@ export default function CustomerOrdersPage() {
 
                   {/* TOTAL */}
                   <td className="px-5 py-3 font-medium">
-                    ₱ {Number(order.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    US$ {Number(order.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </td>
 
                   {/* STATUS */}
@@ -781,12 +781,12 @@ function CustomerOrderModal({ order, estimate, agreement = null, waiting = [], f
 
                     {/* UNIT PRICE */}
                     <td className="px-4 py-4 text-left">
-                        ₱ {Number(item.unit_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        US$ {Number(item.unit_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
 
                     {/* SUBTOTAL */}
                     <td className="px-4 py-4 text-left">
-                      ₱ {Number(item.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {Number(item.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
                   </tr>
                 ))}
@@ -813,7 +813,7 @@ function CustomerOrderModal({ order, estimate, agreement = null, waiting = [], f
                   </span>
 
                   <span className="text-lg font-bold text-gray-800">
-                    ₱ {Number(order.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    US$ {Number(order.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </span>
                 </div>
 
@@ -825,7 +825,7 @@ function CustomerOrderModal({ order, estimate, agreement = null, waiting = [], f
                     </span>
 
                     <span className="text-lg font-bold text-gray-800">
-                      ₱ {Number(order.container_cost).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {Number(order.container_cost).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
                 )}
@@ -836,7 +836,7 @@ function CustomerOrderModal({ order, estimate, agreement = null, waiting = [], f
                   </span>
 
                   <span className="text-lg font-bold text-gray-800">
-                    ₱ {Number(order.shipping_cost || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    US$ {Number(order.shipping_cost || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </span>
                 </div>
 
@@ -850,7 +850,7 @@ function CustomerOrderModal({ order, estimate, agreement = null, waiting = [], f
                     </span>
 
                     <span className="text-lg font-bold text-gray-800">
-                      ₱ {Number(order.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {Number(order.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
 
@@ -860,7 +860,7 @@ function CustomerOrderModal({ order, estimate, agreement = null, waiting = [], f
                     </span>
 
                     <span className="text-lg font-bold text-amber-800">
-                      ₱ {Math.max(Number(order.total_amount || 0) -  Number(order.settled_amount || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {Math.max(Number(order.total_amount || 0) -  Number(order.settled_amount || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
 
@@ -870,7 +870,7 @@ function CustomerOrderModal({ order, estimate, agreement = null, waiting = [], f
                     </span>
 
                     <span className="text-xl font-bold text-green-800">
-                      ₱ {Number(order.settled_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {Number(order.settled_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
                 </div>
@@ -1034,7 +1034,7 @@ function PaymentModal({ order, estimate, onClose, onReview, reviewing, canCheck 
                   </p>
 
                   <p className="mt-1 font-medium text-gray-800">
-                    ₱ {settledAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    US$ {settledAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </p>
                 </div>
 
@@ -1046,7 +1046,7 @@ function PaymentModal({ order, estimate, onClose, onReview, reviewing, canCheck 
                     </p>
 
                     <p className="mt-1 text-lg font-bold text-yellow-900">
-                      ₱ {pendingAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {pendingAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </p>
 
                     <p className="mt-1 text-xs text-yellow-800">
@@ -1114,7 +1114,7 @@ function PaymentModal({ order, estimate, onClose, onReview, reviewing, canCheck 
                   </span>
 
                   <span className="text-lg font-bold text-gray-800">
-                    ₱ {Number(order.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    US$ {Number(order.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </span>
                 </div>
 
@@ -1126,7 +1126,7 @@ function PaymentModal({ order, estimate, onClose, onReview, reviewing, canCheck 
                     </span>
 
                     <span className="text-lg font-bold text-gray-800">
-                      ₱ {Number(order.container_cost).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {Number(order.container_cost).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
                 )}
@@ -1137,7 +1137,7 @@ function PaymentModal({ order, estimate, onClose, onReview, reviewing, canCheck 
                   </span>
 
                   <span className="text-lg font-bold text-gray-800">
-                    ₱ {Number(order.shipping_cost || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    US$ {Number(order.shipping_cost || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </span>
                 </div>
 
@@ -1151,7 +1151,7 @@ function PaymentModal({ order, estimate, onClose, onReview, reviewing, canCheck 
                     </span>
 
                     <span className="text-lg font-bold text-gray-800">
-                      ₱ {Number(order.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {Number(order.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
 
@@ -1161,7 +1161,7 @@ function PaymentModal({ order, estimate, onClose, onReview, reviewing, canCheck 
                     </span>
 
                     <span className="text-lg font-bold text-amber-800">
-                      ₱ {Math.max(Number(order.total_amount || 0) -  Number(order.settled_amount || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {Math.max(Number(order.total_amount || 0) -  Number(order.settled_amount || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
                 </div>
@@ -1174,7 +1174,7 @@ function PaymentModal({ order, estimate, onClose, onReview, reviewing, canCheck 
                     </span>
 
                     <span className="text-xl font-bold text-green-800">
-                      ₱ {Number(order.settled_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {Number(order.settled_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
                 </div>
@@ -1248,14 +1248,14 @@ const customerOrderColumns = (estimates, agreements) => [
   { header: 'Requested ship date', value: (order) => day(order.requested_ship_date) },
   { header: 'Estimated ship date', value: (order) => (estimates[order.id]?.shipped ? '' : day(estimates[order.id]?.estimatedShipDate)) },
   { header: 'Container', value: (order) => containerText(order), pdf: false },
-  { header: 'Products subtotal (PHP)', value: (order) => money(order.subtotal), pdf: false },
-  { header: 'Container cost (PHP)', value: (order) => money(order.container_cost), pdf: false },
-  { header: 'Shipping (PHP)', value: (order) => money(order.shipping_cost), pdf: false },
-  { header: 'Total (PHP)', value: (order) => money(order.total_amount) },
-  { header: 'Down payment (PHP)', value: (order) => money(order.down_payment_amount), pdf: false },
-  { header: 'Paid (PHP)', value: (order) => money(order.settled_amount) },
-  { header: 'Waiting for payment check (PHP)', value: (order) => money(order.pending_payment_amount), pdf: false },
-  { header: 'Balance (PHP)', value: (order) => (String(order.status || '').trim().toLowerCase() === 'cancelled' ? 0 : money(Math.max(Number(order.total_amount || 0) - Number(order.settled_amount || 0), 0))) },
+  { header: 'Products subtotal (USD)', value: (order) => money(order.subtotal), pdf: false },
+  { header: 'Container cost (USD)', value: (order) => money(order.container_cost), pdf: false },
+  { header: 'Shipping (USD)', value: (order) => money(order.shipping_cost), pdf: false },
+  { header: 'Total (USD)', value: (order) => money(order.total_amount) },
+  { header: 'Down payment (USD)', value: (order) => money(order.down_payment_amount), pdf: false },
+  { header: 'Paid (USD)', value: (order) => money(order.settled_amount) },
+  { header: 'Waiting for payment check (USD)', value: (order) => money(order.pending_payment_amount), pdf: false },
+  { header: 'Balance (USD)', value: (order) => (String(order.status || '').trim().toLowerCase() === 'cancelled' ? 0 : money(Math.max(Number(order.total_amount || 0) - Number(order.settled_amount || 0), 0))) },
   { header: 'Cancelled', value: (order) => dateTime(order.cancelled_at), pdf: false },
   { header: 'Cancellation reason', value: (order) => order.cancellation_reason, pdf: false },
   { header: 'Rush shipment', value: (order) => (agreements.has(order.id) ? 'Agreed' : '') },

@@ -116,6 +116,9 @@ export function formatPeso(value) {
   return `₱${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+// Customers' money (balances, credit limits) is in US dollars (db/migrations/048).
+export { formatUsd } from '../utils/money'
+
 
 // Explains the most likely failure: the database script hasn't been run yet.
 export function creditErrorMessage(error) {

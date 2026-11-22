@@ -251,6 +251,12 @@ for (const customer of MADE_UP) customer.designShare = span(DESIGN_SHARE[0], DES
 // Containers: the placeholder costs of db/migrations/016, and how many cases an
 // order filling one has (at about 0.02 m³ a case) ------------------------------
 
+// Customers pay in US dollars, suppliers in pesos (db/migrations/048): the
+// made-up customer amounts are these peso amounts at the European Central
+// Bank's rate of Nov 20, 2026; suppliers' costs stay in pesos.
+const PHP_PER_USD = 63.777
+const inUsd = (php) => Math.round((php / PHP_PER_USD) * 100) / 100
+
 const CONTAINERS = {
   '20-ft': { cost: 80000, cases: [800, 1500] },
   '40-ft': { cost: 120000, cases: [1900, 3000] },
@@ -313,7 +319,7 @@ function planOrder(customer, time) {
       productSlot: product.productSlot,
       key: product.key,
       quantity: Math.max(50, Math.round((cases * weights[index]) / totalWeight / 10) * 10),
-      price,
+      price: inUsd(price),
       cost: Math.round(price * 0.78 * 100) / 100,
     }
   })
@@ -863,8 +869,8 @@ for (const order of orders) {
   order.number = nextNumber('ORD', created)
 
   const subtotal = money(order.lines.reduce((sum, line) => sum + line.quantity * line.price, 0))
-  const shipping = COUNTRIES[order.customer.country].shipping
-  const containerCost = CONTAINERS[order.size].cost
+  const shipping = inUsd(COUNTRIES[order.customer.country].shipping)
+  const containerCost = inUsd(CONTAINERS[order.size].cost)
   const total = money(subtotal + containerCost + shipping)
   const downPayment = money(total / 2)
   const step = STEPS.indexOf(order.status)

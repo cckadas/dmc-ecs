@@ -12,7 +12,8 @@ import { localDateExcludingSundays, formatDateString, QUOTATION_VALIDITY_DAYS, f
 import { getQuotationPricing, pricingErrorMessage } from '../services/pricingService'
 import { containerCount, containerText, formatVolume, formatWeight } from '../utils/containers'
 import { previewEstimate } from '../services/predictionService'
-import { creditRoom, formatPeso, getCreditStatus, overLimitBy } from '../services/creditService'
+import { creditRoom, formatUsd, getCreditStatus, overLimitBy } from '../services/creditService'
+import { rateDay, rateText } from '../utils/money'
 import { loadCarriedFrom, loadWaitingGoods, waitingState } from '../services/rushService'
 import { formatDay } from '../utils/paymentDeadline'
 import { RUSH_ITEM_COLUMNS, columnsIf, isMissingColumn, withNewColumns } from '../utils/newColumns'
@@ -140,6 +141,8 @@ export default function ProFormaInvoicePage() {
         shipping_cost: data.shippingCost,
         total_amount: data.total,
         down_payment_amount: data.downPayment,
+        // The rate it was priced at: the database refuses it if today's changed (048).
+        php_per_usd: data.phpPerUsd,
         expiry_date: data.expiryDate,
         status: 'pending approval',
       }
@@ -161,7 +164,7 @@ export default function ProFormaInvoicePage() {
         return
       }
 
-      // Create quotation items. Goods waiting from a rush shipment are ₱0
+      // Create quotation items. Goods waiting from a rush shipment are US$0
       // lines that name the earlier order's line they carry (034); approving
       // checks them. Left out when there are none, as before 034.
       const carries = data.items.some((item) => item.carried_from_item_id)
@@ -767,13 +770,13 @@ function QuotationViewModal({ quotation, onClose }) {
 
                     {/* UNIT PRICE */}
                     <td className="px-4 py-4 text-left">
-                      ₱ {Number(item.unit_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {Number(item.unit_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
 
 
                     {/* SUBTOTAL */}
                     <td className="px-4 py-4 text-right">
-                      ₱ {Number(item.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {Number(item.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
                   </tr>
                 ))}
@@ -800,7 +803,7 @@ function QuotationViewModal({ quotation, onClose }) {
                   </span>
 
                   <span className="text-lg font-bold text-gray-800">
-                    ₱ {Number(quotation.subtotal || 0).toLocaleString(undefined, {
+                    US$ {Number(quotation.subtotal || 0).toLocaleString(undefined, {
                       minimumFractionDigits: 2
                     })}
                   </span>
@@ -813,7 +816,7 @@ function QuotationViewModal({ quotation, onClose }) {
                     </span>
 
                     <span className="text-lg font-bold text-gray-800">
-                      ₱ {Number(quotation.container_cost).toLocaleString(undefined, {
+                      US$ {Number(quotation.container_cost).toLocaleString(undefined, {
                         minimumFractionDigits: 2
                       })}
                     </span>
@@ -826,7 +829,7 @@ function QuotationViewModal({ quotation, onClose }) {
                   </span>
 
                   <span className="text-lg font-bold text-gray-800">
-                    ₱ {Number(quotation.shipping_cost || 0).toLocaleString(undefined, {
+                    US$ {Number(quotation.shipping_cost || 0).toLocaleString(undefined, {
                       minimumFractionDigits: 2
                     })}
                   </span>
@@ -839,7 +842,7 @@ function QuotationViewModal({ quotation, onClose }) {
                     </span>
 
                     <span className="text-xl font-bold text-gray-800">
-                      ₱ {Number(quotation.total_amount || 0).toLocaleString(undefined, {
+                      US$ {Number(quotation.total_amount || 0).toLocaleString(undefined, {
                         minimumFractionDigits: 2
                       })}
                     </span>
@@ -851,7 +854,7 @@ function QuotationViewModal({ quotation, onClose }) {
                     </span>
 
                     <span className="text-lg font-bold text-green-800">
-                      ₱ {Number(quotation.down_payment_amount || 0).toLocaleString(undefined, {
+                      US$ {Number(quotation.down_payment_amount || 0).toLocaleString(undefined, {
                         minimumFractionDigits: 2
                       })}
                     </span>
@@ -960,6 +963,8 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
   // container the order needs: the smallest that holds it, worked out from each
   // product's volume and weight per case. Nobody picks it (DMC, Nov 2026).
   const [shipping, setShipping] = useState({ cost: null, source: '' })
+  // Today's exchange rate, which the quotation keeps (db/migrations/048).
+  const [rate, setRate] = useState(null)
   const [containers, setContainers] = useState(null)
   const [containerCode, setContainerCode] = useState('')
   // DMC: a quotation is valid for exactly 7 days, Sundays not counted. Fixed,
@@ -986,7 +991,7 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
   const [pricingError, setPricingError] = useState('')
   const [loadingPrices, setLoadingPrices] = useState(true)
   // The customer's goods waiting from a rush shipment (034), not yet joined
-  // to an order: they go in this quotation's container, at ₱0.
+  // to an order: they go in this quotation's container, at US$0.
   const carriedItems = items.filter((item) => item.carried_from_item_id)
   // The soonest last day the customer can approve it to keep them (041).
   const approveBy = carriedItems.map((item) => item.approve_by).filter(Boolean).sort()[0] || null
@@ -1037,7 +1042,7 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
           ? (await loadWaitingGoods(request.profiles.id)).filter((row) => waitingState(row) === 'waiting')
           : []
 
-        const { prices, shipping: shippingPrice, containers: containerPlan } = await getQuotationPricing({
+        const { prices, shipping: shippingPrice, containers: containerPlan, rate: currentRate } = await getQuotationPricing({
           country: request.delivery_locations?.country,
           lines: request.quotation_request_items.map((item) => ({
             productId: item.products.id,
@@ -1059,6 +1064,7 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
         if (!active) return
 
         setShipping(shippingPrice)
+        setRate(currentRate)
         setContainers(containerPlan)
         setContainerCode(containerPlan.plan?.[0]?.code || '')
 
@@ -1194,7 +1200,7 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
                 <>
                   <p className="font-semibold">No credit from DMC: these prices can't be sent yet.</p>
                   <p className="mt-1">
-                    {company} has no credit, so they can have one unpaid order at a time, and they still owe {formatPeso(credit.outstanding)} on their open orders.
+                    {company} has no credit, so they can have one unpaid order at a time, and they still owe {formatUsd(credit.outstanding)} on their open orders.
                     They have to pay it all first. (Admin gives a customer credit on the Customers page.)
                   </p>
                 </>
@@ -1202,8 +1208,8 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
                 <>
                   <p className="font-semibold">Over the credit limit: these prices can't be sent yet.</p>
                   <p className="mt-1">
-                    This quotation ({formatPeso(total)}) would take {company} over their credit limit if they approved it:
-                    they owe {formatPeso(credit.outstanding)} of {formatPeso(credit.creditLimit)}, so their room is {formatPeso(room)}.
+                    This quotation ({formatUsd(total)}) would take {company} over their credit limit if they approved it:
+                    they owe {formatUsd(credit.outstanding)} of {formatUsd(credit.creditLimit)}, so their room is {formatUsd(room)}.
                     They have to pay first.
                   </p>
                 </>
@@ -1219,7 +1225,7 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
 
           {overBy === 0 && priced && request.credit_hold_at && (
             <div className="mb-4 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800">
-              On hold since {formatDateTime(request.credit_hold_at)}: {credit?.hasCredit === false ? 'they have paid all their orders now' : `their balance now leaves room for it (${formatPeso(room)}), at today's prices`}. It can be sent.
+              On hold since {formatDateTime(request.credit_hold_at)}: {credit?.hasCredit === false ? 'they have paid all their orders now' : `their balance now leaves room for it (${formatUsd(room)}), at today's prices`}. It can be sent.
             </div>
           )}
 
@@ -1271,9 +1277,16 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
           ================================================= */}
             <div>
               <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-gray-800">
-                  Customer Order Items
-                </h3>
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800">
+                    Customer Order Items
+                  </h3>
+                  {rate && (
+                    <p className="text-xs text-gray-500">
+                      In US dollars: each supplier's peso price at {rateText(rate.phpPerUsd)} (European Central Bank, {rateDay(rate.rateDate)}), plus the markup.
+                    </p>
+                  )}
+                </div>
 
                 <span className="text-xs text-gray-500">
                   {items.length} item
@@ -1284,7 +1297,7 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
               {carriedItems.length > 0 && (
                 <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                   This customer agreed to a rush shipment on {[...new Set(carriedItems.map((item) => item.carried_from))].join(', ')}:
-                  the goods that hadn't arrived then go in the container of their next order. They're added below at ₱0 (already paid),
+                  the goods that hadn't arrived then go in the container of their next order. They're added below at US$0 (already paid),
                   counted in the container, and can't be left out.
                   {request.quotation_request_items.length === 0 && ' This request is for them alone: only its container and shipping are priced, and the customer pays them.'}
                   {approveBy && (
@@ -1393,7 +1406,7 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
                                   {loadingPrices
                                     ? 'Loading...'
                                     : item.unit_price != null
-                                      ? `₱${item.unit_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                                      ? `US$${item.unit_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
                                       : '-'}
                                 </p>
 
@@ -1413,7 +1426,7 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
 
                               {/* SUBTOTAL */}
                               <td className="px-4 py-4 text-right font-medium text-gray-800">
-                               {item.unit_price != null ? `₱${(item.quantity * item.unit_price).toLocaleString()}` : '-'}
+                               {item.unit_price != null ? `US$${(item.quantity * item.unit_price).toLocaleString()}` : '-'}
                               </td>
                             </tr>
                           )
@@ -1495,7 +1508,7 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
                           {loadingPrices
                             ? 'Loading...'
                             : containerCost != null
-                              ? `₱${containerCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                              ? `US$${containerCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
                               : '-'}
                         </span>
                       </div>
@@ -1503,7 +1516,7 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
                       {plan && containerCost != null && (
                         <p className="mt-1 text-right text-xs text-gray-500">
                           {containers.multiple
-                            ? `Fixed costs: ${plan.map((entry) => `₱${Number(entry.cost).toLocaleString()}${entry.count > 1 ? ` × ${entry.count}` : ''}`).join(' + ')}`
+                            ? `Fixed costs: ${plan.map((entry) => `US$${Number(entry.cost).toLocaleString()}${entry.count > 1 ? ` × ${entry.count}` : ''}`).join(' + ')}`
                             : `Fixed cost of a ${container.name}`}
                         </p>
                       )}
@@ -1521,14 +1534,14 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
                           {loadingPrices
                             ? 'Loading...'
                             : shippingCost != null
-                              ? `₱${shippingCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                              ? `US$${shippingCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
                               : '-'}
                         </span>
                       </div>
 
                       {shipping.cost != null && containerCount > 1 && (
                         <p className="mt-1 text-right text-xs text-gray-500">
-                          ₱{Number(shipping.cost).toLocaleString()} × {containerCount} containers
+                          US${Number(shipping.cost).toLocaleString()} × {containerCount} containers
                         </p>
                       )}
 
@@ -1565,7 +1578,7 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
                       </span>
 
                       <span className="font-semibold text-gray-800">
-                        ₱{subtotal.toLocaleString()}
+                        US${subtotal.toLocaleString()}
                       </span>
                     </div>
 
@@ -1575,7 +1588,7 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
                       </span>
 
                       <span className="font-semibold text-gray-800">
-                        ₱{Number(containerCost || 0).toLocaleString()}
+                        US${Number(containerCost || 0).toLocaleString()}
                       </span>
                     </div>
 
@@ -1585,7 +1598,7 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
                       </span>
 
                       <span className="font-semibold text-gray-800">
-                        ₱{Number(shippingCost || 0).toLocaleString()}
+                        US${Number(shippingCost || 0).toLocaleString()}
                       </span>
                     </div>
 
@@ -1596,7 +1609,7 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
                         </span>
 
                         <span className="text-lg font-bold text-gray-800">
-                          ₱{total.toLocaleString()}
+                          US${total.toLocaleString()}
                         </span>
                       </div>
 
@@ -1606,7 +1619,7 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
                         </span>
 
                         <span className="text-lg font-bold text-[#1F3A2C]">
-                          ₱{downPayment.toLocaleString()}
+                          US${downPayment.toLocaleString()}
                         </span>
                       </div>
                     </div>
@@ -1687,6 +1700,7 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
                             subtotal,
                             total,
                             downPayment,
+                            phpPerUsd: rate?.phpPerUsd ?? null,
                           })
                         }}
                         className="rounded-md bg-[#1F3A2C] px-4 py-2 text-sm font-medium text-white hover:bg-[#2D5A42] disabled:opacity-50"

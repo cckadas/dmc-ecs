@@ -180,7 +180,7 @@ export function checkForecast(months, values) {
 
 
 // Each product's sales, from the system's orders past their down payment:
-//   monthly        its cases and amount (₱) in each of the last 12 full months
+//   monthly        its cases and amount (US$) in each of the last 12 full months
 //   cases, amount  those 12 months' totals
 //   trend          the last 3 months' cases against the 3 before (0.2 = 20% more)
 //   share          its share of its category's cases over the last 6 months

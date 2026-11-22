@@ -2289,7 +2289,7 @@ function AddPurchaseOrderModal({ customerOrders, suppliers, warehouseRacks, load
 
               <div>
                 <p className=" text-xs uppercase text-gray-500"> Customer Order Total </p>
-                <p className="mt-1 font-medium text-gray-800"> ₱ {Number(selectedOrder.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })} </p>
+                <p className="mt-1 font-medium text-gray-800"> US$ {Number(selectedOrder.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })} </p>
               </div>
             </div>
           )}

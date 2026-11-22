@@ -194,7 +194,7 @@ export default function BillingsPage() {
   // FORMAT CURRENCY
   // =====================================================
   function formatCurrency(amount) {
-    return `₱ ${Number(amount || 0).toLocaleString( undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2})}`
+    return `US$ ${Number(amount || 0).toLocaleString( undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2})}`
   }
 
 
@@ -445,9 +445,9 @@ const billingColumns = (paymentStatusOf, balanceOf) => [
   { header: 'Company', value: (order) => order.customer?.company },
   { header: 'Order status', value: (order) => statusText(order.status) },
   { header: 'Payment', value: (order) => statusText(paymentStatusOf(order)) },
-  { header: 'Total (PHP)', value: (order) => money(order.total_amount) },
-  { header: 'Down payment due (PHP)', value: (order) => money(order.down_payment_amount) },
-  { header: 'Paid (PHP)', value: (order) => money(order.settled_amount) },
-  { header: 'Balance (PHP)', value: (order) => money(balanceOf(order)) },
+  { header: 'Total (USD)', value: (order) => money(order.total_amount) },
+  { header: 'Down payment due (USD)', value: (order) => money(order.down_payment_amount) },
+  { header: 'Paid (USD)', value: (order) => money(order.settled_amount) },
+  { header: 'Balance (USD)', value: (order) => money(balanceOf(order)) },
   { header: 'Placed', value: (order) => dateTime(order.created_at) },
 ]
