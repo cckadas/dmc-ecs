@@ -336,16 +336,16 @@ export default function PaymentsPage() {
 
                       {/* TOTAL AMOUNT */}
                       <td className="px-5 py-3">
-                        ₱ {totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        US$ {totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </td>
 
                       {/* SETTLED */}
                       <td className="px-5 py-3">
-                        ₱ {settledAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        US$ {settledAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
 
                         {pendingAmount > 0 && (
                           <p className="text-xs text-yellow-700">
-                            + ₱ {pendingAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} awaiting verification
+                            + US$ {pendingAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} awaiting verification
                           </p>
                         )}
                       </td>
@@ -359,11 +359,11 @@ export default function PaymentsPage() {
                           </span>
                         ) : remainingBalance > 0 ? (
                           <span className="font-semibold text-amber-700">
-                            ₱ {remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            US$ {remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                           </span>
                         ) : (
                           <span className="font-semibold text-green-700">
-                            ₱ 0.00
+                            US$ 0.00
                           </span>
                         )}
                       </td>
@@ -545,7 +545,7 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted, onRefused }) {
     // PREVENT PAYMENT ABOVE REMAINING BALANCE
     // =============================================
     if (amount > remainingBalance) {
-      alert(`The amount paid cannot exceed the remaining balance of ₱ ${remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}.`)
+      alert(`The amount paid cannot exceed the remaining balance of US$ ${remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}.`)
       return
     }
 
@@ -565,13 +565,13 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted, onRefused }) {
     // never pay a balance smaller than the down payment.)
     // =============================================
     if (isFirstPayment && amount < downPaymentAmount) {
-      alert(`The amount paid cannot go lower than the amount due of ₱ ${downPaymentAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}.`)
+      alert(`The amount paid cannot go lower than the amount due of US$ ${downPaymentAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}.`)
       return
     }
 
     // Compared in centavos so 6,600 - 0.000001 rounding doesn't count as short.
     if (!isFirstPayment && Math.round(amount * 100) !== Math.round(remainingBalance * 100)) {
-      alert(`Please pay the full remaining balance of ₱ ${remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}.`)
+      alert(`Please pay the full remaining balance of US$ ${remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}.`)
       return
     }
 
@@ -681,7 +681,7 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted, onRefused }) {
         userId: payment.customer_id,
         role: 'sales',
         title: `${payment.order_number} - Payment needs verification`,
-        message: `A payment of ₱${amount.toLocaleString(undefined, { minimumFractionDigits: 2 })} for order ${payment.order_number} was submitted. Check it against the proof before approving.`,
+        message: `A payment of US$${amount.toLocaleString(undefined, { minimumFractionDigits: 2 })} for order ${payment.order_number} was submitted. Check it against the proof before approving.`,
         type: 'info',
         relatedCustomerOrderId: payment.id,
         link: '/customer-orders',
@@ -786,7 +786,7 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted, onRefused }) {
               </p>
 
               <p className="mt-1 font-semibold text-gray-800">
-                ₱ {totalAmountDue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                US$ {totalAmountDue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
               </p>
             </div>
 
@@ -902,12 +902,12 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted, onRefused }) {
 
                         {/* UNIT PRICE */}
                         <td className="px-4 py-4 text-left">
-                          ₱ {Number(item.unit_price || 0).toLocaleString( undefined, { minimumFractionDigits: 2})}
+                          US$ {Number(item.unit_price || 0).toLocaleString( undefined, { minimumFractionDigits: 2})}
                         </td>
 
                         {/* SUBTOTAL */}
                         <td className="px-4 py-4 text-left">
-                          ₱ {Number(item.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          US$ {Number(item.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </td>
                       </tr>
                     )
@@ -948,7 +948,7 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted, onRefused }) {
                   </span>
 
                   <span className="text-lg font-bold text-gray-800">
-                    ₱ {Number(payment.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    US$ {Number(payment.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </span>
                 </div>
 
@@ -960,7 +960,7 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted, onRefused }) {
                     </span>
 
                     <span className="text-lg font-bold text-gray-800">
-                      ₱ {Number(payment.container_cost).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {Number(payment.container_cost).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
                 )}
@@ -972,7 +972,7 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted, onRefused }) {
                   </span>
 
                   <span className="text-lg font-bold text-gray-800">
-                    ₱ {Number(payment.shipping_cost || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    US$ {Number(payment.shipping_cost || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </span>
                 </div>
 
@@ -986,7 +986,7 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted, onRefused }) {
                     </span>
 
                     <span className="text-xl font-bold text-gray-800">
-                      ₱ {totalAmountDue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {totalAmountDue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
 
@@ -997,7 +997,7 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted, onRefused }) {
                     </span>
 
                     <span className="text-lg font-bold text-blue-800">
-                      ₱ {downPaymentAmount.toLocaleString( undefined, { minimumFractionDigits: 2 })}
+                      US$ {downPaymentAmount.toLocaleString( undefined, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
 
@@ -1008,7 +1008,7 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted, onRefused }) {
                     </span>
 
                     <span className="text-lg font-bold text-green-800">
-                      ₱ {currentSettledAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {currentSettledAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
 
@@ -1020,7 +1020,7 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted, onRefused }) {
                     </span>
 
                     <span className="text-lg font-bold text-amber-800">
-                      ₱ {remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </span>
                   </div>
                 </div>
@@ -1046,7 +1046,7 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted, onRefused }) {
                     </p>
 
                     <p className="mt-1 text-xl font-bold text-amber-800">
-                      ₱ {remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </p>
                   </div>
 
@@ -1078,7 +1078,7 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted, onRefused }) {
 
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">
-                        ₱
+                        US$
                       </span>
 
                       <input
@@ -1089,14 +1089,14 @@ function PaymentModal({ payment, onClose, onPaymentSubmitted, onRefused }) {
                         value={paymentAmount}
                         onChange={(e) => setPaymentAmount(e.target.value)}
                         placeholder="0.00"
-                        className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-8 pr-3 text-right outline-none focus:border-[#1F3A2C] focus:ring-1 focus:ring-[#1F3A2C]"
+                        className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-11 pr-3 text-right outline-none focus:border-[#1F3A2C] focus:ring-1 focus:ring-[#1F3A2C]"
                       />
                     </div>
 
                     <p className="mt-1 text-xs text-gray-400">
                       {isFirstPayment
-                        ? `Down payment: at least ₱ ${downPaymentAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}, up to ₱ ${remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
-                        : `Balance payment: exactly ₱ ${remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+                        ? `Down payment: at least US$ ${downPaymentAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}, up to US$ ${remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                        : `Balance payment: exactly US$ ${remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
                     </p>
                     <p className="mt-1 text-xs text-gray-400">
                       DMC checks the amount against your proof before it counts as paid.
@@ -1183,11 +1183,11 @@ const PAYMENT_COLUMNS = [
   { header: 'Order', value: (order) => order.order_number },
   { header: 'Quotation', value: (order) => order.quotation_number },
   { header: 'Status', value: (order) => statusText(order.status) },
-  { header: 'Total (PHP)', value: (order) => money(order.total_amount) },
-  { header: 'Down payment (PHP)', value: (order) => money(order.down_payment_amount) },
-  { header: 'Paid and verified (PHP)', value: (order) => money(order.settled_amount) },
-  { header: 'Waiting for DMC to check (PHP)', value: (order) => money(order.pending_payment_amount) },
-  { header: 'Balance (PHP)', value: (order) => (isCancelledOrder(order) ? 0 : money(Math.max(Number(order.total_amount || 0) - Number(order.settled_amount || 0), 0))) },
+  { header: 'Total (USD)', value: (order) => money(order.total_amount) },
+  { header: 'Down payment (USD)', value: (order) => money(order.down_payment_amount) },
+  { header: 'Paid and verified (USD)', value: (order) => money(order.settled_amount) },
+  { header: 'Waiting for DMC to check (USD)', value: (order) => money(order.pending_payment_amount) },
+  { header: 'Balance (USD)', value: (order) => (isCancelledOrder(order) ? 0 : money(Math.max(Number(order.total_amount || 0) - Number(order.settled_amount || 0), 0))) },
   { header: 'Down payment due by', value: (order) => (Number(order.settled_amount || 0) > 0 || isCancelledOrder(order) ? '' : day(downPaymentDates(order)?.deadline)) },
   { header: 'Cancelled', value: (order) => dateTime(order.cancelled_at) },
   { header: 'Placed', value: (order) => dateTime(order.created_at) },

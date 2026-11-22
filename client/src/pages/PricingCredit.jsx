@@ -8,9 +8,10 @@ import { faFloppyDisk, faPlus, faTrash } from '@fortawesome/free-solid-svg-icons
 
 import IconButton from '../components/IconButton'
 import { getMarkups, getContainerSizes, getContainerFillPercent, pricingErrorMessage } from '../services/pricingService'
-import { getCreditLimit, saveCreditLimit, formatPeso, creditErrorMessage } from '../services/creditService'
+import { getCreditLimit, saveCreditLimit, formatUsd, creditErrorMessage } from '../services/creditService'
 import { withNewColumns } from '../utils/newColumns'
 import TableScroll from '../components/TableScroll'
+import ShippingUsdSection from '../components/ShippingUsdSection'
 import { COUNTRY_NAMES, countryKey } from '../utils/countryPlaces'
 
 
@@ -25,6 +26,9 @@ const th = 'px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide te
 // ordering more once their unpaid balance reaches it. Admin and management only.
 // =============================================
 export default function PricingCreditPage() {
+  // Adding or removing a country's markup shows it in the shipping section too.
+  const [shippingVersion, setShippingVersion] = useState(0)
+
   return (
     <div>
 
@@ -35,12 +39,16 @@ export default function PricingCreditPage() {
         </h1>
 
         <p className="mt-1 text-gray-500">
-          The markups, shipping and container costs that set every quotation, and how much a customer can owe before they can't order more.
+          The markups, shipping and container costs that set every quotation, in US dollars, and how much a customer can owe before they can't order more.
         </p>
       </div>
 
       <div className="mb-10">
-        <MarkupsSection />
+        <MarkupsSection onChange={() => setShippingVersion((version) => version + 1)} />
+      </div>
+
+      <div className="mb-10">
+        <ShippingUsdSection version={shippingVersion} />
       </div>
 
       <div className="mb-10">
@@ -55,14 +63,15 @@ export default function PricingCreditPage() {
 
 
 // =============================================
-// MARKUPS AND SHIPPING COSTS BY DESTINATION COUNTRY
+// MARKUPS BY DESTINATION COUNTRY
 //
-// A quotation's prices are fixed: each line is the supplier price plus the
-// country's markup, and shipping is the country's fixed cost per shipment. A
-// country without its own row uses the Default row. Sales can't change them,
-// so these rates are the only lever on what customers pay.
+// A quotation's prices are fixed: each line is the supplier's peso price in US
+// dollars at today's exchange rate, plus the country's markup. A country
+// without its own row uses the Default row. Sales can't change them, so these
+// rates are the only lever on what customers pay. Shipping costs, in US
+// dollars, have their own section (ShippingUsdSection, db/migrations/048).
 // =============================================
-function MarkupsSection() {
+function MarkupsSection({ onChange = () => {} }) {
   const { profile } = useAuth()
   const { toast } = useToast()
 
@@ -70,7 +79,6 @@ function MarkupsSection() {
   const [drafts, setDrafts] = useState({})
   const [newCountry, setNewCountry] = useState('')
   const [newPercent, setNewPercent] = useState('')
-  const [newShipping, setNewShipping] = useState('')
   const [loadError, setLoadError] = useState('')
 
 
@@ -82,7 +90,6 @@ function MarkupsSection() {
         markup.country,
         {
           percent: String(markup.markup_percent),
-          shipping: markup.shipping_cost == null ? '' : String(markup.shipping_cost),
         },
       ])))
       setLoadError('')
@@ -97,10 +104,9 @@ function MarkupsSection() {
   }
 
 
-  async function saveMarkup(country, percentText, shippingText) {
+  async function saveMarkup(country, percentText) {
     const name = country.trim()
     const percent = Number(percentText)
-    const shipping = Number(shippingText)
 
     if (!name) {
       toast.error('Enter a country.')
@@ -112,19 +118,12 @@ function MarkupsSection() {
       return false
     }
 
-    // Required: a missing cost would stop quotations to this country.
-    if (shippingText === '' || !(shipping >= 0)) {
-      toast.error('Enter a shipping cost of ₱0 or more.')
-      return false
-    }
-
     const { error } = await supabase
       .from('market_markups')
       .upsert(
         {
           country: name,
           markup_percent: percent,
-          shipping_cost: shipping,
           updated_by: profile?.id,
           updated_at: new Date().toISOString(),
         },
@@ -137,8 +136,9 @@ function MarkupsSection() {
       return false
     }
 
-    toast.success(`Rates for ${name} saved.`)
+    toast.success(`Markup for ${name} saved.`)
     await loadMarkups()
+    onChange()
     return true
   }
 
@@ -151,10 +151,11 @@ function MarkupsSection() {
       return
     }
 
-    if (await saveMarkup(newCountry, newPercent, newShipping)) {
+    const name = newCountry
+    if (await saveMarkup(newCountry, newPercent)) {
       setNewCountry('')
       setNewPercent('')
-      setNewShipping('')
+      toast.success(`Now set the shipping cost for ${name} in US dollars, in the next section.`)
     }
   }
 
@@ -178,6 +179,7 @@ function MarkupsSection() {
 
     toast.success(`Rates for ${country} removed.`)
     loadMarkups()
+    onChange()
   }
 
 
@@ -192,19 +194,19 @@ function MarkupsSection() {
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold text-[#1F3A2C]">
-          Markups and shipping costs by country
+          Markups by country
         </h2>
 
-        <ExportButton count={markups.length} onExport={(how) => exportList(how, 'markups-and-shipping', MARKUP_COLUMNS, markups)} />
+        <ExportButton count={markups.length} onExport={(how) => exportList(how, 'markups', MARKUP_COLUMNS, markups)} />
       </div>
 
       <p className="mb-3 text-sm text-gray-500">
-        Every quotation price is the supplier price plus the markup for the delivery country, and each quotation pays that country's fixed shipping cost, however much it holds. Countries that aren't listed use the Default row. Sales can't change quotation prices or shipping, so these rates are the only way to change what customers pay.
+        Every quotation price is the supplier's peso price in US dollars at today's exchange rate, plus the markup for the delivery country. Countries that aren't listed use the Default row. Sales can't change quotation prices, so these markups and the shipping and container costs are the only way to change what customers pay.
       </p>
 
       <p className="mb-3 text-sm text-gray-500">
         <span className="mr-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">Simulated</span>
-        rates are made up until DMC gives its own, from how far each country is from Manila: the markup is Hong Kong's 25% plus 1 point, and the shipping cost Hong Kong's ₱120,000 plus ₱10,000, for every 2,000 km farther than Hong Kong (up to 30% and ₱170,000). Saving a country's rates makes them DMC's own.
+        markups are worked out until DMC gives its own, from how far each country is from Manila: Hong Kong's 25% (DMC's own) plus 1 point for every 2,000 km farther than Hong Kong, up to 30%. Saving a country's markup makes it DMC's own.
       </p>
 
       {loadError && (
@@ -219,7 +221,6 @@ function MarkupsSection() {
             <tr>
               <th className={th}>Country</th>
               <th className={th}>Markup %</th>
-              <th className={th}>Shipping Cost (₱)</th>
               <th className={th}>Actions</th>
             </tr>
           </thead>
@@ -248,20 +249,8 @@ function MarkupsSection() {
                   </td>
 
                   <td className="px-5 py-3">
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={drafts[markup.country]?.shipping ?? ''}
-                      onChange={(e) => updateDraft(markup.country, 'shipping', e.target.value)}
-                      placeholder="Not set"
-                      className={`${input} w-32 text-right`}
-                    />
-                  </td>
-
-                  <td className="px-5 py-3">
                     <div className="flex gap-2">
-                      <IconButton icon={faFloppyDisk} title="Save Rates" color="green" onClick={() => saveMarkup(markup.country, drafts[markup.country]?.percent ?? '', drafts[markup.country]?.shipping ?? '')} />
+                      <IconButton icon={faFloppyDisk} title="Save Rates" color="green" onClick={() => saveMarkup(markup.country, drafts[markup.country]?.percent ?? '')} />
 
                       {!isDefault && (
                         <IconButton icon={faTrash} title="Remove Rates" color="red" onClick={() => removeMarkup(markup.country)} />
@@ -300,18 +289,6 @@ function MarkupsSection() {
                   onChange={(e) => setNewPercent(e.target.value)}
                   placeholder="0"
                   className={`${input} w-28 text-right`}
-                />
-              </td>
-
-              <td className="px-5 py-3">
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={newShipping}
-                  onChange={(e) => setNewShipping(e.target.value)}
-                  placeholder="0.00"
-                  className={`${input} w-32 text-right`}
                 />
               </td>
 
@@ -393,7 +370,7 @@ function ContainersSection() {
 
     // Required: a missing cost would stop quotations that need this size.
     if (draft.cost === '' || !(cost >= 0)) {
-      toast.error(`Enter a cost of ₱0 or more for the ${size.name}.`)
+      toast.error(`Enter a cost of US$0 or more for the ${size.name}.`)
       return
     }
 
@@ -478,7 +455,7 @@ function ContainersSection() {
               <th className={th}>Container</th>
               <th className={th}>Inside Volume (m³)</th>
               <th className={th}>Weight Limit (kg)</th>
-              <th className={th}>Cost (₱)</th>
+              <th className={th}>Cost (US$)</th>
               <th className={th}>Actions</th>
             </tr>
           </thead>
@@ -644,7 +621,7 @@ function CreditSection() {
     const value = Number(draft)
 
     if (draft === '' || !(value > 0)) {
-      toast.error('Enter a credit limit above ₱0.')
+      toast.error('Enter a credit limit above US$0.')
       return
     }
 
@@ -652,7 +629,7 @@ function CreditSection() {
 
     try {
       await saveCreditLimit(value, profile?.id)
-      toast.success(`Standard credit limit set to ${formatPeso(value)}.`)
+      toast.success(`Standard credit limit set to ${formatUsd(value)}.`)
       await loadCredit()
     } catch (error) {
       toast.error(creditErrorMessage(error))
@@ -697,7 +674,7 @@ function CreditSection() {
         {perCustomer && <span className="text-sm font-medium text-gray-700">Standard limit</span>}
 
         <div className="relative">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">₱</span>
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">US$</span>
           <input
             type="number"
             min="0"
@@ -707,7 +684,7 @@ function CreditSection() {
             onKeyDown={(e) => { if (e.key === 'Enter') saveLimit() }}
             disabled={saving}
             placeholder="0.00"
-            className="w-48 rounded-md border border-gray-300 bg-white py-2 pl-7 pr-3 text-right text-sm outline-none focus:border-[#2D5A42] focus:ring-1 focus:ring-[#2D5A42]"
+            className="w-48 rounded-md border border-gray-300 bg-white py-2 pl-11 pr-3 text-right text-sm outline-none focus:border-[#2D5A42] focus:ring-1 focus:ring-[#2D5A42]"
           />
         </div>
 
@@ -721,7 +698,7 @@ function CreditSection() {
         </button>
 
         <span className="text-sm text-gray-500">
-          Current {perCustomer ? 'standard ' : ''}limit: {creditLimit == null ? 'none' : formatPeso(creditLimit)}
+          Current {perCustomer ? 'standard ' : ''}limit: {creditLimit == null ? 'none' : formatUsd(creditLimit)}
           {perCustomer ? ". It's what admin starts from when giving a customer credit; changing it changes nobody's limit." : ''}
         </span>
       </div>
@@ -747,7 +724,7 @@ function CreditSection() {
                   <tr key={customer.id} className="border-t border-gray-200 text-sm">
                     <td className="px-5 py-3 font-medium text-gray-800">{customer.name || '-'}</td>
                     <td className="px-5 py-3">{customer.company || '-'}</td>
-                    <td className="px-5 py-3">{formatPeso(customer.outstanding)}</td>
+                    <td className="px-5 py-3">{formatUsd(customer.outstanding)}</td>
                     <td className="px-5 py-3">{limitText(customer, creditLimit)}</td>
                     <td className={`px-5 py-3 ${state.className}`}>{state.label}</td>
                   </tr>
@@ -775,7 +752,6 @@ function CreditSection() {
 const MARKUP_COLUMNS = [
   { header: 'Country', value: (markup) => markup.country },
   { header: 'Markup (%)', value: (markup) => number(markup.markup_percent) },
-  { header: 'Shipping cost (PHP)', value: (markup) => money(markup.shipping_cost) },
   { header: 'Simulated', value: (markup) => Boolean(markup.is_simulated) },
 ]
 
@@ -798,13 +774,13 @@ function creditStanding(customer, standard) {
 function limitText(customer, standard) {
   if (customer.has_credit === false) return 'No credit'
   const limit = customer.has_credit ? customer.credit_limit : standard
-  return limit == null ? 'None' : formatPeso(limit)
+  return limit == null ? 'None' : formatUsd(limit)
 }
 
 const balanceColumns = (standard) => [
   { header: 'Customer', value: (customer) => customer.name },
   { header: 'Company', value: (customer) => customer.company },
-  { header: 'Unpaid balance (PHP)', value: (customer) => money(customer.outstanding) },
-  { header: 'Credit limit (PHP)', value: (customer) => (customer.has_credit === false ? 'No credit' : money(customer.has_credit ? customer.credit_limit : standard)) },
+  { header: 'Unpaid balance (USD)', value: (customer) => money(customer.outstanding) },
+  { header: 'Credit limit (USD)', value: (customer) => (customer.has_credit === false ? 'No credit' : money(customer.has_credit ? customer.credit_limit : standard)) },
   { header: 'Standing', value: (customer) => creditStanding(customer, standard).label },
 ]

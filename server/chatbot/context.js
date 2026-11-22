@@ -20,8 +20,9 @@ const MAX_ORDERS = 10
 const MAX_ITEMS = 15
 const MAX_PRODUCTS = 8
 
-const peso = (value) =>
-  `PHP ${Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+// Customers' money is in US dollars (db/migrations/048).
+const usd = (value) =>
+  `USD ${Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 // Timestamps are shown in Philippine time; date-only values as written.
 const formatTimestamp = (value) =>
@@ -368,11 +369,11 @@ export async function buildCustomerContext(customerId, message) {
     }
 
     const payment = {
-      orderTotal: peso(total),
-      downPaymentRequired: peso(order.down_payment_amount),
-      paidAndVerified: peso(settled),
-      awaitingVerification: pending > 0 ? peso(pending) : null,
-      balanceDue: peso(Math.max(total - settled, 0)),
+      orderTotal: usd(total),
+      downPaymentRequired: usd(order.down_payment_amount),
+      paidAndVerified: usd(settled),
+      awaitingVerification: pending > 0 ? usd(pending) : null,
+      balanceDue: usd(Math.max(total - settled, 0)),
       fullyPaid: total > 0 && settled >= total,
       downPaymentDeadline: deadline ? formatDateOnly(deadline) : null,
       downPaymentLastDay: lastDay ? formatDateOnly(lastDay) : null,
@@ -409,8 +410,8 @@ export async function buildCustomerContext(customerId, message) {
       items: items.map((item) => ({
         product: productName(item.products),
         quantity: quantityText(item.quantity, item.products?.unit),
-        unitPrice: peso(item.unit_price),
-        lineTotal: peso(item.subtotal),
+        unitPrice: usd(item.unit_price),
+        lineTotal: usd(item.subtotal),
         ...(item.carried_from_item_id
           ? { fromEarlierOrder: `${orderNumberOfItem.get(item.carried_from_item_id) || 'an earlier order'} (rush shipment; already paid)` }
           : {}),
@@ -478,17 +479,17 @@ export async function buildCustomerContext(customerId, message) {
       quotationNumber: quotation.quotation_number,
       forRequest: requests.find((request) => request.id === quotation.quotation_request_id)?.quotation_reference || null,
       status: label(quotation.status),
-      total: peso(quotation.total_amount),
-      downPayment: peso(quotation.down_payment_amount),
-      shipping: peso(quotation.shipping_cost),
-      container: quotation.container_cost == null ? null : `${containerText(quotation)}, ${peso(quotation.container_cost)}`,
+      total: usd(quotation.total_amount),
+      downPayment: usd(quotation.down_payment_amount),
+      shipping: usd(quotation.shipping_cost),
+      container: quotation.container_cost == null ? null : `${containerText(quotation)}, ${usd(quotation.container_cost)}`,
       expiresOn: formatDateOnly(quotation.expiry_date),
       expired: Boolean(quotation.expiry_date && String(quotation.expiry_date).slice(0, 10) < today),
     })),
     credit: {
       hasCreditFromDmc: hasCredit,
-      unpaidBalance: peso(unpaid),
-      creditLimit: !hasCredit ? 'none: DMC has not given this customer credit yet' : creditLimit == null ? 'no limit set' : peso(creditLimit),
+      unpaidBalance: usd(unpaid),
+      creditLimit: !hasCredit ? 'none: DMC has not given this customer credit yet' : creditLimit == null ? 'no limit set' : usd(creditLimit),
       canPlaceNewOrders: !hasCredit || creditLimit == null || unpaid < creditLimit,
       canApproveAnotherOrder: hasCredit ? (creditLimit == null || unpaid < creditLimit) : unpaid <= 0.009,
       ...(hasCredit ? {} : { withoutCredit: 'One unpaid order at a time: a new quotation is sent and approved only once every earlier order is paid in full, and each order ships only once it is paid in full.' }),

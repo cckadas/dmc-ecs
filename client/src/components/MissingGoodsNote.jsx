@@ -12,7 +12,7 @@ import { useToast } from '../context/ToastContext'
 // sent. Sales and admin record a refund once it's sent.
 // =============================================================================
 
-const peso = (value) => `₱ ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+const peso = (value) => `US$ ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
 
 export default function MissingGoodsNote({ order }) {
   const { profile } = useAuth()

@@ -19,7 +19,7 @@ const dateFormat = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'nume
 const shortDate = (value) => (value ? dateFormat.format(new Date(value)) : '—')
 const dayFormat = (day) => (day ? dateFormat.format(new Date(`${String(day).slice(0, 10)}T12:00:00+08:00`)) : '—')
 const cases = (value) => `${Math.round(value).toLocaleString('en-US')}`
-const peso = (value) => `₱${Math.round(value).toLocaleString('en-US')}`
+const peso = (value) => `US$${Math.round(value).toLocaleString('en-US')}`
 
 // Where an order is now, in words.
 const STEP_NOW = {

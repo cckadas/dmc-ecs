@@ -4,7 +4,7 @@
 // A rushed order's line ships only the cases that were in DMC's warehouse when
 // the customer agreed (ship_quantity; empty = all of it, as for every other
 // order). The rest waits, and joins the customer's next order as a line of its
-// own at ₱0, carried from the first (carried_from_item_id). Pure, no imports.
+// own at US$0, carried from the first (carried_from_item_id). Pure, no imports.
 // =============================================================================
 
 // Cases of the line in this order's container.

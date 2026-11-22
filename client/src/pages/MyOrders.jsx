@@ -285,7 +285,7 @@ export default function MyOrdersPage() {
 
                   {/* TOTAL */}
                   <td className="px-5 py-3 font-medium">
-                    ₱ {Number(order.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    US$ {Number(order.total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </td>
 
 
@@ -529,13 +529,13 @@ function MyOrderModal({ order, estimate, rushOption = null, agreement = null, wa
 
                     {/* UNIT PRICE */}
                     <td className="px-4 py-4 text-left">
-                      ₱ {Number(item.unit_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {Number(item.unit_price || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
 
 
                     {/* SUBTOTAL */}
                     <td className="px-4 py-4 text-left">
-                      ₱ {Number(item.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      US$ {Number(item.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
                   </tr>
                 ))}
@@ -562,7 +562,7 @@ function MyOrderModal({ order, estimate, rushOption = null, agreement = null, wa
                   </span>
 
                   <span className="text-lg font-bold text-gray-800">
-                    ₱ {Number(order.subtotal || 0).toLocaleString(undefined, {
+                    US$ {Number(order.subtotal || 0).toLocaleString(undefined, {
                       minimumFractionDigits: 2
                     })}
                   </span>
@@ -575,7 +575,7 @@ function MyOrderModal({ order, estimate, rushOption = null, agreement = null, wa
                     </span>
 
                     <span className="text-lg font-bold text-gray-800">
-                      ₱ {Number(order.container_cost).toLocaleString(undefined, {
+                      US$ {Number(order.container_cost).toLocaleString(undefined, {
                         minimumFractionDigits: 2
                       })}
                     </span>
@@ -588,7 +588,7 @@ function MyOrderModal({ order, estimate, rushOption = null, agreement = null, wa
                   </span>
 
                   <span className="text-lg font-bold text-gray-800">
-                    ₱ {Number(order.shipping_cost || 0).toLocaleString(undefined, {
+                    US$ {Number(order.shipping_cost || 0).toLocaleString(undefined, {
                       minimumFractionDigits: 2
                     })}
                   </span>
@@ -603,7 +603,7 @@ function MyOrderModal({ order, estimate, rushOption = null, agreement = null, wa
                     </span>
 
                     <span className="text-xl font-bold text-gray-800">
-                      ₱ {Number(order.total_amount || 0).toLocaleString(undefined, {
+                      US$ {Number(order.total_amount || 0).toLocaleString(undefined, {
                         minimumFractionDigits: 2
                       })}
                     </span>
@@ -615,7 +615,7 @@ function MyOrderModal({ order, estimate, rushOption = null, agreement = null, wa
                     </span>
 
                     <span className="text-lg font-bold text-green-800">
-                      ₱ {Number(order.down_payment_amount || 0).toLocaleString(undefined, {
+                      US$ {Number(order.down_payment_amount || 0).toLocaleString(undefined, {
                         minimumFractionDigits: 2
                       })}
                     </span>
@@ -688,8 +688,8 @@ const myOrderColumns = (estimates) => [
   { header: 'Estimated ship date', value: (order) => (estimates[order.id]?.shipped ? '' : day(estimates[order.id]?.estimatedShipDate)) },
   { header: 'Shipped', value: (order) => day(estimates[order.id]?.shippedOn) },
   { header: 'Container', value: (order) => containerText(order) },
-  { header: 'Total (PHP)', value: (order) => money(order.total_amount) },
-  { header: 'Down payment (PHP)', value: (order) => money(order.down_payment_amount) },
-  { header: 'Paid (PHP)', value: (order) => money(order.settled_amount) },
+  { header: 'Total (USD)', value: (order) => money(order.total_amount) },
+  { header: 'Down payment (USD)', value: (order) => money(order.down_payment_amount) },
+  { header: 'Paid (USD)', value: (order) => money(order.settled_amount) },
   { header: 'Products', value: (order) => productsText(order.customer_order_items) },
 ]

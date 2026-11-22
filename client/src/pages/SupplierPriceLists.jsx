@@ -9,7 +9,8 @@ import { faDownload, faFileImport, faFloppyDisk, faPen, faXmark } from '@fortawe
 import IconButton from '../components/IconButton'
 import { BOM, parseCsv, toCsv } from '../utils/csv'
 import { localDateString } from '../utils/dates'
-import { saveSupplierPrices, pricingErrorMessage } from '../services/pricingService'
+import { getExchangeRate, saveSupplierPrices, pricingErrorMessage } from '../services/pricingService'
+import { formatUsd, rateDay, rateText } from '../utils/money'
 import TableScroll from '../components/TableScroll'
 
 
@@ -43,6 +44,11 @@ export default function SupplierPriceLists() {
   const [supplierId, setSupplierId] = useState('')
   const [products, setProducts] = useState([])
   const [currentPrices, setCurrentPrices] = useState({})
+  // Today's exchange rate, to show each peso price in US dollars (db/migrations/048).
+  const [rate, setRate] = useState(null)
+  useEffect(() => {
+    getExchangeRate().then(setRate).catch(() => setRate(null))
+  }, [])
   const [loadingCatalog, setLoadingCatalog] = useState(false)
   const [setupError, setSetupError] = useState('')
 
@@ -443,6 +449,7 @@ export default function SupplierPriceLists() {
 
               <p className="text-sm text-gray-500">
                 Use the pencil to change a price. The old price is kept as history, so orders already made at it don't change. The MOQ is shown to customers, who can't request less than it.
+                {rate && ` Suppliers are paid in pesos; customers pay in US dollars. The US$ column is each price at today's rate, ${rateText(rate.phpPerUsd)} (European Central Bank, ${rateDay(rate.rateDate)}), before the country's markup.`}
               </p>
             </div>
 
@@ -463,6 +470,7 @@ export default function SupplierPriceLists() {
                   <th className={th}>Product</th>
                   <th className={th}>SKU</th>
                   <th className={th}>Unit Price</th>
+                  <th className={th}>In US$ (today)</th>
                   <th className={th}>MOQ</th>
                   <th className={th}>Effective From</th>
                   <th className={th}>Actions</th>
@@ -472,7 +480,7 @@ export default function SupplierPriceLists() {
               <tbody>
                 {loadingCatalog ? (
                   <tr>
-                    <td colSpan="6" className="px-5 py-8 text-center text-sm text-gray-500">Loading...</td>
+                    <td colSpan="7" className="px-5 py-8 text-center text-sm text-gray-500">Loading...</td>
                   </tr>
                 ) : products.length > 0 ? (
                   products.map((product) => {
@@ -510,6 +518,8 @@ export default function SupplierPriceLists() {
                             </div>
                             {product.unit && <p className="mt-1 text-xs text-gray-500">per {product.unit}</p>}
                           </td>
+
+                          <td className="px-5 py-3 text-gray-600">{rate && editPrice !== '' ? formatUsd(Number(editPrice) / rate.phpPerUsd) : '-'}</td>
 
                           <td className="px-5 py-3">
                             <input
@@ -555,6 +565,7 @@ export default function SupplierPriceLists() {
                             ? `${formatMoney(current.unit_price)}${product.unit ? ` / ${product.unit}` : ''}`
                             : <span className="text-amber-700">No price on file</span>}
                         </td>
+                        <td className="px-5 py-3 text-gray-600">{current && rate ? formatUsd(Number(current.unit_price) / rate.phpPerUsd) : '-'}</td>
                         <td className="px-5 py-3">{current?.min_order_qty ?? '-'}</td>
                         <td className="px-5 py-3">{effectiveFrom}</td>
                         <td className="px-5 py-3">
@@ -571,7 +582,7 @@ export default function SupplierPriceLists() {
                   })
                 ) : (
                   <tr>
-                    <td colSpan="6" className="px-5 py-8 text-center text-sm text-gray-500">
+                    <td colSpan="7" className="px-5 py-8 text-center text-sm text-gray-500">
                       This supplier has no products in the catalog yet.
                     </td>
                   </tr>

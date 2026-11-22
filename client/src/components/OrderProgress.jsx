@@ -46,7 +46,7 @@ const expectedDates = (prediction, shipped) => [
 ]
 
 const formatPeso = (value) =>
-  `₱${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  `US$${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 
 // =============================================

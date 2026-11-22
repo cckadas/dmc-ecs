@@ -12,7 +12,7 @@ import { faTrash, faPen, faXmark, faHand, faUserSlash, faUserCheck, faCreditCard
 import { useToast } from '../context/ToastContext'
 import { withNewColumns } from '../utils/newColumns'
 import { ACCOUNT_COLUMNS, ACCOUNT_STATUS_TEXT, accountStatusOf } from '../utils/customerAccount'
-import { creditErrorMessage, formatPeso, getCreditChanges, getCreditLimit, getCreditStatus, setCustomerCredit } from '../services/creditService'
+import { creditErrorMessage, formatUsd, getCreditChanges, getCreditLimit, getCreditStatus, setCustomerCredit } from '../services/creditService'
 
 import IconButton from '../components/IconButton'
 import RoleActivityBadge from '../components/RoleActivityBadge'
@@ -636,7 +636,7 @@ function AccountStepModal({ customer, step, onClose, onDone }) {
                       <ul className="mt-1 list-disc space-y-0.5 pl-5">
                         {preview.carry_on?.length > 0 && <li>{list(preview.carry_on, (order) => `${order.number} (${order.status})`)}</li>}
                         {preview.payment_checks?.length > 0 && <li>Payment waiting for sales' check: {list(preview.payment_checks, (order) => order.number)}</li>}
-                        {preview.balances?.length > 0 && <li>Balance still to pay: {list(preview.balances, (order) => `${order.number} (${formatPeso(order.amount)})`)}</li>}
+                        {preview.balances?.length > 0 && <li>Balance still to pay: {list(preview.balances, (order) => `${order.number} (${formatUsd(order.amount)})`)}</li>}
                       </ul>
                       <p className="mt-2 text-xs text-gray-500">Once these are shipped and paid, you can deactivate them.</p>
                     </div>
@@ -1107,7 +1107,7 @@ function CreditCell({ customer }) {
   return (
     <>
       {customer.has_credit
-        ? <span className="font-medium text-gray-800">Up to {formatPeso(customer.credit_limit)}</span>
+        ? <span className="font-medium text-gray-800">Up to {formatUsd(customer.credit_limit)}</span>
         : <span className="text-gray-500">No credit</span>}
       {customer.credit_changed_at && (
         <span className="mt-1 block text-xs text-gray-500">
@@ -1126,10 +1126,10 @@ function CreditCell({ customer }) {
 // have one unpaid order at a time and pay each order in full before it ships.
 // =============================================
 const CHANGE_TEXT = {
-  'kept from before': (change) => `Credit kept from before, up to ${formatPeso(change.credit_limit)}`,
-  given: (change) => `Credit given, up to ${formatPeso(change.credit_limit)}`,
-  'limit changed': (change) => `Limit changed from ${formatPeso(change.previous_limit)} to ${formatPeso(change.credit_limit)}`,
-  removed: (change) => `Credit removed${change.previous_limit != null ? ` (was up to ${formatPeso(change.previous_limit)})` : ''}`,
+  'kept from before': (change) => `Credit kept from before, up to ${formatUsd(change.credit_limit)}`,
+  given: (change) => `Credit given, up to ${formatUsd(change.credit_limit)}`,
+  'limit changed': (change) => `Limit changed from ${formatUsd(change.previous_limit)} to ${formatUsd(change.credit_limit)}`,
+  removed: (change) => `Credit removed${change.previous_limit != null ? ` (was up to ${formatUsd(change.previous_limit)})` : ''}`,
 }
 
 function CreditModal({ customer, onClose, onDone }) {
@@ -1160,7 +1160,7 @@ function CreditModal({ customer, onClose, onDone }) {
 
   async function save() {
     if (hasCredit && !(value > 0)) {
-      toast.error('Type the credit limit, above ₱0.')
+      toast.error('Type the credit limit, above US$0.')
       return
     }
 
@@ -1170,9 +1170,9 @@ function CreditModal({ customer, onClose, onDone }) {
       const result = await setCustomerCredit(customer.id, hasCredit, hasCredit ? value : null)
       toast.success(
         !result?.changed ? 'Nothing changed.'
-          : result.kind === 'given' ? `${label} has credit now, up to ${formatPeso(value)}.`
+          : result.kind === 'given' ? `${label} has credit now, up to ${formatUsd(value)}.`
             : result.kind === 'removed' ? `${label} has no credit now.`
-              : `${label}'s credit limit is now ${formatPeso(value)}.`
+              : `${label}'s credit limit is now ${formatUsd(value)}.`
       )
       onDone()
     } catch (error) {
@@ -1202,9 +1202,9 @@ function CreditModal({ customer, onClose, onDone }) {
         <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5 text-sm">
           <p className="text-gray-700">
             Now: {customer.has_credit
-              ? <>credit up to <span className="font-medium">{formatPeso(customer.credit_limit)}</span></>
+              ? <>credit up to <span className="font-medium">{formatUsd(customer.credit_limit)}</span></>
               : 'no credit'}
-            {owed != null && <>. They owe {formatPeso(owed)} on their orders</>}.
+            {owed != null && <>. They owe {formatUsd(owed)} on their orders</>}.
           </p>
 
           <label className={choice(hasCredit)}>
@@ -1216,7 +1216,7 @@ function CreditModal({ customer, onClose, onDone }) {
               </span>
               {hasCredit && (
                 <span className="relative mt-2 block w-48">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">₱</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">US$</span>
                   <input
                     type="number"
                     min="0"
@@ -1225,7 +1225,7 @@ function CreditModal({ customer, onClose, onDone }) {
                     onChange={(e) => setLimit(e.target.value)}
                     disabled={saving}
                     placeholder="0.00"
-                    className="w-full rounded-md border border-gray-300 bg-white py-2 pl-7 pr-3 text-right text-sm outline-none focus:border-[#2D5A42] focus:ring-1 focus:ring-[#2D5A42]"
+                    className="w-full rounded-md border border-gray-300 bg-white py-2 pl-11 pr-3 text-right text-sm outline-none focus:border-[#2D5A42] focus:ring-1 focus:ring-[#2D5A42]"
                   />
                 </span>
               )}
@@ -1244,13 +1244,13 @@ function CreditModal({ customer, onClose, onDone }) {
 
           {hasCredit && owesNow && value > 0 && owed >= value && (
             <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-800">
-              They already owe {formatPeso(owed)}, which reaches this limit: they can't send new requests or approve quotations until they pay it down.
+              They already owe {formatUsd(owed)}, which reaches this limit: they can't send new requests or approve quotations until they pay it down.
             </p>
           )}
 
           {!hasCredit && customer.has_credit && owesNow && (
             <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-800">
-              They owe {formatPeso(owed)}: without credit, each of those orders ships only once it's paid in full, and they can't approve a new order until they've paid.
+              They owe {formatUsd(owed)}: without credit, each of those orders ships only once it's paid in full, and they can't approve a new order until they've paid.
             </p>
           )}
 
@@ -1262,7 +1262,7 @@ function CreditModal({ customer, onClose, onDone }) {
                   <li key={change.id}>
                     {formatDay(change.changed_at)}: {(CHANGE_TEXT[change.kind] || (() => change.kind))(change)}
                     {change.kind !== 'kept from before' && change.changed_by_name ? `, by ${change.changed_by_name}` : ''}
-                    {` (owed ${formatPeso(change.owed_then)} then)`}
+                    {` (owed ${formatUsd(change.owed_then)} then)`}
                   </li>
                 ))}
               </ul>

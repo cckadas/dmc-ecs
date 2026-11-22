@@ -15,6 +15,7 @@ import { startPredictionAlerts } from './alerts.js'
 import { startPaymentDeadlines } from './paymentDeadlines.js'
 import { startQuotationExpiry } from './quotationExpiry.js'
 import { startWaitingGoodsDeadlines } from './waitingGoods.js'
+import { startExchangeRates } from './exchangeRates.js'
 
 const app = express()
 
@@ -79,4 +80,7 @@ app.listen(PORT, () => {
 
   // Rush shipments' waiting goods: reminders, and DMC's after 2 weeks (waitingGoods.js).
   startWaitingGoodsDeadlines()
+
+  // The day's exchange rate, pesos per US dollar, from the European Central Bank (exchangeRates.js).
+  startExchangeRates()
 })
