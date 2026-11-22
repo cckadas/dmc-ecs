@@ -16,6 +16,7 @@ import LabelDesignsNote from '../components/LabelDesignsNote'
 import DownPaymentDeadline from '../components/DownPaymentDeadline'
 import { CANCELLATION_COLUMNS, RUSH_ITEM_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
 import { containerText, containerCount } from '../utils/containers'
+import MissingGoodsNote from '../components/MissingGoodsNote'
 import { RushAgreement, RushShipmentModal, WaitingGoods } from '../components/RushShipment'
 import { loadMyRushOptions, loadRushAgreements, loadWaitingGoods, stillToShip } from '../services/rushService'
 import { lineNote, orderNumberByItem } from '../utils/rushLines'
@@ -69,7 +70,7 @@ export default function MyOrdersPage() {
         quotation_number,
         subtotal,
         container_size,
-        ${columnsIf(withPlan, ['container_plan'])}
+        ${columnsIf(withPlan, ['container_plan', 'missing_goods_amount', 'refunded_amount', 'refunded_at', 'refund_bank', 'refund_reference'])}
         container_cost,
         shipping_cost,
         estimated_ship_date,
@@ -109,7 +110,7 @@ export default function MyOrdersPage() {
       .eq('customer_id', profile.id)
       .order('created_at', {
         ascending: false,
-      }), CANCELLATION_COLUMNS), RUSH_ITEM_COLUMNS), ['container_plan'])
+      }), CANCELLATION_COLUMNS), RUSH_ITEM_COLUMNS), ['container_plan', 'missing_goods_amount', 'refunded_amount', 'refunded_at', 'refund_bank', 'refund_reference'])
 
     if (error) {
       toast.error('Failed to load your orders.')
@@ -592,6 +593,8 @@ function MyOrderModal({ order, estimate, rushOption = null, agreement = null, wa
                     })}
                   </span>
                 </div>
+
+                <MissingGoodsNote order={order} />
 
                 <div className="border-t pt-3">
                   <div className="flex justify-between">

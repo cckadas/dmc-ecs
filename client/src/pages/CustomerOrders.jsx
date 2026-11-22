@@ -16,6 +16,7 @@ import TableScroll from '../components/TableScroll'
 import DownPaymentDeadline from '../components/DownPaymentDeadline'
 import { CANCELLATION_COLUMNS, RUSH_ITEM_COLUMNS, columnsIf, withNewColumns } from '../utils/newColumns'
 import { containerText, containerCount } from '../utils/containers'
+import MissingGoodsNote from '../components/MissingGoodsNote'
 import { RushAgreement, WaitingGoods } from '../components/RushShipment'
 import { loadAllWaitingGoods, loadRushAgreements, stillToShip } from '../services/rushService'
 import { lineNote, orderNumberByItem } from '../utils/rushLines'
@@ -88,7 +89,7 @@ export default function CustomerOrdersPage() {
         quotation_number,
         subtotal,
         container_size,
-        ${columnsIf(withPlan, ['container_plan'])}
+        ${columnsIf(withPlan, ['container_plan', 'missing_goods_amount', 'refunded_amount', 'refunded_at', 'refund_bank', 'refund_reference'])}
         container_cost,
         shipping_cost,
         estimated_ship_date,
@@ -122,7 +123,7 @@ export default function CustomerOrdersPage() {
           )
         )
       `)
-      .order('created_at', { ascending: false }), CANCELLATION_COLUMNS), RUSH_ITEM_COLUMNS), ['container_plan'])
+      .order('created_at', { ascending: false }), CANCELLATION_COLUMNS), RUSH_ITEM_COLUMNS), ['container_plan', 'missing_goods_amount', 'refunded_amount', 'refunded_at', 'refund_bank', 'refund_reference'])
 
 
     if (error) {
@@ -840,6 +841,8 @@ function CustomerOrderModal({ order, estimate, agreement = null, waiting = [], f
                 </div>
 
 
+                <MissingGoodsNote order={order} />
+
                 <div className="border-t pt-3 mb-3">
                   <div className="flex justify-between">
                     <span className="font-semibold text-gray-700">
@@ -1138,6 +1141,8 @@ function PaymentModal({ order, estimate, onClose, onReview, reviewing, canCheck 
                   </span>
                 </div>
 
+
+                <MissingGoodsNote order={order} />
 
                 <div className="border-t pt-3 mb-3">
                   <div className="flex justify-between">

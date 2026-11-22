@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
+import OwedBySuppliers from '../components/OwedBySuppliers'
 import { useToast } from '../context/ToastContext'
 import { sendPurchaseOrderEmails, sendPaymentProof } from '../services/emailService'
 import { MIN_PO_DELIVERY_DAYS, formatDateTime, localDateString } from '../utils/dates'
@@ -601,6 +602,8 @@ export default function PurchaseOrdersPage() {
           </button>
         )}
       </div>
+
+      <OwedBySuppliers />
 
 
       <ListControls

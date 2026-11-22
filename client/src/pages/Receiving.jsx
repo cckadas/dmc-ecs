@@ -591,7 +591,7 @@ export default function ReceivingPage() {
                                   icon={faBoxesPacking}
                                   title="Receive Delivery"
                                   color="blue"
-                                  disabled={item.status === 'sent to supplier' || item.status === 'fully delivered' || remaining === 0}
+                                  disabled={item.status === 'sent to supplier' || item.status === 'fully delivered' || item.status === 'delivered short' || remaining === 0}
                                   onClick={() => openReceivingModal({...item, purchase_order_id: po.id, order_id: po.customer_orders?.id || null })}
                                 />
                               </td>
@@ -665,6 +665,13 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
   )
   const [racksEdited, setRacksEdited] = useState(false)
   const [saving, setSaving] = useState(false)
+  // How the delivery is recorded (045): all of it, or incomplete: the cases
+  // delivered now and the cases not delivered, which must add up to what was
+  // still expected, so a typing mistake shows; the rest still coming or not.
+  const [mode, setMode] = useState('')
+  const [deliveredNow, setDeliveredNow] = useState('')
+  const [notDelivered, setNotDelivered] = useState('')
+  const [restComing, setRestComing] = useState(true)
 
   const quantity = Number(receivedQuantity) || 0
   // Cases of this line already loaded into a container (a rush shipment): they
@@ -688,6 +695,26 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
       setRackRows(planSlots(Math.max((Number(value) || 0) - left, 0)).allocations)
     }
   }
+
+  function chooseFull() {
+    setMode('full')
+    changeQuantity(orderedQuantity)
+  }
+
+  function chooseIncomplete() {
+    setMode('incomplete')
+    changeQuantity(currentReceived + (Number(deliveredNow) || 0))
+  }
+
+  function changeDelivered(value) {
+    setDeliveredNow(value)
+    changeQuantity(currentReceived + (Number(value) || 0))
+  }
+
+  const deliveredCount = Number(deliveredNow)
+  const notDeliveredCount = Number(notDelivered)
+  const countsTyped = deliveredNow !== '' && notDelivered !== ''
+  const countsAddUp = countsTyped && deliveredCount + notDeliveredCount === remaining
 
   function changeRackRow(index, changes) {
     setRacksEdited(true)
@@ -714,19 +741,30 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
   // HANDLE SAVE
   // =====================================================
   async function handleSave() {
-    const amount = Number(receivedQuantity)
-
-    if (!Number.isInteger(amount) || amount < 0) {
-      toast.error('Please enter a valid received quantity.')
+    if (!mode) {
+      toast.error('Compare what arrived with the purchase order, then choose Fully Delivered or Incomplete Delivery.')
       return
     }
 
-    // Receiving nothing isn't a receipt. 0 stays allowed only as a correction
-    // of an earlier receipt, which is how a wrongly recorded delivery is undone.
-    if (amount === 0 && currentReceived === 0) {
-      toast.error('Please enter the quantity received.')
-      return
+    // Incomplete: the two counts must add up to what was still expected (045).
+    const stillLabel = restComing ? 'still to come' : 'missing'
+    if (mode === 'incomplete') {
+      if (!countsTyped || !Number.isInteger(deliveredCount) || deliveredCount < 0 || !Number.isInteger(notDeliveredCount) || notDeliveredCount <= 0) {
+        toast.error(`Enter the ${unit} delivered and the ${unit} ${stillLabel} (more than 0).`)
+        return
+      }
+      if (!countsAddUp) {
+        toast.error(`These don't add up: ${deliveredCount} delivered + ${notDeliveredCount} ${stillLabel} = ${deliveredCount + notDeliveredCount}, but ${remaining} ${unit} were still expected. Check the count.`)
+        return
+      }
+      if (restComing && deliveredCount === 0) {
+        toast.error('Nothing arrived, and the rest is still coming: there is nothing to record yet.')
+        return
+      }
     }
+
+    const amount = mode === 'full' ? orderedQuantity : currentReceived + deliveredCount
+    const missing = mode === 'incomplete' && !restComing ? notDeliveredCount : 0
 
     if (amount > orderedQuantity) {
       toast.error('Received quantity cannot exceed ordered quantity.')
@@ -765,13 +803,17 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
         p_racks: amount - left > 0
           ? rackRows.map((row) => ({ rack_id: row.rackId, quantity: Number(row.quantity) }))
           : [],
+        // Cases that won't come (045): owed by the supplier, off the customer's order.
+        ...(missing > 0 ? { p_missing: missing } : {}),
       })
 
       if (error) {
         throw error
       }
 
-      toast.success('Receiving information saved successfully.')
+      toast.success(missing > 0
+        ? `Saved. ${missing} ${unit} recorded as missing: the supplier owes them, and they come off the customer's order.`
+        : 'Receiving information saved successfully.')
       onSuccess()
     }
 
@@ -871,18 +913,58 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
               RECEIVED QUANTITY
           ================================================= */}
           <div className="mt-6">
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Quantity Received
-            </label>
+            <p className="mb-2 text-sm font-medium text-gray-700">
+              Compare what arrived with the {remaining} {unit} still expected
+            </p>
 
-            <input
-              type="number"
-              min="0"
-              max={orderedQuantity}
-              value={receivedQuantity}
-              onChange={(e) => changeQuantity(e.target.value)}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-[#2D5A42] focus:ring-1 focus:ring-[#2D5A42]"
-            />
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={chooseFull}
+                className={`rounded-lg border px-3 py-2 text-sm font-medium ${mode === 'full' ? 'border-[#2D5A42] bg-[#2D5A42] text-white' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}`}>
+                Fully Delivered
+              </button>
+              <button type="button" onClick={chooseIncomplete}
+                className={`rounded-lg border px-3 py-2 text-sm font-medium ${mode === 'incomplete' ? 'border-amber-600 bg-amber-600 text-white' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}`}>
+                Incomplete Delivery
+              </button>
+            </div>
+
+            {mode === 'full' && (
+              <p className="mt-2 text-xs text-gray-500">All {remaining} {unit} arrived: nothing to type.</p>
+            )}
+
+            {mode === 'incomplete' && (
+              <div className="mt-3 space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="text-xs font-medium text-gray-700">
+                    {unit} delivered
+                    <input type="number" min="0" value={deliveredNow} onChange={(e) => changeDelivered(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#2D5A42]" />
+                  </label>
+                  <label className="text-xs font-medium text-gray-700">
+                    {unit} {restComing ? 'still to come' : 'missing'}
+                    <input type="number" min="0" value={notDelivered} onChange={(e) => setNotDelivered(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#2D5A42]" />
+                  </label>
+                </div>
+
+                {countsTyped && !countsAddUp && (
+                  <p className="text-xs font-medium text-red-700">
+                    {deliveredCount} + {notDeliveredCount} = {deliveredCount + notDeliveredCount}, but {remaining} {unit} were still expected. Check the count.
+                  </p>
+                )}
+
+                <div className="space-y-1 text-sm text-gray-800">
+                  <label className="flex items-start gap-2">
+                    <input type="radio" name="rest" checked={restComing} onChange={() => setRestComing(true)} className="mt-1" />
+                    <span>The rest is still coming: the order keeps waiting for it.</span>
+                  </label>
+                  <label className="flex items-start gap-2">
+                    <input type="radio" name="rest" checked={!restComing} onChange={() => setRestComing(false)} className="mt-1" />
+                    <span>The rest won't come: the supplier owes them, they come off the customer's order, and the order goes on without them.</span>
+                  </label>
+                </div>
+              </div>
+            )}
           </div>
 
 
