@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
+import ProductStages from '../components/ProductStages'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faFolderOpen, faXmark, faCreditCard, faCircleCheck, faCircleXmark } from '@fortawesome/free-solid-svg-icons'
@@ -726,6 +727,8 @@ function CustomerOrderModal({ order, estimate, agreement = null, waiting = [], f
           {/* =================================================
               ITEMS
           ================================================= */}
+          <ProductStages order={order} />
+
           <h3 className="mb-3 text-sm font-semibold text-gray-800">
             Customer Order Items
           </h3>

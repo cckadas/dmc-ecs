@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
+import { LABEL_ORDER_STATUSES, arrivedOnly } from '../utils/labelArrival'
 import { useToast } from '../context/ToastContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBoxOpen, faFileLines, faUpload, faXmark, faImage, faCheck } from '@fortawesome/free-solid-svg-icons'
@@ -84,10 +85,7 @@ async function loadCustomerOrders() {
         'customer_id',
         user.id
       )
-      .eq(
-        'status',
-        'warehouse preparation'
-      )
+      .in('status', LABEL_ORDER_STATUSES)
       .order(
         'created_at',
         {
@@ -165,7 +163,8 @@ async function loadCustomerOrders() {
     }
 
     // A rushed order: only the lines going in its container.
-    const orderItems = await linesShippingNow(loadedItems)
+    // Only products whose goods are in: each moves on as it arrives (049).
+    const orderItems = await arrivedOnly(await linesShippingNow(loadedItems))
 
 
     // =================================================

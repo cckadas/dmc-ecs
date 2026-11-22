@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
+import { LABEL_ORDER_STATUSES, arrivedOnly } from '../utils/labelArrival'
 import { useToast } from '../context/ToastContext'
 import { useAuth } from '../context/AuthContext'
 import { createNotification } from '../services/notificationService'
@@ -72,7 +73,8 @@ export default function ComplianceLabelSalesPage() {
         `)
         .in('status', [
           'fully delivered',
-          'partially delivered'
+          'partially delivered',
+          'delivered short'
         ])
         .order('created_at', {
           ascending: false
@@ -87,7 +89,7 @@ export default function ComplianceLabelSalesPage() {
       // =================================================
       const filteredPurchaseOrders = (purchaseOrders || []).filter(
         (po) =>
-          po.customer_orders?.status === 'warehouse preparation'
+          LABEL_ORDER_STATUSES.includes(po.customer_orders?.status)
       )
 
       if (filteredPurchaseOrders.length === 0) {
@@ -143,7 +145,8 @@ export default function ComplianceLabelSalesPage() {
       }
 
       // A rushed order: only the lines going in its container.
-      const orderItems = await linesShippingNow(loadedItems)
+      // Only products whose goods are in: each moves on as it arrives (049).
+      const orderItems = await arrivedOnly(await linesShippingNow(loadedItems))
 
 
       // =================================================
