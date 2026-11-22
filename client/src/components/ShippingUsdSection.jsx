@@ -6,8 +6,8 @@ import { useToast } from '../context/ToastContext'
 import ExportButton from './ExportButton'
 import IconButton from './IconButton'
 import TableScroll from './TableScroll'
-import { exportList, money, number } from '../utils/csvExport'
-import { formatPhp, formatUsd, rateDay, rateText } from '../utils/money'
+import { exportList, money } from '../utils/csvExport'
+import { formatUsd, rateDay, rateText } from '../utils/money'
 import { getExchangeRate, pricingErrorMessage } from '../services/pricingService'
 
 
@@ -15,13 +15,13 @@ const th = 'px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide te
 
 
 // =============================================
-// SHIPPING COSTS IN US DOLLARS (db/migrations/048)
+// SHIPPING COSTS (db/migrations/048, 050)
 //
-// Customers pay in US dollars, so each country's shipping cost, charged per
-// container, is in dollars too. Until DMC gives its own, they are the old
-// simulated peso amounts converted at the European Central Bank's rate of the
-// day they were converted; each says what it came from. Saving one makes it
-// DMC's own. The exchange rate itself is fetched by the system, never typed.
+// DMC's shipping cost to each country, per container, in pesos. Customers pay
+// in US dollars: each quotation converts it at the exchange rate it's priced
+// at, like the product prices. Until DMC gives its own, the costs are
+// simulated (by distance from Manila); saving one makes it DMC's own. The
+// exchange rate itself is fetched by the system, never typed.
 // =============================================
 export default function ShippingUsdSection({ version = 0 }) {
   const { profile } = useAuth()
@@ -38,7 +38,7 @@ export default function ShippingUsdSection({ version = 0 }) {
       const [{ data, error }, current] = await Promise.all([
         supabase
           .from('market_markups')
-          .select('country, shipping_cost_usd, shipping_php_before, shipping_converted_rate, shipping_converted_on, is_simulated')
+          .select('country, shipping_cost, shipping_converted_rate, is_simulated')
           .order('country'),
         getExchangeRate(),
       ])
@@ -48,7 +48,7 @@ export default function ShippingUsdSection({ version = 0 }) {
       setRows(data || [])
       setDrafts(Object.fromEntries((data || []).map((row) => [
         row.country,
-        row.shipping_cost_usd == null ? '' : String(row.shipping_cost_usd),
+        row.shipping_cost == null ? '' : String(row.shipping_cost),
       ])))
       setRate(current)
       setLoadError('')
@@ -64,14 +64,14 @@ export default function ShippingUsdSection({ version = 0 }) {
 
     // Required: a missing cost would stop quotations to this country.
     if (text === '' || !(value >= 0)) {
-      toast.error('Enter a shipping cost of US$0 or more.')
+      toast.error('Enter a shipping cost of ₱0 or more.')
       return
     }
 
     const { error } = await supabase
       .from('market_markups')
       .update({
-        shipping_cost_usd: value,
+        shipping_cost: value,
         shipping_converted_rate: null,
         shipping_converted_on: null,
         updated_by: profile?.id,
@@ -84,7 +84,7 @@ export default function ShippingUsdSection({ version = 0 }) {
       return
     }
 
-    toast.success(`Shipping to ${country} saved: ${formatUsd(value)} per container.`)
+    toast.success(`Shipping to ${country} saved: ₱${value.toLocaleString('en-US', { minimumFractionDigits: 2 })} per container.`)
     load()
   }
 
@@ -94,22 +94,22 @@ export default function ShippingUsdSection({ version = 0 }) {
   }, [version])
 
 
-  const input = 'rounded-md border border-gray-300 bg-white py-2 pl-11 pr-3 text-right text-sm outline-none focus:border-[#2D5A42] focus:ring-1 focus:ring-[#2D5A42]'
+  const input = 'rounded-md border border-gray-300 bg-white py-2 pl-7 pr-3 text-right text-sm outline-none focus:border-[#2D5A42] focus:ring-1 focus:ring-[#2D5A42]'
 
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold text-[#1F3A2C]">
-          Shipping costs in US dollars
+          Shipping costs
         </h2>
 
-        <ExportButton count={rows.length} onExport={(how) => exportList(how, 'shipping-costs-usd', SHIPPING_COLUMNS, rows)} />
+        <ExportButton count={rows.length} onExport={(how) => exportList(how, 'shipping-costs', SHIPPING_COLUMNS(rate), rows)} />
       </div>
 
       <p className="mb-3 text-sm text-gray-500">
-        Customers pay in US dollars. Each quotation pays its country's shipping cost for every container it needs. Countries that aren't listed use the Default row.
+        DMC's shipping cost to each country, per container, in pesos. Customers pay in US dollars: each quotation converts it at the exchange rate it's priced at, like the product prices, and pays it for every container it needs. Countries that aren't listed use the Default row.
         {' '}<span className="mr-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">Simulated</span>
-        costs were converted from the old simulated peso amounts until DMC gives its own. Saving a country's cost makes it DMC's own.
+        costs are worked out by distance from Manila until DMC gives its own. Saving a country's cost makes it DMC's own.
       </p>
 
       <div className="mb-3 rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">
@@ -130,45 +130,44 @@ export default function ShippingUsdSection({ version = 0 }) {
             <tr>
               <th className={th}>Country</th>
               <th className={th}>Shipping per container</th>
-              <th className={th}>Where it came from</th>
+              <th className={th}>In US dollars today</th>
               <th className={th}>Actions</th>
             </tr>
           </thead>
 
           <tbody>
             {rows.map((row) => {
-              const converted = row.shipping_converted_rate != null
+              const simulated = row.shipping_converted_rate != null
+              const draft = drafts[row.country] ?? ''
 
               return (
                 <tr key={row.country} className="border-t border-gray-200 text-sm">
                   <td className="px-5 py-3 font-medium text-gray-800">
                     {row.country}
                     {row.country.toLowerCase() === 'default' && <span className="ml-2 text-xs text-gray-500">(used for unlisted countries)</span>}
-                    {converted && <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">Simulated</span>}
+                    {simulated && <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">Simulated</span>}
                   </td>
 
                   <td className="px-5 py-3">
-                    <div className="relative w-40">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">US$</span>
+                    <div className="relative w-44">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">₱</span>
                       <input
                         type="number"
                         min="0"
                         step="0.01"
-                        value={drafts[row.country] ?? ''}
+                        value={draft}
                         onChange={(e) => setDrafts({ ...drafts, [row.country]: e.target.value })}
                         placeholder="Not set"
-                        className={`${input} w-40`}
+                        className={`${input} w-44`}
                       />
                     </div>
-                    {row.shipping_cost_usd == null && (
+                    {row.shipping_cost == null && (
                       <p className="mt-1 text-xs font-medium text-amber-700">Not set: quotations to {row.country} can't be priced until it is.</p>
                     )}
                   </td>
 
                   <td className="px-5 py-3 text-gray-600">
-                    {converted
-                      ? `Converted from ${formatPhp(row.shipping_php_before)} at ${rateText(row.shipping_converted_rate)}${row.shipping_converted_on ? ` (${rateDay(row.shipping_converted_on)})` : ''}`
-                      : row.shipping_cost_usd == null ? '-' : "DMC's own"}
+                    {rate && draft !== '' ? formatUsd(Number(draft) / rate.phpPerUsd) : '-'}
                   </td>
 
                   <td className="px-5 py-3">
@@ -194,10 +193,9 @@ export default function ShippingUsdSection({ version = 0 }) {
 
 
 // The export (utils/csvExport.js).
-const SHIPPING_COLUMNS = [
+const SHIPPING_COLUMNS = (rate) => [
   { header: 'Country', value: (row) => row.country },
-  { header: 'Shipping per container (USD)', value: (row) => money(row.shipping_cost_usd) },
-  { header: 'Converted from (PHP)', value: (row) => (row.shipping_converted_rate != null ? money(row.shipping_php_before) : '') },
-  { header: 'At (PHP per USD 1)', value: (row) => (row.shipping_converted_rate != null ? number(row.shipping_converted_rate) : '') },
+  { header: 'Shipping per container (PHP)', value: (row) => money(row.shipping_cost) },
+  { header: 'In US dollars today (USD)', value: (row) => (rate && row.shipping_cost != null ? money(Number(row.shipping_cost) / rate.phpPerUsd) : '') },
   { header: 'Simulated', value: (row) => row.shipping_converted_rate != null },
 ]
