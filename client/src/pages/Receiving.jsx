@@ -3,12 +3,104 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useToast } from '../context/ToastContext'
-import { createNotification } from '../services/notificationService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBoxesPacking, faXmark } from '@fortawesome/free-solid-svg-icons'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
+import TableScroll from '../components/TableScroll'
+import WarehouseCapacityBanner from '../components/WarehouseCapacityBanner'
+import { casesThatFit, suggestSlots, slotRoom, slotOtherOrder, formatCbm, summarizeCapacity } from '../utils/warehouseCapacity'
+import { loadSlots } from '../services/warehouseSlots'
+import { loadExpectedDeliveries } from '../services/predictionService'
+import { columnsIf, withNewColumns } from '../utils/newColumns'
+import ListControls from '../components/ListControls'
+import { day, exportList, number, statusText } from '../utils/csvExport'
+import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, bySoonest, showChoices, showingOf } from '../utils/listControls'
+
+
+// =============================================
+// EXPECTED DELIVERIES
+//
+// Supplier deliveries due in the next 7 days, each at the date it's expected
+// (its promised date moved by how late that supplier usually is), against the
+// free slot space, so slots can be freed before the goods arrive.
+// =============================================
+const WINDOW_DAYS = 7
+
+const formatShortDate = (date) => new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+
+function ExpectedDeliveries({ racks }) {
+  const [soon, setSoon] = useState(null)
+
+  useEffect(() => {
+    loadExpectedDeliveries()
+      .then((deliveries) => {
+        const until = Date.now() + WINDOW_DAYS * 24 * 60 * 60 * 1000
+        setSoon(deliveries.filter((delivery) => delivery.expectedOn.getTime() <= until))
+      })
+      .catch((error) => {
+        console.error('Failed to load expected deliveries:', error)
+        setSoon([])
+      })
+  }, [])
+
+  if (!soon) return null
+
+  const volume = soon.reduce((total, delivery) => total + delivery.volume, 0)
+  const capacity = racks?.length ? summarizeCapacity(racks) : null
+  const tooMuch = capacity && volume > capacity.freeCbm
+
+  return (
+    <div className={`mb-6 rounded-lg border p-4 text-sm ${tooMuch ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-white'}`}>
+      <p className="font-medium text-gray-800">
+        Expected in the next {WINDOW_DAYS} days: {soon.length} {soon.length === 1 ? 'delivery' : 'deliveries'}
+        {soon.length > 0 && `, about ${formatCbm(volume)}`}
+      </p>
+
+      {capacity && soon.length > 0 && (
+        <p className={`mt-0.5 ${tooMuch ? 'font-medium text-red-700' : 'text-gray-500'}`}>
+          {tooMuch
+            ? `That's more than the ${formatCbm(capacity.freeCbm)} free. Free up slots, or plan where the rest will go.`
+            : `${formatCbm(capacity.freeCbm)} is free, so it fits.`}
+        </p>
+      )}
+
+      {soon.length > 0 && (
+        <TableScroll className="mt-3 rounded-lg border border-gray-200">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+              <tr>
+                <th className="px-4 py-2">PO</th>
+                <th className="px-4 py-2">Supplier</th>
+                <th className="px-4 py-2">Expected</th>
+                <th className="px-4 py-2">Cases</th>
+                <th className="px-4 py-2">Volume</th>
+              </tr>
+            </thead>
+
+            <tbody className="divide-y divide-gray-100">
+              {soon.map((delivery) => (
+                <tr key={`${delivery.poNumber}-${delivery.supplierName}`}>
+                  <td className="px-4 py-2 font-medium text-gray-800">{delivery.poNumber || '—'}</td>
+                  <td className="px-4 py-2 text-gray-600">{delivery.supplierName}</td>
+                  <td className="px-4 py-2 text-gray-600">
+                    {formatShortDate(delivery.expectedOn)}
+                    {delivery.overdueDays > 0 && (
+                      <span className="ml-2 text-xs font-medium text-red-700">{delivery.overdueDays} {delivery.overdueDays === 1 ? 'day' : 'days'} overdue</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2 text-gray-600">{delivery.cases.toLocaleString()}</td>
+                  <td className="px-4 py-2 text-gray-600">{formatCbm(delivery.volume)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableScroll>
+      )}
+    </div>
+  )
+}
 
 
 export default function ReceivingPage() {
@@ -16,6 +108,10 @@ export default function ReceivingPage() {
   const { toast } = useToast()
 
   const [purchaseOrders, setPurchaseOrders] = useState([])
+  // Show (a delivery status), Sort by and Search, above the list.
+  const [show, setShow] = useState(ALL)
+  const [sortBy, setSortBy] = useState('status')
+  const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [warehouseRacks, setWarehouseRacks] = useState([])
   const [loadingRacks, setLoadingRacks] = useState(false)
@@ -30,7 +126,9 @@ export default function ReceivingPage() {
 
     setLoading(true)
 
-    const { data, error } = await supabase
+    // The cases of each line already loaded into a container (034), asked for
+    // until that script is run.
+    const { data, error } = await withNewColumns((withLoaded) => supabase
       .from('purchase_orders')
       .select(`
         id,
@@ -51,14 +149,21 @@ export default function ReceivingPage() {
           status,
           received_condition,
           warehouse_rack_id,
+          ${columnsIf(withLoaded, ['cases_loaded'])}
           created_at,
           updated_at,
+
+          purchase_order_item_racks (
+            warehouse_rack_id,
+            quantity
+          ),
 
           products (
             id,
             product_name,
             brand,
-            unit
+            unit,
+            cbm
           ),
 
           suppliers (
@@ -91,7 +196,7 @@ export default function ReceivingPage() {
       `)
       .order('created_at', {
         ascending: false
-      })
+      }), ['cases_loaded'])
 
 
     if (error) {
@@ -178,29 +283,13 @@ export default function ReceivingPage() {
   async function loadWarehouseRacks() {
     setLoadingRacks(true)
 
-    const { data, error } = await supabase
-      .from('warehouse_racks')
-      .select(`
-        id,
-        rack_id,
-        name,
-        location,
-        section,
-        is_active,
-        is_occupied
-      `)
-      .order('rack_id', {
-        ascending: true
-      })
-
-    if (error) {
-      console.error('Failed to load warehouse racks:', error)
-      toast.error('Failed to load warehouse racks.')
-      setLoadingRacks(false)
-      return
+    // Every slot, with what's in it and whose order it is (043).
+    try {
+      setWarehouseRacks(await loadSlots())
+    } catch (error) {
+      console.error('Failed to load warehouse slots:', error)
+      toast.error('Failed to load warehouse slots.')
     }
-
-    setWarehouseRacks(data || [])
     setLoadingRacks(false)
   }
 
@@ -223,6 +312,23 @@ export default function ReceivingPage() {
   }, [])
 
 
+  // The list as chosen above it.
+  const PO_ORDER = ['sent to supplier', 'awaiting delivery', 'partially delivered', 'fully delivered']
+  const poList = { statusOf: (po) => po.status, order: PO_ORDER, allLabel: 'All purchase orders' }
+  const choices = showChoices(purchaseOrders, poList)
+  const showing = showingOf(choices, show)
+  const shownPurchaseOrders = applySort(
+    applySearch(applyShow(purchaseOrders, showing, poList), search, (po) => [po.po_number, po.customer_orders?.order_number, po.customer_orders?.profile?.name, po.customer_orders?.profile?.company].join(' ')),
+    sortBy,
+    {
+      status: byStatus((po) => po.status, PO_ORDER, (po) => po.created_at),
+      expected: bySoonest((po) => po.expected_delivery_date),
+      newest: byNewest((po) => po.created_at),
+      oldest: byOldest((po) => po.created_at),
+    }
+  )
+
+
   // =====================================================
   // MAIN CONTENT
   // =====================================================
@@ -243,6 +349,34 @@ export default function ReceivingPage() {
       </div>
 
 
+      <WarehouseCapacityBanner racks={warehouseRacks} className="mb-6"/>
+
+      <ExpectedDeliveries racks={warehouseRacks} />
+
+
+      <ListControls
+        choices={choices}
+        show={showing}
+        onShow={setShow}
+        sorts={[
+          { value: 'status', label: 'Status (still to come first, newest first in each)' },
+          { value: 'expected', label: 'Expected delivery (soonest first)' },
+          { value: 'newest', label: 'Newest first' },
+          { value: 'oldest', label: 'Oldest first' },
+        ]}
+        sortBy={sortBy}
+        onSort={setSortBy}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="PO or order number, customer"
+        shown={shownPurchaseOrders.length}
+        total={purchaseOrders.length}
+        onExport={(how) => exportList(how, 'receiving', receivingColumns(warehouseRacks), shownPurchaseOrders.flatMap((po) => (po.purchase_order_items || []).map((line) => ({ po, line }))))}
+        noun={purchaseOrders.length === 1 ? 'purchase order' : 'purchase orders'}
+        loading={loading}
+      />
+
+
       {/* =================================================
           PURCHASE ORDERS
       ================================================= */}
@@ -252,20 +386,20 @@ export default function ReceivingPage() {
           Loading purchase orders...
         </div>
 
-      ) : purchaseOrders.length === 0 ? (
+      ) : shownPurchaseOrders.length === 0 ? (
 
         <div className="rounded-xl border border-gray-200 bg-white py-12 text-center shadow-sm">
           <FontAwesomeIcon icon={faBoxesPacking} className="mb-3 h-8 w-8 text-gray-300"/>
 
           <p className="text-sm text-gray-500">
-            No purchase orders found.
+            {purchaseOrders.length > 0 ? 'Nothing matches what is chosen above.' : 'No purchase orders found.'}
           </p>
         </div>
 
       ) : (
 
         <div className="space-y-6">
-          {purchaseOrders.map((po) => {
+          {shownPurchaseOrders.map((po) => {
             const items =po.purchase_order_items || []
 
             // -------------------------------------------------
@@ -276,7 +410,7 @@ export default function ReceivingPage() {
             const remaining = totalOrdered - totalReceived
 
             return (
-              <div key={po.id} className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+              <div key={po.id} className="overflow-clip rounded-xl border border-gray-200 bg-white shadow-sm">
 
                 {/* =================================================
                     PO HEADER
@@ -365,7 +499,7 @@ export default function ReceivingPage() {
                 {/* =================================================
                     ITEMS TABLE
                 ================================================= */}
-                <div className="overflow-x-auto">
+                <TableScroll>
                   <table className="min-w-full">
 
                     <thead className="bg-white">
@@ -457,8 +591,8 @@ export default function ReceivingPage() {
                                   icon={faBoxesPacking}
                                   title="Receive Delivery"
                                   color="blue"
-                                  disabled={item.status === 'sent to supplier' || item.status === 'fully delivered' || remaining === 0}
-                                  onClick={() => openReceivingModal({...item, purchase_order_id: po.id })}
+                                  disabled={item.status === 'sent to supplier' || item.status === 'fully delivered' || item.status === 'delivered short' || remaining === 0}
+                                  onClick={() => openReceivingModal({...item, purchase_order_id: po.id, order_id: po.customer_orders?.id || null })}
                                 />
                               </td>
                             </tr>
@@ -474,7 +608,7 @@ export default function ReceivingPage() {
                     </tbody>
 
                   </table>
-                </div>
+                </TableScroll>
               </div>
             )
           })}
@@ -520,304 +654,174 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
   const currentReceived = Number(item.received_quantity || 0)
   const remaining = Math.max(orderedQuantity - currentReceived, 0)
 
+  const caseVolume = Number(item.products?.cbm || 0)
+  const unit = item.products?.unit || 'unit'
+  const heldRackIds = (item.purchase_order_item_racks || []).map((entry) => entry.warehouse_rack_id)
+
   const [receivedQuantity, setReceivedQuantity] = useState(currentReceived)
   const [condition, setCondition] = useState(item.received_condition || 'good')
-  const [rackId, setRackId] = useState(item.warehouse_rack_id || '')
+  const [rackRows, setRackRows] = useState(
+    (item.purchase_order_item_racks || []).map((entry) => ({ rackId: entry.warehouse_rack_id, quantity: entry.quantity }))
+  )
+  const [racksEdited, setRacksEdited] = useState(false)
   const [saving, setSaving] = useState(false)
+  // How the delivery is recorded (045): all of it, or incomplete: the cases
+  // delivered now and the cases not delivered, which must add up to what was
+  // still expected, so a typing mistake shows; the rest still coming or not.
+  const [mode, setMode] = useState('')
+  const [deliveredNow, setDeliveredNow] = useState('')
+  const [notDelivered, setNotDelivered] = useState('')
+  const [restComing, setRestComing] = useState(true)
+
+  const quantity = Number(receivedQuantity) || 0
+  // Cases of this line already loaded into a container (a rush shipment): they
+  // left, so only the rest of what's received needs racks.
+  const left = Number(item.cases_loaded || 0)
+  const here = Math.max(quantity - left, 0)
+  const placed = rackRows.reduce((total, row) => total + (Number(row.quantity) || 0), 0)
+  // Whole pallets first, then what's left with this order's other goods (043).
+  const planSlots = (cases) => suggestSlots({ quantity: cases, caseVolume, slots: warehouseRacks, lineId: item.id, orderId: item.order_id })
+  const suggestion = planSlots(here)
+
+
+  // =====================================================
+  // CHOOSING RACKS
+  // =====================================================
+  // The racks follow the quantity until someone chooses them by hand.
+  function changeQuantity(value) {
+    setReceivedQuantity(value)
+
+    if (!racksEdited) {
+      setRackRows(planSlots(Math.max((Number(value) || 0) - left, 0)).allocations)
+    }
+  }
+
+  function chooseFull() {
+    setMode('full')
+    changeQuantity(orderedQuantity)
+  }
+
+  function chooseIncomplete() {
+    setMode('incomplete')
+    changeQuantity(currentReceived + (Number(deliveredNow) || 0))
+  }
+
+  function changeDelivered(value) {
+    setDeliveredNow(value)
+    changeQuantity(currentReceived + (Number(value) || 0))
+  }
+
+  const deliveredCount = Number(deliveredNow)
+  const notDeliveredCount = Number(notDelivered)
+  const countsTyped = deliveredNow !== '' && notDelivered !== ''
+  const countsAddUp = countsTyped && deliveredCount + notDeliveredCount === remaining
+
+  function changeRackRow(index, changes) {
+    setRacksEdited(true)
+    setRackRows((rows) => rows.map((row, rowIndex) => (rowIndex === index ? { ...row, ...changes } : row)))
+  }
+
+  function addRackRow() {
+    setRacksEdited(true)
+    setRackRows((rows) => [...rows, { rackId: '', quantity: Math.max(here - placed, 0) }])
+  }
+
+  function removeRackRow(index) {
+    setRacksEdited(true)
+    setRackRows((rows) => rows.filter((_, rowIndex) => rowIndex !== index))
+  }
+
+  function suggestAgain() {
+    setRacksEdited(false)
+    setRackRows(suggestion.allocations)
+  }
 
 
   // =====================================================
   // HANDLE SAVE
   // =====================================================
   async function handleSave() {
-    const quantity = Number(receivedQuantity)
-
-    if (Number.isNaN(quantity) || quantity < 0) {
-      toast.error('Please enter a valid received quantity.')
+    if (!mode) {
+      toast.error('Compare what arrived with the purchase order, then choose Fully Delivered or Incomplete Delivery.')
       return
     }
 
-    // Receiving nothing isn't a receipt. 0 stays allowed only as a correction
-    // of an earlier receipt, which is how a wrongly recorded delivery is undone.
-    if (quantity === 0 && currentReceived === 0) {
-      toast.error('Please enter the quantity received.')
-      return
+    // Incomplete: the two counts must add up to what was still expected (045).
+    const stillLabel = restComing ? 'still to come' : 'missing'
+    if (mode === 'incomplete') {
+      if (!countsTyped || !Number.isInteger(deliveredCount) || deliveredCount < 0 || !Number.isInteger(notDeliveredCount) || notDeliveredCount <= 0) {
+        toast.error(`Enter the ${unit} delivered and the ${unit} ${stillLabel} (more than 0).`)
+        return
+      }
+      if (!countsAddUp) {
+        toast.error(`These don't add up: ${deliveredCount} delivered + ${notDeliveredCount} ${stillLabel} = ${deliveredCount + notDeliveredCount}, but ${remaining} ${unit} were still expected. Check the count.`)
+        return
+      }
+      if (restComing && deliveredCount === 0) {
+        toast.error('Nothing arrived, and the rest is still coming: there is nothing to record yet.')
+        return
+      }
     }
 
-    if (quantity > orderedQuantity) {
+    const amount = mode === 'full' ? orderedQuantity : currentReceived + deliveredCount
+    const missing = mode === 'incomplete' && !restComing ? notDeliveredCount : 0
+
+    if (amount > orderedQuantity) {
       toast.error('Received quantity cannot exceed ordered quantity.')
       return
     }
 
-    if (quantity > 0 && !rackId) {
-      toast.error('Please select a warehouse rack.')
+    if (amount < left) {
+      toast.error(`${left} ${unit} of this line already left in a container, so at least ${left} were received.`)
+      return
+    }
+
+    const stillHere = amount - left
+
+    if (stillHere > 0 && rackRows.some((row) => !row.rackId)) {
+      toast.error('Please choose a slot for every row.')
+      return
+    }
+
+    if (stillHere > 0 && placed !== stillHere) {
+      toast.error(left
+        ? `The slots hold ${placed} but ${stillHere} ${unit} are in the warehouse (${amount} received, ${left} already left in a container).`
+        : `The slots hold ${placed} but you entered ${amount}. Every ${unit} needs a slot.`)
       return
     }
 
     setSaving(true)
 
-
     try {
+      // One database step: it locks the racks so two people can't fill the same
+      // one, checks each rack's capacity, frees racks no longer used, updates the
+      // PO, and moves the order on once everything has arrived (db/migrations/012).
+      const { error } = await supabase.rpc('receive_purchase_order_item', {
+        p_item_id: item.id,
+        p_quantity: amount,
+        p_condition: condition,
+        p_racks: amount - left > 0
+          ? rackRows.map((row) => ({ rack_id: row.rackId, quantity: Number(row.quantity) }))
+          : [],
+        // Cases that won't come (045): owed by the supplier, off the customer's order.
+        ...(missing > 0 ? { p_missing: missing } : {}),
+      })
 
-      // =================================================
-      // GET CURRENT RACK
-      // =================================================
-      const oldRackId = item.warehouse_rack_id || null
-
-
-      // =================================================
-      // CHECK NEW RACK AVAILABILITY
-      // =================================================
-      if (quantity > 0 && rackId) {
-
-        // Only check if the rack is different
-        // from the item's current rack.
-        if (rackId !== oldRackId) {
-          const { data: rack, error: rackError } = await supabase
-            .from('warehouse_racks')
-            .select(`
-              id,
-              rack_id,
-              name,
-              is_active,
-              is_occupied
-            `)
-            .eq('id', rackId)
-            .single()
-
-
-          if (rackError) {
-            throw rackError
-          }
-
-          if (!rack.is_active) {
-            toast.error(`Rack ${rack.name || rack.rack_id} is inactive and cannot be used.`)
-            return
-          }
-
-          if (rack.is_occupied) {
-            toast.error(`Rack ${rack.name || rack.rack_id} is already occupied.`)
-            return
-          }
-        }
+      if (error) {
+        throw error
       }
 
-
-      // =================================================
-      // DETERMINE ITEM STATUS
-      // =================================================
-      // 0 only happens as a correction. The item was already paid to reach
-      // receiving, so it returns to 'awaiting delivery'. 'sent to supplier'
-      // erased the paid stage and disabled the Receive button, stranding it.
-      const itemStatus =
-        quantity === 0
-          ? 'awaiting delivery'
-          : quantity < orderedQuantity
-            ? 'partially delivered'
-            : 'fully delivered'
-
-
-      // =================================================
-      // FREE OLD RACK
-      // =================================================
-      if (oldRackId && ( quantity === 0 || rackId !== oldRackId)) {
-        const { error: oldRackError } = await supabase
-          .from('warehouse_racks')
-          .update({
-            is_occupied: false
-          })
-          .eq('id', oldRackId)
-
-        if (oldRackError) {
-          throw oldRackError
-        }
-      }
-
-
-      // =================================================
-      // OCCUPY NEW RACK
-      // =================================================
-      if (quantity > 0 && rackId) {
-        const { error: newRackError } = await supabase
-          .from('warehouse_racks')
-          .update({
-            is_occupied: true
-          })
-          .eq('id', rackId)
-
-        if (newRackError) {
-          throw newRackError
-        }
-      }
-
-
-      // =================================================
-      // UPDATE PO ITEM
-      // =================================================
-      const { error: itemError } = await supabase
-        .from('purchase_order_items')
-        .update({
-          received_quantity: quantity,
-          received_condition: condition,
-          warehouse_rack_id: quantity > 0 ? rackId : null,
-          status: itemStatus
-        })
-        .eq('id', item.id)
-
-      if (itemError) {
-        throw itemError
-      }
-
-
-      // =================================================
-      // LOAD ALL ITEMS FROM THIS PO
-      // =================================================
-      const { data: poItems, error: poItemsError} = await supabase
-        .from('purchase_order_items')
-        .select(`
-          id,
-          ordered_quantity,
-          received_quantity
-        `)
-        .eq(
-          'purchase_order_id',
-          item.purchase_order_id
-        )
-
-      if (poItemsError) {
-        throw poItemsError
-      }
-
-
-      // =================================================
-      // DETERMINE PO STATUS
-      // =================================================
-      const totalOrdered = (poItems || []).reduce((total, poItem) => total + Number(poItem.ordered_quantity || 0), 0)
-      const totalReceived = (poItems || []).reduce((total, poItem) => total + Number(poItem.received_quantity || 0), 0)
-
-      let poStatus = 'sent to supplier'
-
-      if (totalReceived > 0 && totalReceived < totalOrdered) {
-        poStatus = 'partially delivered'
-      }
-
-      if (totalOrdered > 0 && totalReceived >= totalOrdered) {
-        poStatus ='fully delivered'
-      }
-
-
-      // =================================================
-      // UPDATE PURCHASE ORDER STATUS
-      // =================================================
-      const {  error: poError } = await supabase
-        .from('purchase_orders')
-        .update({
-          status: poStatus
-        })
-        .eq('id', item.purchase_order_id)
-
-      if (poError) {
-        throw poError
-      }
-
-
-      // =================================================
-      // UPDATE CUSTOMER ORDER STATUS
-      // =================================================
-      if (poStatus === 'fully delivered') {
-
-        // -------------------------------------------------
-        // GET CUSTOMER ORDER ID FROM PURCHASE ORDER
-        // -------------------------------------------------
-        const { data: purchaseOrder, error: purchaseOrderError} = await supabase
-          .from('purchase_orders')
-          .select(`
-            id,
-            customer_order_id
-          `)
-          .eq('id', item.purchase_order_id)
-          .single()
-
-        if (purchaseOrderError) {
-          throw purchaseOrderError
-        }
-
-
-        // -------------------------------------------------
-        // UPDATE CUSTOMER ORDER
-        // -------------------------------------------------
-        if (purchaseOrder?.customer_order_id) {
-          const { error: customerOrderError} = await supabase
-            .from('customer_orders')
-            .update({
-              status: 'warehouse preparation'
-            })
-            .eq('id', purchaseOrder.customer_order_id)
-
-          if (customerOrderError) {
-            throw customerOrderError
-          }
-
-          const { error: historyError } = await supabase
-            .from('customer_order_status_history')
-            .insert({
-              customer_order_id: purchaseOrder.customer_order_id,
-              previous_status: 'procurement',
-              new_status: 'warehouse preparation',
-              changed_at: new Date().toISOString()
-            })
-
-          if (historyError) {
-            throw historyError
-          }
-
-
-          // =============================================
-          // GET CUSTOMER ID
-          // =============================================
-          const { data: customerOrder, error: customerError } = await supabase
-            .from('customer_orders')
-            .select('customer_id, order_number')
-            .eq('id', purchaseOrder.customer_order_id)
-            .single()
-
-          if (customerError) {
-            throw customerError
-          }
-
-          if (!customerOrder?.customer_id) {
-            throw new Error('Customer ID not found for this order.')
-          }
-
-
-          // =============================================
-          // CREATE NOTIFICATION
-          // =============================================
-          await createNotification({
-            userId: customerOrder.customer_id,
-            role: 'customer',
-            title: `${customerOrder.order_number} is now in warehouse preparation`,
-            message: `Your order ${customerOrder.order_number} status is now "Warehouse Preparation". Please check your order details for more information.`,
-            type: 'info',
-            relatedCustomerOrderId: purchaseOrder.customer_order_id,
-            link: '/my-orders',
-          })
-        }
-      }
-
-
-      // =================================================
-      // SUCCESS
-      // =================================================
-      toast.success('Receiving information saved successfully.')
+      toast.success(missing > 0
+        ? `Saved. ${missing} ${unit} recorded as missing: the supplier owes them, and they come off the customer's order.`
+        : 'Receiving information saved successfully.')
       onSuccess()
     }
-    
+
     catch (error) {
       console.error('Failed to save receiving:', error)
       toast.error(error.message || 'Failed to save receiving information.')
     }
-    
+
     finally {
       setSaving(false)
     }
@@ -826,7 +830,7 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg overflow-hidden rounded-xl bg-white shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white shadow-xl">
 
         {/* =================================================
             HEADER
@@ -881,6 +885,18 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
               </span>
             </div>
 
+            {left > 0 && (
+              <div className="mt-2 flex justify-between">
+                <span className="text-sm text-gray-500">
+                  Already left in a container (rush shipment)
+                </span>
+
+                <span className="font-medium text-gray-800">
+                  {left}
+                </span>
+              </div>
+            )}
+
             <div className="mt-2 flex justify-between border-t pt-2">
               <span className="text-sm font-medium text-gray-700">
                 Remaining
@@ -897,22 +913,58 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
               RECEIVED QUANTITY
           ================================================= */}
           <div className="mt-6">
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Quantity Received
-            </label>
+            <p className="mb-2 text-sm font-medium text-gray-700">
+              Compare what arrived with the {remaining} {unit} still expected
+            </p>
 
-            <input
-              type="number"
-              min="0"
-              max={orderedQuantity}
-              value={receivedQuantity}
-              onChange={(e) =>
-                setReceivedQuantity(
-                  e.target.value
-                )
-              }
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-[#2D5A42] focus:ring-1 focus:ring-[#2D5A42]"
-            />
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={chooseFull}
+                className={`rounded-lg border px-3 py-2 text-sm font-medium ${mode === 'full' ? 'border-[#2D5A42] bg-[#2D5A42] text-white' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}`}>
+                Fully Delivered
+              </button>
+              <button type="button" onClick={chooseIncomplete}
+                className={`rounded-lg border px-3 py-2 text-sm font-medium ${mode === 'incomplete' ? 'border-amber-600 bg-amber-600 text-white' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}`}>
+                Incomplete Delivery
+              </button>
+            </div>
+
+            {mode === 'full' && (
+              <p className="mt-2 text-xs text-gray-500">All {remaining} {unit} arrived: nothing to type.</p>
+            )}
+
+            {mode === 'incomplete' && (
+              <div className="mt-3 space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="text-xs font-medium text-gray-700">
+                    {unit} delivered
+                    <input type="number" min="0" value={deliveredNow} onChange={(e) => changeDelivered(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#2D5A42]" />
+                  </label>
+                  <label className="text-xs font-medium text-gray-700">
+                    {unit} {restComing ? 'still to come' : 'missing'}
+                    <input type="number" min="0" value={notDelivered} onChange={(e) => setNotDelivered(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#2D5A42]" />
+                  </label>
+                </div>
+
+                {countsTyped && !countsAddUp && (
+                  <p className="text-xs font-medium text-red-700">
+                    {deliveredCount} + {notDeliveredCount} = {deliveredCount + notDeliveredCount}, but {remaining} {unit} were still expected. Check the count.
+                  </p>
+                )}
+
+                <div className="space-y-1 text-sm text-gray-800">
+                  <label className="flex items-start gap-2">
+                    <input type="radio" name="rest" checked={restComing} onChange={() => setRestComing(true)} className="mt-1" />
+                    <span>The rest is still coming: the order keeps waiting for it.</span>
+                  </label>
+                  <label className="flex items-start gap-2">
+                    <input type="radio" name="rest" checked={!restComing} onChange={() => setRestComing(false)} className="mt-1" />
+                    <span>The rest won't come: the supplier owes them, they come off the customer's order, and the order goes on without them.</span>
+                  </label>
+                </div>
+              </div>
+            )}
           </div>
 
 
@@ -952,37 +1004,133 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
               RACKS
           ================================================= */}
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Warehouse Rack
-            </label>
+            <div className="mb-1 flex items-center justify-between">
+              <label className="block text-sm font-medium text-gray-700">
+                Warehouse Slots
+              </label>
 
-            <select
-              value={rackId}
-              onChange={(e) => setRackId(e.target.value)}
-              disabled={loadingRacks}
-              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#2D5A42] focus:ring-1 focus:ring-[#2D5A42]"
-            >
-              <option value="">
-                Select a rack
-              </option>
+              {racksEdited && (
+                <button type="button" onClick={suggestAgain} className="text-xs font-medium text-[#2D5A42] hover:underline">
+                  Suggest slots again
+                </button>
+              )}
+            </div>
 
-              {/* Inactive racks are hidden, except the one this item already
-                  sits in, so its current rack still shows as selected. */}
-              {warehouseRacks
-                .filter((rack) => rack.is_active || rack.id === item.warehouse_rack_id)
-                .map((rack) => (
-                <option
-                  key={rack.id}
-                  value={rack.id}
-                  disabled={rack.is_occupied}
-                  className={rack.is_occupied ? 'bg-gray-100 text-gray-400' : ''}
+            {here === 0 ? (
+              <p className="text-sm text-gray-500">
+                {left > 0 && quantity >= left
+                  ? `The ${left} ${unit} received so far already left in a container (rush shipment): no slots needed.`
+                  : currentReceived > 0
+                    ? 'Saving 0 undoes this receipt and frees its slots.'
+                    : 'Enter the quantity received, and slots will be suggested.'}
+              </p>
+            ) : (
+              <>
+                {caseVolume > 0 && (
+                  <p className="mb-2 text-xs text-gray-500">
+                    {here} {unit} × {caseVolume} m³ = {formatCbm(here * caseVolume)}
+                    {left > 0 && ` (${left} of the ${quantity} received already left in a container)`}
+                  </p>
+                )}
+
+                <div className="space-y-2">
+                  {rackRows.map((row, index) => {
+                    const chosenRack = warehouseRacks.find((rack) => rack.id === row.rackId)
+                    const fits = chosenRack ? casesThatFit(slotRoom(chosenRack, item.id), caseVolume) : Infinity
+
+                    return (
+                      <div key={index}>
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={row.rackId}
+                            onChange={(e) => changeRackRow(index, { rackId: e.target.value })}
+                            disabled={loadingRacks}
+                            className="min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#2D5A42] focus:ring-1 focus:ring-[#2D5A42]"
+                          >
+                            <option value="">
+                              Select a slot
+                            </option>
+
+                            {/* By floor. Only slots this line can use: empty ones, ones
+                                holding this order's goods with room, and the ones it
+                                already sits in (043). */}
+                            {[...new Set(warehouseRacks.map((rack) => rack.floor ?? 0))].sort((a, b) => a - b).map((floor) => (
+                              <optgroup key={floor} label={floor ? `Floor ${floor}` : 'Racks'}>
+                                {warehouseRacks
+                                  .filter((rack) => (rack.floor ?? 0) === floor)
+                                  .map((rack) => {
+                                    const held = heldRackIds.includes(rack.id)
+                                    const other = slotOtherOrder(rack, item.id, item.order_id)
+                                    const shared = !other && (rack.contents || []).some((entry) => entry.lineId !== item.id)
+                                    const chosenElsewhere = rack.id !== row.rackId && rackRows.some((entry) => entry.rackId === rack.id)
+                                    const rackFits = casesThatFit(slotRoom(rack, item.id), caseVolume)
+                                    const usable = held || (rack.is_active && !other && rackFits > 0)
+                                    if (!usable && rack.id !== row.rackId) return null
+
+                                    return (
+                                      <option key={rack.id} value={rack.id} disabled={chosenElsewhere || !usable}>
+                                        {rack.rack_id}
+                                        {shared ? ' — this order\'s goods' : ''}
+                                        {Number.isFinite(rackFits) ? ` — fits ${rackFits}` : ''}
+                                      </option>
+                                    )
+                                  })}
+                              </optgroup>
+                            ))}
+                          </select>
+
+                          <input
+                            type="number"
+                            min="1"
+                            value={row.quantity}
+                            onChange={(e) => changeRackRow(index, { quantity: e.target.value })}
+                            aria-label="Quantity in this slot"
+                            className="w-24 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-[#2D5A42] focus:ring-1 focus:ring-[#2D5A42]"
+                          />
+
+                          <button
+                            type="button"
+                            onClick={() => removeRackRow(index)}
+                            aria-label="Remove this slot"
+                            className="rounded-md p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                          >
+                            <FontAwesomeIcon icon={faXmark}/>
+                          </button>
+                        </div>
+
+                        {Number(row.quantity) > fits && (
+                          <p className="mt-1 text-xs font-medium text-red-600">
+                            This slot has room for {fits} {unit} of this product.
+                          </p>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={addRackRow}
+                  className="mt-2 text-sm font-medium text-[#2D5A42] hover:underline"
                 >
-                  {rack.rack_id} — {rack.name}
-                  {rack.section ? ` — ${rack.section}` : ''}
-                  {rack.is_occupied ? ' — Occupied' : ''}
-                </option>
-              ))}
-            </select>
+                  + Add another slot
+                </button>
+
+                {placed !== here && (
+                  <p className="mt-2 text-sm font-medium text-amber-700">
+                    {placed < here
+                      ? `${here - placed} ${unit} still need a slot.`
+                      : `The slots hold ${placed - here} ${unit} too many.`}
+                  </p>
+                )}
+
+                {suggestion.unplaced > 0 && (
+                  <p className="mt-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                    Not enough free slot space: {suggestion.unplaced} of {here} {unit} won't fit. Record what fits now and receive the rest when racks free up, or ask an admin to add a rack in Warehouse Locations.
+                  </p>
+                )}
+              </>
+            )}
           </div>
         </div>
 
@@ -1013,3 +1161,23 @@ function ReceivingModal({ item, warehouseRacks, loadingRacks, onClose, onSuccess
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per purchase order line, as listed, with the racks its goods are in.
+// =============================================
+const receivingColumns = (racks) => [
+  { header: 'PO', value: ({ po }) => po.po_number },
+  { header: 'Order', value: ({ po }) => po.customer_orders?.order_number },
+  { header: 'Expected delivery', value: ({ po }) => day(po.expected_delivery_date) },
+  { header: 'Supplier', value: ({ line }) => line.suppliers?.supplier_name },
+  { header: 'Product', value: ({ line }) => line.products?.product_name },
+  { header: 'Ordered', value: ({ line }) => number(line.ordered_quantity) },
+  { header: 'Received', value: ({ line }) => number(line.received_quantity) },
+  { header: 'Remaining', value: ({ line }) => Math.max(Number(line.ordered_quantity || 0) - Number(line.received_quantity || 0), 0) },
+  { header: 'Already left in a container', value: ({ line }) => number(line.cases_loaded) },
+  { header: 'Status', value: ({ line }) => statusText(line.status) },
+  { header: 'Condition', value: ({ line }) => statusText(line.received_condition) },
+  { header: 'Racks', value: ({ line }) => (line.purchase_order_item_racks || []).map((entry) => `${racks.find((rack) => rack.id === entry.warehouse_rack_id)?.rack_id || 'Rack'} (${entry.quantity})`).join('; ') },
+]

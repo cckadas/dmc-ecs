@@ -39,6 +39,19 @@ export default function RoleActivityBadge({ status }) {
       style: 'bg-red-50 text-red-700 border-red-200',
     },
 
+    // A customer's account (db/migrations/038).
+    'no new orders': {
+      style: 'bg-amber-50 text-amber-700 border-amber-200',
+    },
+
+    'deactivated': {
+      style: 'bg-red-50 text-red-700 border-red-200',
+    },
+
+    'deleted': {
+      style: 'bg-gray-100 text-gray-600 border-gray-300',
+    },
+
     'available': {
       style: 'bg-green-50 text-green-700 border-green-200',
     },

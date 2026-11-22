@@ -3,10 +3,37 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
+import OwedBySuppliers from '../components/OwedBySuppliers'
+
+// What DMC pays for a purchase order line: the cases the supplier owes from an
+// earlier delivery are already paid for (db/migrations/046).
+const linePayable = (item) => Math.max(Number(item.ordered_quantity || 0) - Number(item.owed_cases || 0), 0) * Number(item.unit_price || 0)
+
+// Cases each supplier still owes per product, for a new purchase order to
+// count first ({ 'supplier:product': cases }); empty before 046 is run.
+async function loadOwedCredit() {
+  const check = await supabase.from('purchase_order_items').select('owed_cases').limit(1)
+  if (check.error) return {}
+  const { data, error } = await supabase
+    .from('supplier_owed_cases')
+    .select('supplier_id, product_id, cases, used_cases')
+    .is('refunded_at', null)
+  if (error) return {}
+  const open = {}
+  for (const row of data || []) {
+    const left = Number(row.cases || 0) - Number(row.used_cases || 0)
+    if (left > 0) open[`${row.supplier_id}:${row.product_id}`] = (open[`${row.supplier_id}:${row.product_id}`] || 0) + left
+  }
+  return open
+}
 import { useToast } from '../context/ToastContext'
-import { createNotification } from '../services/notificationService'
 import { sendPurchaseOrderEmails, sendPaymentProof } from '../services/emailService'
-import { MIN_PO_DELIVERY_DAYS, localDateString } from '../utils/dates'
+import { MIN_PO_DELIVERY_DAYS, formatDateTime, localDateString } from '../utils/dates'
+import { progressStepTimes } from '../utils/purchaseOrderHistory'
+import { getCurrentSupplierPrices, lookupSupplierPrice, pricingErrorMessage } from '../services/pricingService'
+import { formatPeso } from '../services/creditService'
+import { summarizeCapacity, formatCbm } from '../utils/warehouseCapacity'
+import { loadExpectedDeliveries, loadSupplierTimings } from '../services/predictionService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faFolderOpen,
@@ -19,6 +46,16 @@ import {
 
 import StatusBadge from '../components/StatusBadge'
 import IconButton from '../components/IconButton'
+import TableScroll from '../components/TableScroll'
+import ListControls from '../components/ListControls'
+import { dateTime, day, exportList, money, number, statusText } from '../utils/csvExport'
+import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, bySoonest, showChoices, showingOf } from '../utils/listControls'
+import PurchaseOrderHistory from '../components/PurchaseOrderHistory'
+import { columnsIf, isCarriedLine, withNewColumns } from '../utils/newColumns'
+
+
+// A file name that won't clash with an earlier upload.
+const uniqueFilePath = (prefix, extension) => `${prefix}-${Date.now()}.${extension}`
 
 
 export default function PurchaseOrdersPage() {
@@ -26,16 +63,23 @@ export default function PurchaseOrdersPage() {
   const { toast } = useToast()
 
   const [purchaseOrders, setPurchaseOrders] = useState([])
+  // Show (a status), Sort by and Search, above the list.
+  const [show, setShow] = useState(ALL)
+  const [sortBy, setSortBy] = useState('status')
+  const [search, setSearch] = useState('')
   const [customerOrders, setCustomerOrders] = useState([])
   const [suppliers, setSuppliers] = useState([])
   const [selectedPO, setSelectedPO] = useState(null)
   const [selectedSupplierGroup, setSelectedSupplierGroup] = useState(null)
   const [showViewModal, setShowViewModal] = useState(false)
   const [showAddModal, setShowAddModal] = useState(false)
+  const [warehouseRacks, setWarehouseRacks] = useState([])
   const [loading, setLoading] = useState(true)
   const [loadingCustomerOrders, setLoadingCustomerOrders] = useState(false)
   const [loadingSuppliers, setLoadingSuppliers] = useState(false)
   const [creatingPO, setCreatingPO] = useState(false)
+  // When each supplier's part of each PO should arrive, by PO and supplier.
+  const [arrivals, setArrivals] = useState({})
   const [showSupplierPFIModal, setShowSupplierPFIModal] = useState(false)
 
 
@@ -45,7 +89,12 @@ export default function PurchaseOrdersPage() {
   async function loadPurchaseOrders() {
     setLoading(true)
 
-    const {data, error} = await supabase
+    // Alongside: when each supplier's part should arrive (as in the estimates).
+    loadExpectedDeliveries()
+      .then((list) => setArrivals(Object.fromEntries(list.map((delivery) => [`${delivery.purchaseOrderId}:${delivery.supplierId}`, delivery]))))
+      .catch((arrivalError) => console.error('Failed to load expected deliveries:', arrivalError))
+
+    const {data, error} = await withNewColumns((withOwed) => supabase
       .from('purchase_orders')
       .select(`
         id,
@@ -63,6 +112,7 @@ export default function PurchaseOrdersPage() {
           ordered_quantity,
           received_quantity,
           unit_price,
+          ${columnsIf(withOwed, ['owed_cases'])}
           status,
           created_at,
           updated_at,
@@ -71,6 +121,8 @@ export default function PurchaseOrdersPage() {
           payment_amount,
           payment_date,
           payment_proof_path,
+          pfi_difference_reason,
+          payment_difference_reason,
 
           products (
             id,
@@ -101,7 +153,7 @@ export default function PurchaseOrdersPage() {
       `)
       .order('created_at', {
         ascending: false
-      })
+      }), ['owed_cases'])
 
 
     if (error) {
@@ -190,7 +242,8 @@ export default function PurchaseOrdersPage() {
   async function loadCustomerOrders() {
     setLoadingCustomerOrders(true)
 
-    const {data, error} = await supabase
+    // Lines carried from an earlier order (034) are asked for until then.
+    const {data, error} = await withNewColumns((withRush) => supabase
       .from('customer_orders')
       .select(`
         id,
@@ -207,20 +260,22 @@ export default function PurchaseOrdersPage() {
           quantity,
           unit_price,
           subtotal,
+          ${columnsIf(withRush, ['carried_from_item_id'])}
 
           products (
             id,
             product_name,
             brand,
             supplier_id,
-            unit
+            unit,
+            cbm
           )
         )
       `)
       .eq('status', 'payment verified')
       .order('created_at', {
         ascending: false
-      })
+      }), ['carried_from_item_id'])
 
 
     if (error) {
@@ -344,8 +399,27 @@ export default function PurchaseOrdersPage() {
 
     await Promise.all([
       loadCustomerOrders(),
-      loadSuppliers()
+      loadSuppliers(),
+      loadWarehouseRacks()
     ])
+  }
+
+
+  // =====================================================
+  // LOAD WAREHOUSE RACKS FOR ADD PO
+  // =====================================================
+  // Only for the free-space note, so a failure here doesn't stop anything.
+  async function loadWarehouseRacks() {
+    const { data, error } = await supabase
+      .from('warehouse_racks')
+      .select('id, is_active, is_occupied, capacity_cbm')
+
+    if (error) {
+      console.error('Failed to load warehouse racks:', error)
+      return
+    }
+
+    setWarehouseRacks(data || [])
   }
 
 
@@ -409,8 +483,10 @@ export default function PurchaseOrdersPage() {
       }
 
 
-      if (item.unit_price === '' || item.unit_price === null ||  Number(item.unit_price) < 0) {
-        toast.error(`Please enter a valid purchase price for ${item.product_name}.`)
+      // The price always comes from the supplier's price list; it can't be
+      // typed. The database refuses any other price too (db/migrations/008).
+      if (!(Number(item.unit_price) > 0)) {
+        toast.error(`${item.product_name} has no supplier price yet. Add it in Price Lists first.`)
         return
       }
     }
@@ -418,182 +494,49 @@ export default function PurchaseOrdersPage() {
 
     setCreatingPO(true)
 
-    // Set once the PO and its items are saved. Any failure after that point
-    // must not read as "nothing happened", or the user retries and creates a
-    // duplicate PO.
-    let createdPoNumber = null
-
-
     try {
       // -------------------------------------------------
-      // CREATE PURCHASE ORDER NUMBER
-      // -------------------------------------------------
-      const now = new Date()
-      const year = now.getFullYear()
-
-      const { data: existingPO, error: existingPOError } = await supabase
-        .from('purchase_orders')
-        .select('po_number')
-        .like('po_number', `PO-${year}-%`)
-
-      if (existingPOError) {
-        throw existingPOError
-      }
-
-      let nextNumber = 1
-
-      if (existingPO && existingPO.length > 0) {
-        const numbers = existingPO
-          .map((po) => {
-            const match = po.po_number?.match(/^PO-\d{4}-(\d+)$/)
-            return match ? Number(match[1]) : 0
-          })
-          .filter((number) => number > 0)
-
-        if (numbers.length > 0) {
-          nextNumber = Math.max(...numbers) + 1
-        }
-      }
-
-      const poNumber = `PO-${year}-${String(nextNumber).padStart(5, '0')}`
-
-
-      // -------------------------------------------------
-      // INSERT PURCHASE ORDER MAIN
-      // -------------------------------------------------
-      const {data: purchaseOrder, error: purchaseOrderError} = await supabase
-        .from('purchase_orders')
-        .insert({
-          expected_delivery_date: expectedDeliveryDate,
-          customer_order_id: customerOrderId,
-          po_number: poNumber,
-          status: 'sent to supplier'
-        })
-        .select()
-        .single()
-
-      if (purchaseOrderError) {
-        throw purchaseOrderError
-      }
-
-
-      // -------------------------------------------------
-      // PREPARE PURCHASE ORDER ITEMS
-      // -------------------------------------------------
-      const purchaseOrderItems =
-        items.map((item) => ({
-          purchase_order_id: purchaseOrder.id,
-          product_id: item.product_id,
-          supplier_id: item.supplier_id,
-          ordered_quantity: Number(item.ordered_quantity),
-          received_quantity: 0,
-          unit_price: Number(item.unit_price),
-          status: 'sent to supplier'
-        }))
-
-
-      // -------------------------------------------------
-      // INSERT PURCHASE ORDER ITEMS
-      // -------------------------------------------------
-      const {error: itemsError} = await supabase
-        .from('purchase_order_items')
-        .insert(
-          purchaseOrderItems
-        )
-
-
-      if (itemsError) {
-        await supabase
-          .from('purchase_orders')
-          .delete()
-          .eq('id', purchaseOrder.id)
-
-        throw itemsError
-      }
-
-      createdPoNumber = poNumber
-
-
-      // -------------------------------------------------
-      // UPDATE CUSTOMER ORDER STATUS
-      // -------------------------------------------------
-      const {error: customerOrderError} = await supabase
-        .from('customer_orders')
-        .update({ status: 'procurement' })
-        .eq('id', customerOrderId)
-
-
-      if (customerOrderError) {
-        throw customerOrderError
-      }
-
-      const { error: historyError } = await supabase
-        .from('customer_order_status_history')
-        .insert({
-          customer_order_id: customerOrderId,
-          previous_status: 'payment verified',
-          new_status: 'procurement',
-          changed_at: new Date().toISOString()
-        })
-
-      if (historyError) {
-        throw historyError
-      }
-
-
-      // =============================================
-      // GET CUSTOMER ID
-      // =============================================
-      const { data: customerOrder, error: customerError } = await supabase
-        .from('customer_orders')
-        .select('customer_id, order_number')
-        .eq('id', customerOrderId)
-        .single()
-
-      if (customerError) {
-        throw customerError
-      }
-
-      if (!customerOrder?.customer_id) {
-        throw new Error('Customer ID not found for this order.')
-      }
-
-
-      // =============================================
-      // NOTIFY CUSTOMER AND EMAIL SUPPLIERS
+      // CREATE THE PURCHASE ORDER, IN ONE STEP
       //
-      // Both happen after the PO is saved, so a failure here is a warning,
-      // not a failed PO.
-      // =============================================
-      const followUpProblems = []
+      // The database makes the PO and its lines from the customer order
+      // itself (each product from its own supplier, at that supplier's
+      // current price-list price), moves the order to procurement, records it
+      // and tells the customer: all of it, or none of it. An order that
+      // already has a PO is refused, so two people (or two clicks) can't
+      // order the same goods twice (db/migrations/027).
+      // -------------------------------------------------
+      const { data: created, error: createError } = await supabase.rpc('create_purchase_order', {
+        p_customer_order_id: customerOrderId,
+        p_expected_delivery_date: expectedDeliveryDate,
+        // The total this form showed. A supplier price changed since is
+        // refused, rather than ordered at a price nobody saw.
+        p_expected_total: items.reduce((total, item) => total + linePayable(item), 0),
+      })
 
-      try {
-        await createNotification({
-          userId: customerOrder.customer_id,
-          role: 'customer',
-          title: `${customerOrder.order_number} is now in procurement`,
-          message: `Your order ${customerOrder.order_number} status is now "Procurement". Please check your order details for more information.`,
-          type: 'info',
-          relatedCustomerOrderId: customerOrderId,
-          link: '/my-orders',
-        })
-      } catch (notificationError) {
-        console.error('Customer notification error:', notificationError)
-        followUpProblems.push('the customer was not notified')
+      if (createError) {
+        throw createError
       }
 
+
+      // =============================================
+      // EMAIL SUPPLIERS
+      //
+      // After the PO is saved, so a failure here is a warning, not a failed PO.
+      // =============================================
+      let emailProblem = null
+
       try {
-        await sendPurchaseOrderEmails(purchaseOrder.id)
+        await sendPurchaseOrderEmails(created.purchase_order_id)
       } catch (emailError) {
         console.error('Purchase order email error:', emailError)
-        followUpProblems.push(`supplier emails were not sent (${emailError.message})`)
+        emailProblem = `supplier emails were not sent (${emailError.message})`
       }
 
 
-      toast.success( `Purchase Order ${poNumber} created successfully.`)
+      toast.success(`Purchase Order ${created.po_number} created successfully.`)
 
-      if (followUpProblems.length > 0) {
-        toast.info(`Note: ${followUpProblems.join('; ')}.`)
+      if (emailProblem) {
+        toast.info(`Note: ${emailProblem}.`)
       }
 
       setShowAddModal(false)
@@ -603,49 +546,23 @@ export default function PurchaseOrdersPage() {
     catch (error) {
       console.error('Create purchase order error:', error)
 
-      if (createdPoNumber) {
-        // The PO was saved before this step failed. Close the form so the
-        // same PO isn't submitted again as a duplicate.
-        toast.error(`Purchase Order ${createdPoNumber} was created, but a later step failed: ${error.message}`)
+      if (error?.code === 'PGRST202' || /create_purchase_order/.test(error?.message || '')) {
+        // Script 027 not run yet: say so plainly.
+        toast.error('Creating purchase orders needs db/migrations/027 to be run first.')
+      } else if (error?.code === 'P0001') {
+        // Refused by a rule, e.g. the order already has a PO. This form is out
+        // of date, so close it and show the purchase orders as they are now.
+        toast.error(error.message)
         setShowAddModal(false)
         await loadPurchaseOrders()
       } else {
-        toast.error( error.message || 'Failed to create purchase order.')
+        toast.error(error.message || 'Failed to create purchase order.')
       }
     }
-    
+
     finally {
       setCreatingPO(false)
     }
-  }
-
-
-  // =====================================================
-  // GET AVAILABLE SUPPLIERS
-  // =====================================================
-  function getAvailableSuppliers(item) {
-
-    console.log(item)
-    console.log(suppliers)
-
-    const primarySupplier = suppliers.find(
-      (supplier) => supplier.id === item.product_supplier_id && supplier.supplier_type === 'Manufacturer'
-    )
-
-    console.log(primarySupplier)
-
-    const otherSuppliers = suppliers
-      .filter(
-        (supplier) => supplier.supplier_type === 'Distributor' || supplier.supplier_type === 'Supermarket'
-      )
-      .sort((a, b) =>
-        a.supplier_name.localeCompare(b.supplier_name)
-      )
-
-    return [
-      ...(primarySupplier ? [primarySupplier] : []),
-      ...otherSuppliers
-    ]
   }
 
 
@@ -657,6 +574,29 @@ export default function PurchaseOrdersPage() {
       loadPurchaseOrders()
     }
   }, [profile?.id])
+
+
+  // The list as chosen above it.
+  const PO_ORDER = ['sent to supplier', 'awaiting delivery', 'partially delivered', 'fully delivered']
+  const poList = { statusOf: (po) => po.status, order: PO_ORDER, allLabel: 'All purchase orders' }
+  const choices = showChoices(purchaseOrders, poList)
+  const showing = showingOf(choices, show)
+  const shownPurchaseOrders = applySort(
+    applySearch(applyShow(purchaseOrders, showing, poList), search, (po) => [
+      po.po_number,
+      po.customer_orders?.order_number,
+      po.customer_orders?.profile?.name,
+      po.customer_orders?.profile?.company,
+      ...(po.purchase_order_items || []).map((item) => item.suppliers?.supplier_name),
+    ].join(' ')),
+    sortBy,
+    {
+      status: byStatus((po) => po.status, PO_ORDER, (po) => po.created_at),
+      expected: bySoonest((po) => po.expected_delivery_date),
+      newest: byNewest((po) => po.created_at),
+      oldest: byOldest((po) => po.created_at),
+    }
+  )
 
 
   // =====================================================
@@ -686,11 +626,36 @@ export default function PurchaseOrdersPage() {
         )}
       </div>
 
+      <OwedBySuppliers />
+
+
+      <ListControls
+        choices={choices}
+        show={showing}
+        onShow={setShow}
+        sorts={[
+          { value: 'status', label: 'Status (sent to supplier first, newest first in each)' },
+          { value: 'expected', label: 'Expected delivery (soonest first)' },
+          { value: 'newest', label: 'Newest first' },
+          { value: 'oldest', label: 'Oldest first' },
+        ]}
+        sortBy={sortBy}
+        onSort={setSortBy}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="PO or order number, customer, supplier"
+        shown={shownPurchaseOrders.length}
+        total={purchaseOrders.length}
+        onExport={(how) => exportList(how, 'purchase-orders', PURCHASE_ORDER_COLUMNS, shownPurchaseOrders.flatMap((po) => (po.purchase_order_items || []).map((line) => ({ po, line }))))}
+        noun={purchaseOrders.length === 1 ? 'purchase order' : 'purchase orders'}
+        loading={loading}
+      />
+
 
       {/* =================================================
           PURCHASE ORDERS TABLE
       ================================================= */}
-      <div className=" overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+      <TableScroll className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
           <thead className="bg-[#F4F8F5]">
 
@@ -720,7 +685,7 @@ export default function PurchaseOrdersPage() {
               </th>
 
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
-                Date
+                Created
               </th>
 
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
@@ -737,8 +702,8 @@ export default function PurchaseOrdersPage() {
                   Loading purchase orders...
                 </td>
               </tr>
-            ) : purchaseOrders.length > 0 ? (
-              purchaseOrders.map((po) => {
+            ) : shownPurchaseOrders.length > 0 ? (
+              shownPurchaseOrders.map((po) => {
                 const items = po.purchase_order_items || []
                 const suppliersMap = new Map()
 
@@ -794,6 +759,7 @@ export default function PurchaseOrdersPage() {
                             (supplier) => (
                               <div key={supplier.id} className="text-sm text-gray-700">
                                 {supplier.supplier_name}
+                                <ArrivalNote arrival={arrivals[`${po.id}:${supplier.id}`]} />
                               </div>
                             )
                           )}
@@ -827,9 +793,9 @@ export default function PurchaseOrdersPage() {
                     </td>
 
 
-                    {/* DATE */}
-                    <td className="px-5 py-4">
-                      {po.created_at ? new Date(po.created_at).toLocaleDateString() : '-'}
+                    {/* CREATED — the date and time the PO was saved */}
+                    <td className="whitespace-nowrap px-5 py-4">
+                      {formatDateTime(po.created_at)}
                     </td>
 
 
@@ -845,22 +811,22 @@ export default function PurchaseOrdersPage() {
             ) : (
               <tr>
                 <td colSpan={8} className="py-10 text-center text-sm text-gray-500">
-                  No purchase orders found.
+                  {purchaseOrders.length > 0 ? 'Nothing matches what is chosen above.' : 'No purchase orders found.'}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
 
       {showAddModal && (
         <AddPurchaseOrderModal
           customerOrders={customerOrders}
           suppliers={suppliers}
+          warehouseRacks={warehouseRacks}
           loadingCustomerOrders={loadingCustomerOrders}
           loadingSuppliers={loadingSuppliers}
-          getAvailableSuppliers={getAvailableSuppliers}
           creating={creatingPO}
           onCreate={createPurchaseOrder}
           onClose={() => {
@@ -916,6 +882,28 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI, profile}
 
   const items = purchaseOrder.purchase_order_items || []
 
+  // Every step of this PO with the date and time it was saved (db/migrations/023).
+  const [history, setHistory] = useState({ entries: [], loading: true, unavailable: false })
+
+  useEffect(() => {
+    let active = true
+
+    supabase
+      .from('purchase_order_history')
+      .select('id, event, supplier_id, details, happened_at, done_by_name, done_by_role')
+      .eq('purchase_order_id', purchaseOrder.id)
+      .order('happened_at', { ascending: true })
+      .then(({ data, error }) => {
+        if (!active) return
+        if (error) console.error('Failed to load the PO history:', error)
+        setHistory({ entries: error ? [] : data || [], loading: false, unavailable: Boolean(error) })
+      })
+
+    return () => { active = false }
+  }, [purchaseOrder.id])
+
+  const stepTimes = progressStepTimes(history.entries)
+
   // ===================================================
   // GROUP ITEMS BY SUPPLIER
   // ===================================================
@@ -941,7 +929,7 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI, profile}
   const purchaseTotal =
     items.reduce(
       (total, item) => {
-        return (total + (Number(item.ordered_quantity || 0) * Number(item.unit_price || 0)))
+        return (total + (linePayable(item)))
       },
       0
     )
@@ -1098,6 +1086,15 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI, profile}
                             >
                               {step}
                             </span>
+
+                            {/* When the system saved this step */}
+                            {(isComplete || isCurrent) && stepTimes[index] && (
+                              <span className="mt-1 text-[11px] leading-4 text-gray-500">
+                                {stepTimes[index].dayOnly
+                                  ? new Date(`${stepTimes[index].day}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+                                  : formatDateTime(stepTimes[index].at)}
+                              </span>
+                            )}
                           </li>
                         )
                       })}
@@ -1115,10 +1112,15 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI, profile}
             Purchase Order Information
           </h3>
 
-          <div className="mb-6 grid grid-cols-1 gap-4 rounded-lg bg-gray-50 p-4 md:grid-cols-4">
+          <div className="mb-6 grid grid-cols-1 gap-4 rounded-lg bg-gray-50 p-4 md:grid-cols-5">
             <div>
               <p className="text-xs uppercase text-gray-500"> PO Number </p>
               <p className="mt-1 font-medium text-gray-800"> {purchaseOrder.po_number} </p>
+            </div>
+
+            <div>
+              <p className="text-xs uppercase text-gray-500"> Created </p>
+              <p className="mt-1 font-medium text-gray-800"> {formatDateTime(purchaseOrder.created_at)} </p>
             </div>
 
             <div>
@@ -1170,7 +1172,7 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI, profile}
                 )
 
                 return (
-                  <div key={supplierId} className="overflow-hidden rounded-lg border border-gray-200">
+                  <div key={supplierId} className="overflow-clip rounded-lg border border-gray-200">
 
                     {/* =========================================
                         SUPPLIER HEADER
@@ -1226,10 +1228,23 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI, profile}
                       )}
                     </div>
 
+                    {/* Amounts that don't match stay visible, with why. */}
+                    {(supplierItems[0]?.pfi_difference_reason || supplierItems[0]?.payment_difference_reason) && (
+                      <div className="border-t border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-800">
+                        {supplierItems[0]?.pfi_difference_reason && (
+                          <p>The supplier's amount differs from this PO: {supplierItems[0].pfi_difference_reason}</p>
+                        )}
+
+                        {supplierItems[0]?.payment_difference_reason && (
+                          <p>The payment differs from the supplier's amount: {supplierItems[0].payment_difference_reason}</p>
+                        )}
+                      </div>
+                    )}
+
                     {/* =========================================
                         SUPPLIER ITEMS
                     ========================================= */}
-                    <div className="overflow-x-auto">
+                    <TableScroll>
                       <table className="min-w-full">
 
                         <thead className="bg-gray-50">
@@ -1262,7 +1277,7 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI, profile}
 
                         <tbody>
                           {supplierItems.map((item) => {
-                            const itemTotal = Number(item.ordered_quantity || 0) * Number(item.unit_price || 0)
+                            const itemTotal = linePayable(item)
 
                             return (
                               <tr key={item.id} className="border-t border-gray-200">
@@ -1272,6 +1287,12 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI, profile}
                                   <p className="font-medium text-gray-800">
                                     {item.products?.product_name || '-'}
                                   </p>
+
+                                  {Number(item.owed_cases || 0) > 0 && (
+                                    <p className="mt-0.5 text-xs font-medium text-amber-700">
+                                      {item.owed_cases} owed by the supplier, already paid: DMC pays for {Math.max(Number(item.ordered_quantity || 0) - Number(item.owed_cases), 0)}
+                                    </p>
+                                  )}
 
                                   {item.products?.brand && (
                                     <p className="text-xs text-gray-500">
@@ -1310,7 +1331,7 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI, profile}
                         </tbody>
 
                       </table>
-                    </div>
+                    </TableScroll>
                   </div>
                 )
               }
@@ -1364,6 +1385,16 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI, profile}
               </div>
             </div>
           </div>
+
+          {/* =================================================
+              HISTORY — every step with its saved date and time
+          ================================================= */}
+          <PurchaseOrderHistory
+            entries={history.entries}
+            items={items}
+            loading={history.loading}
+            unavailable={history.unavailable}
+          />
         </div>
 
 
@@ -1411,15 +1442,32 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
       item.payment_proof_path
   )
 
+  // The PFI fields lock once the PFI is saved; the payment fields only once
+  // the supplier has been paid. (Locking both on any saved data meant saving
+  // the PFI first made the supplier impossible to pay.)
+  const supplierPaid = supplierItems.some((item) => item.payment_proof_path)
+
   const [supplierPFIPath, setSupplierPFIPath] = useState(existingItem?.supplier_pfi_file_path || null)
   const [confirmedAmount, setConfirmedAmount] = useState(existingItem?.supplier_pfi_amount || '')
   const [paymentAmount, setPaymentAmount] = useState(existingItem?.payment_amount || '')
   const [paymentDate, setPaymentDate] = useState(existingItem?.payment_date || '')
+  const [pfiReason, setPfiReason] = useState(existingItem?.pfi_difference_reason || '')
+  const [paymentReason, setPaymentReason] = useState(existingItem?.payment_difference_reason || '')
 
   const [supplierPFI, setSupplierPFI] = useState(null)
   const [paymentProof, setPaymentProof] = useState(null)
   const [uploadingPFI, setUploadingPFI] = useState(false)
   const [markingPaid, setMarkingPaid] = useState(false)
+
+  // The supplier's PFI must match this PO, and the payment must match the PFI,
+  // unless a reason is recorded. The database checks this too (db/migrations/015).
+  const supplierTotal = supplierItems.reduce(
+    (total, item) => total + linePayable(item),
+    0
+  )
+  const amountsDiffer = (a, b) => Math.round(Number(a || 0) * 100) !== Math.round(Number(b || 0) * 100)
+  const pfiDiffers = confirmedAmount !== '' && amountsDiffer(confirmedAmount, supplierTotal)
+  const paymentDiffers = paymentAmount !== '' && amountsDiffer(paymentAmount, confirmedAmount)
 
 
   // =============================================
@@ -1431,10 +1479,20 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
       return
     }
 
+    if (!(Number(confirmedAmount) > 0)) {
+      toast.error('Enter the amount on the supplier\'s PFI.')
+      return
+    }
+
+    if (pfiDiffers && !pfiReason.trim()) {
+      toast.error(`The supplier's amount doesn't match this PO's total of ${formatPeso(supplierTotal)}. Enter the reason for the difference.`)
+      return
+    }
+
     setUploadingPFI(true)
 
     const fileExtension = supplierPFI.name.split('.').pop()
-    const filePath = `supplier-pfis/${po.id}/${supplier.id}/supplier-pfi-${Date.now()}.${fileExtension}`
+    const filePath = uniqueFilePath(`supplier-pfis/${po.id}/${supplier.id}/supplier-pfi`, fileExtension)
 
     const { error: uploadError } = await supabase.storage
       .from('documents')
@@ -1454,14 +1512,15 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
       .from('purchase_order_items')
       .update({
         supplier_pfi_file_path: filePath,
-        supplier_pfi_amount: Number(confirmedAmount) || 0,
+        supplier_pfi_amount: Number(confirmedAmount),
+        pfi_difference_reason: pfiDiffers ? pfiReason.trim() : null,
       })
       .eq('purchase_order_id', po.id)
       .eq('supplier_id', supplier.id)
 
     if (updateError) {
       console.error(updateError)
-      toast.error('Failed to save supplier PFI.')
+      toast.error(updateError.message || 'Failed to save supplier PFI.')
       setUploadingPFI(false)
       return
     }
@@ -1516,6 +1575,11 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
       return
     }
 
+    if (paymentDiffers && !paymentReason.trim()) {
+      toast.error(`The payment doesn't match the supplier's amount of ${formatPeso(confirmedAmount)}. Enter the reason for the difference.`)
+      return
+    }
+
     if (!paymentDate) {
       toast.error('Enter the payment date.')
       return
@@ -1539,7 +1603,7 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
       // UPLOAD DMC PAYMENT PROOF
       // -----------------------------------------
       const extension = paymentProof.name.split('.').pop()
-      const paymentProofPath =`supplier-payment-proofs/${po.id}/${supplier.id}/payment-${Date.now()}.${extension}`
+      const paymentProofPath = uniqueFilePath(`supplier-payment-proofs/${po.id}/${supplier.id}/payment`, extension)
 
       const { error: uploadError } = await supabase.storage
         .from('payment-proofs')
@@ -1560,6 +1624,7 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
         .from('purchase_order_items')
         .update({
           payment_amount: Number(paymentAmount),
+          payment_difference_reason: paymentDiffers ? paymentReason.trim() : null,
           payment_date: paymentDate,
           payment_proof_path: paymentProofPath,
           status: 'awaiting delivery',
@@ -1686,10 +1751,31 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
                       value={confirmedAmount}
                       onChange={(e) => setConfirmedAmount(e.target.value)}
                       placeholder="0.00"
-                      disabled={existingItem}
+                      disabled={Boolean(supplierPFIPath)}
                       className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-8 pr-3 text-right outline-none focus:border-[#1F3A2C] focus:ring-1 focus:ring-[#1F3A2C]"
                     />
                   </div>
+
+                  <p className="mt-1 text-xs text-gray-500">
+                    This PO's total for this supplier: {formatPeso(supplierTotal)}
+                  </p>
+
+                  {pfiDiffers && (
+                    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                      <p className="text-sm font-medium text-amber-800">
+                        This is {formatPeso(Math.abs(Number(confirmedAmount) - supplierTotal))} {Number(confirmedAmount) > supplierTotal ? 'more' : 'less'} than this PO's total. Why?
+                      </p>
+
+                      <textarea
+                        rows="2"
+                        value={pfiReason}
+                        onChange={(e) => setPfiReason(e.target.value)}
+                        disabled={Boolean(supplierPFIPath)}
+                        placeholder="e.g. the supplier gave a discount"
+                        className="mt-2 w-full resize-none rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#1F3A2C] focus:ring-1 focus:ring-[#1F3A2C] disabled:bg-gray-50"
+                      />
+                    </div>
+                  )}
                 </div>
 
 
@@ -1726,7 +1812,7 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
                       onChange={(e) => {
                         setSupplierPFI(e.target.files?.[0] || null)
                       }}
-                      disabled={existingItem}
+                      disabled={Boolean(supplierPFIPath)}
                       className="hidden"
                     />
                   </label>
@@ -1780,10 +1866,33 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
                       value={paymentAmount}
                       onChange={(e) => setPaymentAmount(e.target.value)}
                       placeholder="0.00"
-                      disabled={existingItem}
+                      disabled={supplierPaid}
                       className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-8 pr-3 text-right outline-none focus:border-[#1F3A2C] focus:ring-1 focus:ring-[#1F3A2C]"
                     />
                   </div>
+
+                  {supplierPFIPath && (
+                    <p className="mt-1 text-xs text-gray-500">
+                      The supplier's confirmed amount: {formatPeso(confirmedAmount)}
+                    </p>
+                  )}
+
+                  {paymentDiffers && (
+                    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                      <p className="text-sm font-medium text-amber-800">
+                        This is {formatPeso(Math.abs(Number(paymentAmount) - Number(confirmedAmount || 0)))} {Number(paymentAmount) > Number(confirmedAmount || 0) ? 'more' : 'less'} than the supplier's amount. Why?
+                      </p>
+
+                      <textarea
+                        rows="2"
+                        value={paymentReason}
+                        onChange={(e) => setPaymentReason(e.target.value)}
+                        disabled={supplierPaid}
+                        placeholder="e.g. half now, half on delivery"
+                        className="mt-2 w-full resize-none rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#1F3A2C] focus:ring-1 focus:ring-[#1F3A2C] disabled:bg-gray-50"
+                      />
+                    </div>
+                  )}
                 </div>
 
 
@@ -1798,7 +1907,7 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
                     value={paymentDate}
                     onChange={(e) => setPaymentDate(e.target.value)}
                     min={new Date().toISOString().split('T')[0]}
-                    disabled={existingItem}
+                    disabled={supplierPaid}
                     className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
                   />
                 </div>
@@ -1839,7 +1948,7 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
                           e.target.files?.[0] || null
                         )
                       }}
-                      disabled={existingItem}
+                      disabled={supplierPaid}
                       className="hidden"
                     />
                   </label>
@@ -1899,13 +2008,83 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
 
 
 
+// A YYYY-MM-DD date, e.g. "Nov 20, 2026".
+const formatDayString = (date) =>
+  new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+
+
+// When a supplier's part of a PO should arrive: its promised date moved by how
+// early or late that supplier usually is. Nothing once it's in.
+function ArrivalNote({ arrival }) {
+  if (!arrival) return null
+
+  const day = formatDayString(arrival.expectedDay)
+
+  if (arrival.overdueDays > 0) {
+    return (
+      <p className="text-xs text-red-600">
+        {arrival.overdueDays} {arrival.overdueDays === 1 ? 'day' : 'days'} overdue · expected around {day}
+      </p>
+    )
+  }
+
+  return (
+    <p className={`text-xs ${arrival.likelyLate ? 'text-amber-700' : 'text-gray-500'}`}>
+      Expected around {day}
+      {arrival.likelyLate && (
+        <span className="ml-1.5 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-px text-[11px] font-medium">Likely late</span>
+      )}
+    </p>
+  )
+}
+
+
 // =====================================================
 // ADD PURCHASE ORDER MODAL
 // =====================================================
-function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingCustomerOrders, loadingSuppliers, creating, onClose, onCreate }) {
+function AddPurchaseOrderModal({ customerOrders, suppliers, warehouseRacks, loadingCustomerOrders, loadingSuppliers, creating, onClose, onCreate }) {
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState('')
   const [customerOrderId, setCustomerOrderId] = useState('')
   const [items, setItems] = useState([])
+  const [pricingError, setPricingError] = useState('')
+
+  const supplierName = (supplierId) =>
+    suppliers.find((supplier) => supplier.id === supplierId)?.supplier_name || 'Unknown supplier'
+
+
+  // ---------------------------------------------------
+  // SUGGESTED DATE AND LATE SUPPLIERS
+  //
+  // Each supplier's usual days from PO to delivery and whether it's often late
+  // (services/predictionService.js), so the PO can promise a realistic date: the
+  // slowest supplier's usual time, never under DMC's minimum.
+  // ---------------------------------------------------
+  const [timings, setTimings] = useState({})
+  const supplierIds = [...new Set(items.map((item) => item.supplier_id).filter(Boolean))]
+  const supplierKey = supplierIds.join(',')
+
+  useEffect(() => {
+    if (!supplierKey) {
+      setTimings({})
+      return
+    }
+
+    let active = true
+
+    loadSupplierTimings(supplierKey.split(','))
+      .then((result) => { if (active) setTimings(result) })
+      .catch((error) => console.error('Failed to load supplier timings:', error))
+
+    return () => { active = false }
+  }, [supplierKey])
+
+  // A supplier with no deliveries to go by yet gives no suggestion.
+  const slowest = supplierIds
+    .filter((id) => timings[id] && timings[id].usualLeadDays !== null)
+    .map((id) => ({ id, name: supplierName(id), days: Math.ceil(timings[id].usualLeadDays) }))
+    .sort((a, b) => b.days - a.days)[0]
+  const suggestedDate = slowest ? localDateString(Math.max(slowest.days, MIN_PO_DELIVERY_DAYS)) : null
+  const oftenLate = supplierIds.filter((id) => timings[id]?.often)
 
   // ---------------------------------------------------
   // SELECT CUSTOMER ORDER
@@ -1923,7 +2102,10 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
     // ---------------------------------------------------
     // CONVERT CUSTOMER ORDER ITEMS INTO PURCHASE ORDER ITEMS
     // ---------------------------------------------------
+  // Goods carried from an earlier order (a rush shipment) are already ordered
+  // on that order's purchase order.
   const purchaseItems = (selectedOrder.customer_order_items || [])
+    .filter((item) => !isCarriedLine(item))
     .map((item) => ({
       customer_order_item_id: item.id,
       product_id: item.product_id,
@@ -1931,47 +2113,54 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
       brand: item.products?.brand || '',
       ordered_quantity: Number(item.quantity || 0),
       unit: item.products?.unit || '',
+      cbm: Number(item.products?.cbm || 0),
 
-      // Supplier actually selected for the PO — default to primary supplier
+      // Each product has one supplier, so the system sets it — there is no
+      // choice to get wrong.
       supplier_id: item.products?.supplier_id || '',
 
-      // Supplier assigned to the product
-      product_supplier_id: item.products?.supplier_id || '',
-
-      unit_price: ''
+      // Filled from the supplier's current price list below; never typed.
+      unit_price: null,
+      min_order_qty: null,
     }))
 
     setItems(purchaseItems)
+    loadPriceListPrices(purchaseItems)
+
+    // Cases the supplier owes for a product count first: DMC pays only for the rest (046).
+    loadOwedCredit().then((open) => setItems((current) => current.map((item) => ({
+      ...item,
+      owed_cases: Math.min(Number(item.ordered_quantity || 0), open[`${item.supplier_id}:${item.product_id}`] || 0),
+    }))))
   }
 
 
   // ===================================================
-  // UPDATE SUPPLIER
+  // FILL PRICES FROM THE SUPPLIERS' PRICE LISTS
   // ===================================================
-  function updateSupplier(index, supplierId) {
-    setItems((current) =>
-      current.map(
-        (item, itemIndex) =>
-          itemIndex === index
-            ? {...item, supplier_id: supplierId}
-            : item
-      )
-    )
-  }
+  async function loadPriceListPrices(purchaseItems) {
+    setPricingError('')
 
-
-  // ===================================================
-  // UPDATE UNIT PRICE
-  // ===================================================
-  function updateUnitPrice(index, price) {
-    setItems((current) =>
-      current.map(
-        (item, itemIndex) =>
-          itemIndex === index
-            ? {...item, unit_price: price}
-            : item
+    try {
+      const prices = await getCurrentSupplierPrices(
+        purchaseItems.map((item) => item.product_id)
       )
-    )
+
+      setItems((current) =>
+        current.map((item) => {
+          const listed = lookupSupplierPrice(prices, item.supplier_id, item.product_id)
+
+          return {
+            ...item,
+            unit_price: listed ? listed.cost : null,
+            min_order_qty: listed?.moq ?? null,
+          }
+        })
+      )
+    } catch (error) {
+      console.error('Failed to load price list prices:', error)
+      setPricingError(pricingErrorMessage(error))
+    }
   }
 
 
@@ -1990,10 +2179,19 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
   const purchaseTotal =
     items.reduce(
       (total, item) => {
-        return (total + (Number( item.ordered_quantity || 0) * Number(item.unit_price || 0)))
+        return (total + (linePayable(item)))
       },
       0
     )
+
+
+  // ===================================================
+  // WAREHOUSE SPACE
+  // ===================================================
+  // A note, not a block: racks can free up before the goods arrive.
+  const purchaseVolume = items.reduce((total, item) => total + Number(item.ordered_quantity || 0) * Number(item.cbm || 0), 0)
+  const capacity = summarizeCapacity(warehouseRacks)
+  const notEnoughSpace = purchaseVolume > capacity.freeCbm
 
 
   // ===================================================
@@ -2117,6 +2315,38 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
             <p className="mt-1 text-xs text-gray-500">
               Select the date when the supplier is expected to deliver the order — at least {MIN_PO_DELIVERY_DAYS} days from today.
             </p>
+
+            {selectedOrder && suggestedDate && (
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-green-200 bg-green-50 p-3 text-sm">
+                <p className="text-gray-800">
+                  <span className="font-medium">Suggested: {formatDayString(suggestedDate)}.</span>{' '}
+                  {slowest.days >= MIN_PO_DELIVERY_DAYS
+                    ? `${slowest.name} usually takes about ${slowest.days} days from PO to delivery.`
+                    : `Every supplier here usually delivers within the ${MIN_PO_DELIVERY_DAYS}-day minimum.`}
+                </p>
+
+                {expectedDeliveryDate !== suggestedDate && (
+                  <button
+                    type="button"
+                    onClick={() => setExpectedDeliveryDate(suggestedDate)}
+                    disabled={creating}
+                    className="rounded-md bg-[#2D5A42] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#234633] disabled:opacity-50"
+                  >
+                    Use this date
+                  </button>
+                )}
+              </div>
+            )}
+
+            {selectedOrder && oftenLate.map((id) => (
+              <p key={id} className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                {supplierName(id)} is often late:{' '}
+                {timings[id].scored
+                  ? `late on ${timings[id].lateCount} of its last ${timings[id].deliveries} deliveries, by ${Math.round(timings[id].averageDaysLate)} ${Math.round(timings[id].averageDaysLate) === 1 ? 'day' : 'days'} on average${timings[id].simulated ? ' (counting simulated demo deliveries)' : ''}`
+                  : 'DMC staff say so'}
+                . Follow up early, or allow extra days.
+              </p>
+            ))}
           </div>
 
 
@@ -2126,7 +2356,24 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
           {selectedOrder && (
             <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50 p-4">
               <p className="text-sm text-blue-800">
-                Select a supplier and enter the supplier purchase price for each product.
+                Each product's supplier is set by the product catalog, and its price comes from the supplier's current price list. Neither can be changed here.
+              </p>
+            </div>
+          )}
+
+          {selectedOrder && warehouseRacks.length > 0 && purchaseVolume > 0 && (
+            <div className={`mb-4 rounded-lg border p-4 ${notEnoughSpace ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-white'}`}>
+              <p className={`text-sm ${notEnoughSpace ? 'text-amber-800' : 'text-gray-700'}`}>
+                This order needs about {formatCbm(purchaseVolume)} of warehouse space. {formatCbm(capacity.freeCbm)} is free right now ({capacity.freeRacks} of {capacity.totalRacks} racks).
+                {notEnoughSpace && ' It won\'t all fit unless slots free up before the delivery date, so check with the warehouse first.'}
+              </p>
+            </div>
+          )}
+
+          {selectedOrder && pricingError && (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm text-amber-800">
+                {pricingError}
               </p>
             </div>
           )}
@@ -2149,7 +2396,7 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
                 </span>
               </div>
 
-              <div className="overflow-x-auto rounded-lg border">
+              <TableScroll className="rounded-lg border">
                 <table className="min-w-full">
 
                   <thead className="bg-gray-50">
@@ -2180,8 +2427,8 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
                   <tbody>
                     {items.length > 0 ? (
                       items.map(
-                        (item, index) => {
-                          const subtotal = Number(item.ordered_quantity || 0) * Number(item.unit_price || 0)
+                        (item) => {
+                          const subtotal = linePayable(item)
 
                           return (
                             <tr key={item.customer_order_item_id} className="border-t border-gray-200">
@@ -2191,6 +2438,12 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
                                 <p className="font-medium text-gray-800">
                                   {item.product_name}
                                 </p>
+
+                                {Number(item.owed_cases || 0) > 0 && (
+                                  <p className="mt-0.5 text-xs font-medium text-amber-700">
+                                    {item.owed_cases} owed by the supplier, already paid: DMC pays for {Math.max(Number(item.ordered_quantity || 0) - Number(item.owed_cases), 0)}
+                                  </p>
+                                )}
 
                                 {item.brand && (
                                   <p className="text-xs text-gray-500">
@@ -2208,57 +2461,34 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
                               </td>
 
 
-                              {/* SUPPLIER */}
-                              <td className="px-4 py-4">
-                                <select
-                                  value={item.supplier_id || ''}
-                                  onChange={(e) => updateSupplier(index, e.target.value)}
-                                  disabled={creating || loadingSuppliers}
-                                  className="w-full min-w-[220px] rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
-                                >
-                                  <option value="">
-                                    {loadingSuppliers ? 'Loading suppliers...' : 'Select supplier'}
-                                  </option>
-
-                                  {getAvailableSuppliers(item).map((supplier) => {
-                                    const isPrimary =
-                                      supplier.id === item.product_supplier_id &&
-                                      supplier.supplier_type === 'Manufacturer'
-
-                                    return (
-                                      <option key={supplier.id} value={supplier.id}>
-                                        {supplier.supplier_name}
-                                        {isPrimary ? ' (Primary)' : ''}
-                                      </option>
-                                    )
-                                  })}
-                                </select>
+                              {/* SUPPLIER — fixed by the product, not chosen */}
+                              <td className="min-w-[200px] px-4 py-4">
+                                <p className="font-medium text-gray-800">
+                                  {loadingSuppliers ? 'Loading...' : supplierName(item.supplier_id)}
+                                </p>
                               </td>
 
 
                               {/* UNIT PRICE */}
                               <td className="px-4 py-4">
-                                <div className="relative">
-                                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">
-                                    ₱
-                                  </span>
+                                {/* Read-only: the supplier's current price-list price. */}
+                                <p className="font-medium text-gray-800">
+                                  {item.unit_price != null
+                                    ? `₱ ${Number(item.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                                    : '-'}
+                                </p>
 
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={item.unit_price}
-                                    onChange={(e) =>
-                                      updateUnitPrice(
-                                        index,
-                                        e.target.value
-                                      )
-                                    }
-                                    disabled={creating}
-                                    placeholder="0.00"
-                                    className="w-36 rounded-md border border-gray-300 py-2 pl-7 pr-3 text-right text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
-                                  />
-                                </div>
+                                <p className={`mt-1 text-xs ${item.unit_price != null ? 'text-gray-500' : 'font-medium text-red-700'}`}>
+                                  {item.unit_price != null
+                                    ? 'From price list'
+                                    : 'No supplier price yet — add it in Price Lists'}
+                                </p>
+
+                                {item.min_order_qty && item.ordered_quantity < item.min_order_qty && (
+                                  <p className="mt-1 text-xs font-medium text-amber-700">
+                                    Below supplier minimum of {item.min_order_qty} {item.unit}
+                                  </p>
+                                )}
                               </td>
 
 
@@ -2279,7 +2509,7 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
                     )}
                   </tbody>
                 </table>
-              </div>
+              </TableScroll>
 
 
               {/* =================================================
@@ -2334,3 +2564,27 @@ function AddPurchaseOrderModal({ customerOrders, getAvailableSuppliers, loadingC
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per purchase order line (a product from a supplier), as listed.
+// =============================================
+const PURCHASE_ORDER_COLUMNS = [
+  { header: 'PO', value: ({ po }) => po.po_number },
+  { header: 'PO status', value: ({ po }) => statusText(po.status) },
+  { header: 'Order', value: ({ po }) => po.customer_orders?.order_number },
+  { header: 'Customer', value: ({ po }) => po.customer_orders?.profile?.company || po.customer_orders?.profile?.name, pdf: false },
+  { header: 'Created', value: ({ po }) => dateTime(po.created_at), pdf: false },
+  { header: 'Expected delivery', value: ({ po }) => day(po.expected_delivery_date) },
+  { header: 'Supplier', value: ({ line }) => line.suppliers?.supplier_name },
+  { header: 'Product', value: ({ line }) => line.products?.product_name },
+  { header: 'Ordered', value: ({ line }) => number(line.ordered_quantity) },
+  { header: 'Received', value: ({ line }) => number(line.received_quantity) },
+  { header: 'Unit price (PHP)', value: ({ line }) => money(line.unit_price), pdf: false },
+  { header: 'Line total (PHP)', value: ({ line }) => money(Number(line.ordered_quantity || 0) * Number(line.unit_price || 0)) },
+  { header: 'Line status', value: ({ line }) => statusText(line.status) },
+  { header: "Supplier's PFI (PHP)", value: ({ line }) => money(line.supplier_pfi_amount), pdf: false },
+  { header: 'Paid to supplier (PHP)', value: ({ line }) => money(line.payment_amount), pdf: false },
+  { header: 'Paid on', value: ({ line }) => day(line.payment_date), pdf: false },
+]

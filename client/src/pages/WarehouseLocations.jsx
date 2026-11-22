@@ -2,751 +2,330 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../supabase'
+import ExportButton from '../components/ExportButton'
+import { exportList, number } from '../utils/csvExport'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faXmark, faFloppyDisk, faLocationDot, faLayerGroup, faWarehouse, faBox, faToggleOn, faToggleOff, faBoxOpen } from '@fortawesome/free-solid-svg-icons'
-import { useToast } from "../context/ToastContext"
+import { faXmark, faPlus, faWarehouse } from '@fortawesome/free-solid-svg-icons'
+import { useToast } from '../context/ToastContext'
 
-import IconButton from '../components/IconButton'
-import RoleActivityBadge from '../components/RoleActivityBadge'
+import WarehouseCapacityBanner from '../components/WarehouseCapacityBanner'
+import { formatCbm, HIGH_CUBE_CBM, SLOT_CBM, slotUsed } from '../utils/warehouseCapacity'
+import { loadSlots } from '../services/warehouseSlots'
+
+
+// =============================================================================
+// Warehouse Locations: floors and pallet slots (db/migrations/043)
+//
+// Each slot is one pallet spot (1.2 m x 1.0 m on a 2 m shelf, up to 2.4 m³).
+// A slot holds one order's goods; that order's products may share it. Goods
+// are put in slots at Receiving and leave at Staging; admin adds slots and
+// floors, and can stop a slot being used.
+// =============================================================================
+
+const plural = (count, word) => `${count.toLocaleString()} ${count === 1 ? word : `${word}s`}`
+const slotNumber = (slot) => String(slot.rack_id || '').replace(/^F\d+-/, '')
+
+// free, part of a pallet used, full, or not in use
+function slotState(slot) {
+  if (!slot.is_active) return 'off'
+  if (!slot.is_occupied && !slot.contents.length) return 'free'
+  const used = slotUsed(slot)
+  return used >= Number(slot.capacity_cbm || SLOT_CBM) - 0.05 ? 'full' : 'part'
+}
+
+const TILE = {
+  free: 'border-emerald-300 bg-white text-emerald-800 hover:bg-emerald-50',
+  part: 'border-amber-300 bg-amber-100 text-amber-900 hover:bg-amber-200',
+  full: 'border-[#2D5A42] bg-[#2D5A42] text-white hover:bg-[#244a36]',
+  off: 'border-dashed border-gray-300 bg-gray-100 text-gray-400 hover:bg-gray-200',
+}
+const STATE_TEXT = { free: 'Free', part: 'Partly used', full: 'Full', off: 'Not in use' }
 
 
 export default function WarehouseLocationsPage() {
-
   const { profile } = useAuth()
   const { toast } = useToast()
-
-  const [racks, setRacks] = useState([])
-  const [selectedRack, setSelectedRack] = useState(null)
-  const [showEditModal, setShowEditModal] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [togglingRackId, setTogglingRackId] = useState(null)
-  const [selectedLocation, setSelectedLocation] = useState('all')
-
   const isAdmin = profile?.role === 'admin'
 
+  const [slots, setSlots] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [floorShown, setFloorShown] = useState('all')
+  const [selectedId, setSelectedId] = useState(null)
+  const [adding, setAdding] = useState(null)
+  const [saving, setSaving] = useState(false)
 
-  // =====================================================
-  // LOAD WAREHOUSE RACKS
-  // =====================================================
-  async function loadWarehouseRacks() {
 
+  async function load() {
     setLoading(true)
-
     try {
-      const { data, error } = await supabase
-        .from('warehouse_racks')
-        .select(`
-          id,
-          rack_id,
-          name,
-          location,
-          section,
-          description,
-          is_active,
-          created_at,
-          updated_at,
-          is_occupied
-        `)
-        .order('location', { ascending: true })
-        .order('section', { ascending: true })
-        .order('rack_id', { ascending: true })
-
-
-      if (error) {
-        throw error
-      }
-
-      setRacks(data || [])
-    }
-
-    catch (error) {
-      console.error('Failed to load warehouse racks:', error)
+      setSlots(await loadSlots())
+    } catch (error) {
+      console.error('Failed to load warehouse slots:', error)
       toast.error(error.message || 'Failed to load warehouse locations.')
-    }
-
-    finally {
+    } finally {
       setLoading(false)
     }
   }
 
-
-  // =====================================================
-  // GROUP RACKS BY LOCATION THEN BY SECTION
-  // =====================================================
-  const racksByLocation = useMemo(() => {
-    const locations = {}
-
-    racks.forEach((rack) => {
-      const location = rack.location?.trim() || 'Unassigned Location'
-      const section = rack.section?.trim() || 'Unassigned Section'
-
-      if (!locations[location]) {
-        locations[location] = {}
-      }
-
-      if (!locations[location][section]) {
-        locations[location][section] = []
-      }
-
-      locations[location][section].push(rack)
-    })
-
-    return locations
-  }, [racks])
-
-
-  // =====================================================
-  // GET DYNAMIC LOCATIONS
-  // =====================================================
-  const locations = useMemo(() => {
-    return Object.keys(racksByLocation)
-  }, [racksByLocation])
-
-
-  // =====================================================
-  // GET ONLY THE SELECTED LOCATION
-  // =====================================================
-  const visibleLocations = useMemo(() => {
-    if (selectedLocation === 'all') {
-
-      return Object.entries(
-        racksByLocation
-      )
-    }
-
-    return Object.entries(racksByLocation).filter(([location]) => location === selectedLocation)
-  }, [ racksByLocation, selectedLocation ])
-
-
-  // =====================================================
-  // RESET SELECTED LOCATION IF IT NO LONGER EXISTS
-  // =====================================================
   useEffect(() => {
-    if ( selectedLocation !== 'all' && !locations.includes(selectedLocation)) {
-      setSelectedLocation('all')
-    }
-  }, [ locations, selectedLocation ])
+    load()
+  }, [])
 
 
-  // =====================================================
-  // TOGGLE RACK OCCUPANCY
-  // =====================================================
-  async function toggleRackOccupied(rack) {
-    if (!rack?.id) {
-      toast.error('Missing rack information.')
-      return
-    }
+  // Floors, each with its slots and how much space is left.
+  const floors = useMemo(() => {
+    const byFloor = {}
+    for (const slot of slots) (byFloor[slot.floor ?? 0] ||= []).push(slot)
+    return Object.entries(byFloor)
+      .map(([floor, list]) => {
+        const active = list.filter((slot) => slot.is_active)
+        const free = active.filter((slot) => slotState(slot) === 'free')
+        const freeCbm = free.reduce((total, slot) => total + Number(slot.capacity_cbm || 0), 0)
+        return { floor: Number(floor), slots: list, active: active.length, free: free.length, freeCbm }
+      })
+      .sort((a, b) => a.floor - b.floor)
+  }, [slots])
 
-    setTogglingRackId(rack.id)
+  const shownFloors = floorShown === 'all' ? floors : floors.filter((entry) => String(entry.floor) === floorShown)
+  const selected = slots.find((slot) => slot.id === selectedId) || null
+  const simulated = slots.some((slot) => slot.is_simulated)
 
+
+  // Admin: stop a slot being used for new goods, or use it again.
+  async function setActive(slot, active) {
+    setSaving(true)
     try {
-      const newOccupiedState = !rack.is_occupied
-
-      const { error } = await supabase
-        .from('warehouse_racks')
-        .update({
-          is_occupied: newOccupiedState,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', rack.id)
-
-      if (error) {
-        throw error
-      }
-
-      // =================================================
-      // UPDATE UI IMMEDIATELY
-      // =================================================
-      setRacks((prev) =>
-        prev.map((item) =>
-          item.id === rack.id
-            ? {
-                ...item,
-                is_occupied: newOccupiedState,
-                updated_at: new Date().toISOString(),
-              }
-            : item
-        )
-      )
-
-
-      toast.success(newOccupiedState ? `${rack.name || rack.rack_id} marked as occupied.` : `${rack.name || rack.rack_id} marked as available.`)
-    }
-
-    catch (error) {
-      console.error('Failed to update rack occupancy:', error)
-      toast.error(error.message || 'Failed to update rack occupancy.')
-    }
-
-    finally {
-      setTogglingRackId(null)
+      const { error } = await supabase.from('warehouse_racks').update({ is_active: active, updated_at: new Date().toISOString() }).eq('id', slot.id)
+      if (error) throw error
+      toast.success(active ? `${slot.rack_id} is in use again.` : `${slot.rack_id} won't be used for new goods.`)
+      await load()
+    } catch (error) {
+      toast.error(error.message || 'The slot could not be changed.')
+    } finally {
+      setSaving(false)
     }
   }
 
+  // Admin: more slots on a floor (a new floor number adds a floor).
+  async function addSlots() {
+    const floor = Number(adding?.floor)
+    const count = Number(adding?.count)
+    if (!(Number.isInteger(floor) && floor > 0)) return toast.error('Enter the floor number (1 or more).')
+    if (!(Number.isInteger(count) && count > 0 && count <= 500)) return toast.error('Enter how many slots to add (1 to 500).')
 
-  // =====================================================
-  // OPEN EDIT MODAL 
-  // =====================================================
-  function openEditModal(rack) {
-    if (!isAdmin) {
-      return
-    }
-
-    setSelectedRack({
-      ...rack,
+    const taken = slots
+      .filter((slot) => slot.floor === floor)
+      .map((slot) => Number(slotNumber(slot)) || 0)
+    const start = (taken.length ? Math.max(...taken) : 0) + 1
+    const rows = Array.from({ length: count }, (_, i) => {
+      const code = `F${floor}-${String(start + i).padStart(3, '0')}`
+      return { rack_id: code, name: code, location: `Floor ${floor}`, floor, capacity_cbm: SLOT_CBM, is_active: true, is_occupied: false }
     })
-
-    setShowEditModal(true)
-  }
-
-
-  // =====================================================
-  // CLOSE EDIT MODAL
-  // =====================================================
-  function closeEditModal() {
-    if (saving) { return }
-
-    setShowEditModal(false)
-    setSelectedRack(null)
-  }
-
-
-  // =====================================================
-  // UPDATE SELECTED RACK FIELD
-  // =====================================================
-  function updateSelectedRack( field, value ) {
-    setSelectedRack((prev) => ({ ...prev,  [field]: value }))
-  }
-
-
-  // =====================================================
-  // SAVE RACK DETAILS
-  // =====================================================
-  async function saveRackDetails() {
-    if (!isAdmin) {
-      toast.error('Only administrators can edit rack details.')
-      return
-    }
-
-    if (!selectedRack?.id) {
-      toast.error('Missing rack information.')
-      return
-    }
-
-    if (!selectedRack.rack_id?.trim()) {
-      toast.error('Rack ID is required.')
-      return
-    }
-
-    if (!selectedRack.name?.trim()) {
-      toast.error('Rack name is required.')
-      return
-    }
 
     setSaving(true)
-
     try {
-      const updateData = {
-        rack_id: selectedRack.rack_id.trim(),
-        name: selectedRack.name.trim(),
-        location: selectedRack.location?.trim() || null,
-        section: selectedRack.section?.trim() || null,
-        description: selectedRack.description?.trim() || null,
-        is_active: Boolean( selectedRack.is_active ),
-        updated_at: new Date().toISOString(),
-      }
-
-      const { data, error } =
-        await supabase
-          .from('warehouse_racks')
-          .update(updateData)
-          .eq('id', selectedRack.id)
-          .select()
-          .single()
-
-      if (error) {
-        throw error
-      }
-
-
-      // =================================================
-      // UPDATE UI
-      // =================================================
-      setRacks((prev) =>
-        prev.map((rack) =>
-          rack.id === selectedRack.id
-            ? {
-                ...rack,
-                ...data,
-              }
-            : rack
-        )
-      )
-
-      toast.success('Warehouse rack updated successfully.')
-      closeEditModal()
-    }
-
-    catch (error) {
-      console.error('Failed to update warehouse rack:', error)
-      toast.error(error.message || 'Failed to update warehouse rack.')
-    }
-
-    finally {
+      const { error } = await supabase.from('warehouse_racks').insert(rows)
+      if (error) throw error
+      toast.success(`${plural(count, 'slot')} added on floor ${floor}: ${rows[0].rack_id}${count > 1 ? ` to ${rows.at(-1).rack_id}` : ''}.`)
+      setAdding(null)
+      await load()
+    } catch (error) {
+      toast.error(error.message || 'The slots could not be added.')
+    } finally {
       setSaving(false)
     }
   }
 
 
-  // =====================================================
-  // INITIAL LOAD
-  // =====================================================
-  useEffect(() => {
-    loadWarehouseRacks()
-  }, [])
-
-
-  // =====================================================
-  // MAIN CONTENT
-  // =====================================================
   return (
     <div>
-
-      {/* =================================================
-          HEADER
-      ================================================= */}
       <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-
-        {/* =================================================
-            TITLE + SUBTITLE
-        ================================================= */}
         <div>
-          <h1 className="text-3xl font-bold text-[#1F3A2C]">
-            Warehouse Locations
-          </h1>
-
-          <p className="mt-1 text-gray-500">
-            View and manage warehouse racks by location and section.
+          <h1 className="text-3xl font-bold text-[#1F3A2C]">Warehouse Locations</h1>
+          <p className="mt-1 max-w-3xl text-sm text-gray-600">
+            Floors and pallet slots. A slot is one 1.2 m × 1.0 m pallet on a 2 m shelf, up to {formatCbm(SLOT_CBM)} of cases.
+            A slot holds one order's goods; that order's products may share it. Goods go into slots at Receiving and leave at Staging.
           </p>
+          {simulated && (
+            <p className="mt-1 text-xs text-gray-500">
+              Simulated from DMC's floor sizes (40-ft high cubes' worth per floor: {formatCbm(HIGH_CUBE_CBM)} each), until DMC counts its real slots.
+            </p>
+          )}
         </div>
 
-
-        {/* =================================================
-            LOCATION FILTER CHIPS
-        ================================================= */}
-        {!loading && locations.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2">
-
-            {/* =================================================
-                ALL LOCATIONS
-            ================================================= */}
-            <button
-              type="button"
-              onClick={() => setSelectedLocation('all')}
-              className={`rounded-lg border px-4 py-2 text-sm font-medium transition ${selectedLocation === 'all' ? 'border-[#1F3A2C] bg-[#1F3A2C] text-white' : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50'}`}
-            >
-              All
-            </button>
-
-            {/* =================================================
-                DYNAMIC LOCATION BUTTONS
-            ================================================= */}
-            {locations.map((location) => (
-              <button
-                key={location}
-                type="button"
-                onClick={() => setSelectedLocation(location)}
-                title={`Show ${location}`}
-                className={`rounded-lg border px-4 py-2 text-sm font-medium transition ${selectedLocation === location ? 'border-[#1F3A2C] bg-[#1F3A2C] text-white' : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50'}`}
-              >
-                {location}
-              </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={floorShown}
+            onChange={(e) => setFloorShown(e.target.value)}
+            aria-label="Floor shown"
+            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#2D5A42]"
+          >
+            <option value="all">All floors</option>
+            {floors.map((entry) => (
+              <option key={entry.floor} value={String(entry.floor)}>{entry.floor ? `Floor ${entry.floor}` : 'Racks'}</option>
             ))}
-          </div>
-        )}
-      </div>
-
-
-      {/* =================================================
-          LOADING
-      ================================================= */}
-      {loading ? (
-
-        <div className="rounded-xl border border-gray-200 bg-white py-16 text-center shadow-sm">
-          <p className="text-sm text-gray-500">
-            Loading warehouse locations...
-          </p>
-        </div>
-
-      ) : racks.length === 0 ? (
-
-        /* =================================================
-            EMPTY STATE
-        ================================================= */
-        <div className="rounded-xl border border-gray-200 bg-white py-16 text-center shadow-sm">
-          <FontAwesomeIcon icon={faWarehouse} className="mb-4 text-4xl text-gray-300"/>
-
-          <p className="text-sm font-medium text-gray-600">
-            No warehouse racks found.
-          </p>
-
-          <p className="mt-1 text-sm text-gray-400">
-            Warehouse locations will appear here once racks are added.
-          </p>
-        </div>
-
-      ) : visibleLocations.length === 0 ? (
-
-        /* =================================================
-            NO SELECTED LOCATION
-        ================================================= */
-        <div className="rounded-xl border border-gray-200 bg-white py-16 text-center shadow-sm">
-          <FontAwesomeIcon  icon={faLocationDot} className="mb-4 text-4xl text-gray-300"/>
-
-          <p className="text-sm font-medium text-gray-600">
-            No racks found for this location.
-          </p>
-        </div>
-
-      ) : (
-
-        /* =================================================
-            LOCATIONS
-        ================================================= */
-        <div className="space-y-6">
-
-          {visibleLocations.map(([location, sections]) => (
-
-              /* =================================================
-                  LOCATION CARD
-              ================================================= */
-              <div key={location} className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-
-                <div className="border-b border-gray-200 bg-[#F4F8F5] px-6 py-5">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#1F3A2C] text-white">
-                      <FontAwesomeIcon icon={faLocationDot}/>
-                    </div>
-
-                    <div>
-                      <h2 className="text-lg leading-tight font-semibold text-[#1F3A2C]">
-                        {location}
-                      </h2>
-
-                      <p className="text-md leading-tight text-gray-500">
-                        {Object.values(sections).reduce((total, sectionRacks) => total + sectionRacks.length, 0)} rack{Object.values(sections).reduce((total, sectionRacks) => total + sectionRacks.length, 0) !== 1 ? 's' : ''}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-
-                <div className="p-6">
-                  <div className="space-y-6">
-                    {Object.entries(sections).map(([section, sectionRacks]) => (
-                      <div key={section}>
-                        <div className="mb-3 flex items-center gap-2">
-                          <FontAwesomeIcon icon={faLayerGroup} className="text-gray-400"/>
-
-                          <h3 className="text-sm font-semibold text-gray-700">
-                            {section}
-                          </h3>
-                        </div>
-
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                          {sectionRacks.map((rack) => (
-                            <RackCard key={rack.id} rack={rack} toggling={ togglingRackId === rack.id} onToggleOccupied={() => toggleRackOccupied(rack)} onEdit={() => openEditModal(rack)}/>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-              </div>
-            )
-          )}
-        </div>
-      )}
-
-
-      {/* =====================================================
-          EDIT RACK MODAL
-      ===================================================== */}
-      {showEditModal && selectedRack && (
-        <RackEditModal
-          rack={selectedRack}
-          isAdmin={isAdmin}
-          saving={saving}
-          onChange={updateSelectedRack}
-          onSave={saveRackDetails}
-          onClose={closeEditModal}
-        />
-      )}
-
-    </div>
-  )
-}
-
-
-
-
-
-// =====================================================
-// RACK CARD
-// =====================================================
-function RackCard({ rack, toggling, onToggleOccupied, onEdit }) {
-
-  const occupied = Boolean(rack.is_occupied)
-  const inactive = !rack.is_active
-
-  return (
-    <div onClick={() => onEdit(rack)} className={`relative cursor-pointer rounded-xl border bg-white p-5 shadow-sm transition ${inactive ? 'border-gray-200 opacity-60' : occupied ? 'border-amber-200' : 'border-gray-200'} hover:shadow-md`}>
-
-      {/* =================================================
-          TOP
-      ================================================= */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div
-            className={`
-              flex h-10 w-10 items-center justify-center rounded-lg bg-[#F4F8F5]
-              ${occupied ? 'text-amber-600' : 'text-[#2D5A42]'}
-            `}
-          >
-            <FontAwesomeIcon icon={occupied ? faBox : faBoxOpen} />
-          </div>
-
-          <div className="min-w-0">
-            <p className="text-xs font-medium uppercase tracking-wide text-gray-400">
-              {rack.rack_id}
-            </p>
-
-            <h4 className="truncate font-semibold text-gray-800">
-              {rack.name}
-            </h4>
-          </div>
-        </div>
-      </div>
-
-
-      {/* =================================================
-          STATUS
-      ================================================= */}
-      <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-4">
-
-        <RoleActivityBadge status={inactive ? 'inactive' : occupied ? 'occupied' : 'available'}/>
-
-        {!inactive && (
-          <div onClick={(e) => e.stopPropagation()}>
-            <IconButton
-              icon={occupied ? faToggleOn : faToggleOff}
-              title={inactive ? 'Inactive rack' : occupied ? 'Mark as available' : 'Mark as occupied'}
-              color={inactive ? 'gray' : occupied ? 'amber' : 'green'}
-              disabled={toggling || inactive}
-              onClick={onToggleOccupied}
-            />
-          </div>
-        )}
-
-      </div>
-    </div>
-  )
-}
-
-
-
-
-
-
-// =====================================================
-// EDIT RACK MODAL
-// =====================================================
-function RackEditModal({ rack, isAdmin, saving, onChange, onSave, onClose }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl bg-white shadow-xl">
-
-        {/* =================================================
-            HEADER
-        ================================================= */}
-        <div className="flex items-center justify-between border-b px-6 py-4">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-800">
-              Edit Warehouse Rack
-            </h2>
-
-            <p className="text-sm text-gray-500">
-              Update the details of this warehouse rack.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={saving}
-            className="rounded-md p-2 text-gray-500 hover:bg-gray-100 disabled:opacity-50"
-          >
-            <FontAwesomeIcon icon={faXmark}/>
-          </button>
-        </div>
-
-
-        {/* =================================================
-            CONTENT
-        ================================================= */}
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-
-            {/* =================================================
-                RACK ID
-            ================================================= */}
-            <div>
-              <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                Rack ID
-              </label>
-
-              <input
-                type="text"
-                value={rack.rack_id || ''}
-                onChange={(e) => onChange('rack_id', e.target.value)}
-                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-[#1F3A2C] focus:ring-1 focus:ring-[#1F3A2C]"
-              />
-            </div>
-
-
-            {/* =================================================
-                NAME
-            ================================================= */}
-            <div>
-              <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                Rack Name
-              </label>
-
-              <input
-                type="text"
-                value={rack.name || ''}
-                onChange={(e) => onChange('name', e.target.value)}
-                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-[#1F3A2C] focus:ring-1 focus:ring-[#1F3A2C]"
-              />
-            </div>
-
-
-            {/* =================================================
-                LOCATION
-            ================================================= */}
-            <div>
-              <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                Location
-              </label>
-
-              <input
-                type="text"
-                value={rack.location || ''}
-                onChange={(e) => onChange( 'location', e.target.value)}
-                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-[#1F3A2C] focus:ring-1 focus:ring-[#1F3A2C]"
-              />
-            </div>
-
-
-            {/* =================================================
-                SECTION
-            ================================================= */}
-            <div>
-              <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                Section
-              </label>
-
-              <input
-                type="text"
-                value={rack.section || ''}
-                onChange={(e) => onChange('section', e.target.value)}
-                className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-[#1F3A2C] focus:ring-1 focus:ring-[#1F3A2C]"
-              />
-            </div>
-
-
-            {/* =================================================
-                DESCRIPTION
-            ================================================= */}
-            <div className="md:col-span-2">
-              <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                Description
-              </label>
-
-              <textarea
-                rows="4"
-                value={rack.description || ''}
-                onChange={(e) => onChange('description', e.target.value)}
-                className="mt-1 w-full resize-none rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-[#1F3A2C] focus:ring-1 focus:ring-[#1F3A2C]"
-              />
-            </div>
-
-
-            {/* =================================================
-                ACTIVE STATUS
-            ================================================= */}
-            <div className="md:col-span-2">
-              <div className="flex items-center justify-between rounded-lg bg-gray-50 p-4">
-                <div>
-                  <p className="text-sm font-semibold text-gray-700">
-                    Rack Status
-                  </p>
-
-                  <p className="mt-1 text-xs text-gray-500">
-                    Inactive racks remain visible but cannot be marked as occupied.
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  disabled={!isAdmin}
-                  onClick={() => isAdmin && onChange('is_active', !rack.is_active)}
-                  className={`
-                    flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition
-                    ${rack.is_active ? 'bg-blue-100 text-blue-700 hover:bg-blue-200': 'bg-gray-200 text-gray-600 hover:bg-gray-300'}
-                    ${!isAdmin ? 'cursor-not-allowed opacity-70' : ''}
-                  `}
-                >
-                  <FontAwesomeIcon icon={rack.is_active ? faToggleOn : faToggleOff} />
-                  {rack.is_active ? 'Active' : 'Inactive'}
-                </button>
-              </div>
-            </div>
-
-          </div>
-        </div>
-
-
-        {/* =================================================
-            FOOTER
-        ================================================= */}
-        <div className="flex items-center justify-end gap-3 bg-gray-50 px-6 py-4">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={saving}
-            className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-          >
-            Cancel
-          </button>
-
-          {isAdmin ?? (
+          </select>
+          <ExportButton count={slots.length} onExport={(how) => exportList(how, 'warehouse-slots', SLOT_COLUMNS, shownFloors.flatMap((entry) => entry.slots))} />
+          {isAdmin && (
             <button
               type="button"
-              onClick={onSave}
-              disabled={saving}
-              className="flex items-center gap-2 rounded-md bg-[#1F3A2C] px-4 py-2 text-sm font-medium text-white hover:bg-[#162C21] disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => setAdding({ floor: floors.at(-1)?.floor || 1, count: 10 })}
+              className="rounded-lg bg-[#2D5A42] px-4 py-2 text-sm font-medium text-white hover:bg-[#244a36]"
             >
-              <FontAwesomeIcon icon={ saving ? faToggleOn : faFloppyDisk}/>
-              {saving ? 'Saving...' : 'Save Changes'}
-            </button>       
+              <FontAwesomeIcon icon={faPlus} className="mr-2" />
+              Add Slots
+            </button>
           )}
         </div>
-
       </div>
+
+      <WarehouseCapacityBanner racks={slots} className="mb-6" />
+
+      {loading ? (
+        <p className="py-10 text-center text-sm text-gray-500">Loading...</p>
+      ) : !slots.length ? (
+        <p className="py-10 text-center text-sm text-gray-500">No slots yet.</p>
+      ) : (
+        <div className="grid gap-6 xl:grid-cols-[1fr_320px]">
+          <div className="space-y-6">
+            {shownFloors.map((entry) => (
+              <section key={entry.floor} className="rounded-xl border border-gray-200 bg-white p-4">
+                <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+                  <h2 className="text-lg font-semibold text-[#1F3A2C]">
+                    <FontAwesomeIcon icon={faWarehouse} className="mr-2 text-[#2D5A42]" />
+                    {entry.floor ? `Floor ${entry.floor}` : 'Racks'}
+                  </h2>
+                  <p className="text-sm text-gray-600">
+                    {plural(entry.free, 'slot')} free of {entry.active} · {formatCbm(entry.freeCbm)} free
+                    {' '}(about {(entry.freeCbm / HIGH_CUBE_CBM).toLocaleString(undefined, { maximumFractionDigits: 1 })} high cubes' worth)
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(2.6rem,1fr))] gap-1">
+                  {entry.slots.map((slot) => {
+                    const state = slotState(slot)
+                    const order = [...new Set(slot.contents.map((item) => item.orderNumber).filter(Boolean))].join(', ')
+                    return (
+                      <button
+                        key={slot.id}
+                        type="button"
+                        onClick={() => setSelectedId(slot.id)}
+                        title={`${slot.rack_id} · ${STATE_TEXT[state]}${order ? ` · ${order}` : ''}${slot.contents.length ? ` · ${formatCbm(slotUsed(slot))} of ${formatCbm(slot.capacity_cbm)}` : ''}`}
+                        className={`h-9 rounded border text-[11px] font-medium ${TILE[state]} ${selectedId === slot.id ? 'ring-2 ring-[#1F3A2C] ring-offset-1' : ''}`}
+                      >
+                        {slotNumber(slot)}
+                      </button>
+                    )
+                  })}
+                </div>
+              </section>
+            ))}
+
+            <div className="flex flex-wrap gap-4 text-xs text-gray-600">
+              {Object.entries(STATE_TEXT).map(([state, text]) => (
+                <span key={state} className="flex items-center gap-1.5">
+                  <span className={`inline-block h-3.5 w-3.5 rounded border ${TILE[state]}`} />
+                  {text}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <aside className="h-fit rounded-xl border border-gray-200 bg-white p-4 xl:sticky xl:top-4">
+            {!selected ? (
+              <p className="text-sm text-gray-500">Choose a slot to see what's in it.</p>
+            ) : (
+              <div>
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold text-[#1F3A2C]">{selected.rack_id}</h3>
+                    <p className="text-sm text-gray-500">{selected.floor ? `Floor ${selected.floor}` : selected.location || 'No floor'} · {STATE_TEXT[slotState(selected)]}</p>
+                  </div>
+                  <button type="button" onClick={() => setSelectedId(null)} aria-label="Close" className="rounded p-1 text-gray-400 hover:bg-gray-100">
+                    <FontAwesomeIcon icon={faXmark} />
+                  </button>
+                </div>
+
+                <p className="mt-3 text-sm text-gray-700">
+                  {formatCbm(slotUsed(selected))} of {formatCbm(selected.capacity_cbm)} used
+                </p>
+
+                {selected.contents.length ? (
+                  <div className="mt-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      {[...new Set(selected.contents.map((item) => item.orderNumber).filter(Boolean))].join(', ') || 'Goods'}
+                    </p>
+                    <ul className="mt-1 space-y-1 text-sm text-gray-700">
+                      {selected.contents.map((item) => (
+                        <li key={item.lineId} className="flex justify-between gap-2">
+                          <span>{item.product}</span>
+                          <span className="shrink-0">{item.quantity.toLocaleString()} {item.unit}{item.cbm ? ` · ${formatCbm(item.quantity * item.cbm)}` : ' · no volume on record'}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <p className="mt-3 text-sm text-gray-500">Empty.</p>
+                )}
+
+                {isAdmin && (
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => setActive(selected, !selected.is_active)}
+                    className="mt-4 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    {selected.is_active ? 'Stop using this slot for new goods' : 'Use this slot again'}
+                  </button>
+                )}
+              </div>
+            )}
+          </aside>
+        </div>
+      )}
+
+      {adding && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+            <h2 className="text-xl font-semibold text-gray-800">Add Slots</h2>
+            <p className="mt-1 text-sm text-gray-600">Each new slot holds one pallet ({formatCbm(SLOT_CBM)}). A floor number not used yet adds a new floor.</p>
+
+            <label className="mt-4 block text-sm font-medium text-gray-700">
+              Floor
+              <input type="number" min="1" value={adding.floor} onChange={(e) => setAdding((prev) => ({ ...prev, floor: e.target.value }))}
+                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-[#2D5A42]" />
+            </label>
+            <label className="mt-3 block text-sm font-medium text-gray-700">
+              How many
+              <input type="number" min="1" max="500" value={adding.count} onChange={(e) => setAdding((prev) => ({ ...prev, count: e.target.value }))}
+                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-[#2D5A42]" />
+            </label>
+
+            <div className="mt-6 flex justify-end gap-2">
+              <button type="button" onClick={() => setAdding(null)} disabled={saving} className="rounded-lg bg-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-300">
+                Cancel
+              </button>
+              <button type="button" onClick={addSlots} disabled={saving} className="rounded-lg bg-[#2D5A42] px-4 py-2 text-sm font-medium text-white hover:bg-[#244a36] disabled:opacity-50">
+                {saving ? 'Adding...' : 'Add Slots'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js): a row per slot, for the floor shown (or all).
+// =============================================
+const SLOT_COLUMNS = [
+  { header: 'Slot', value: (slot) => slot.rack_id },
+  { header: 'Floor', value: (slot) => slot.floor ?? '' },
+  { header: 'State', value: (slot) => STATE_TEXT[slotState(slot)] },
+  { header: 'Order', value: (slot) => [...new Set(slot.contents.map((item) => item.orderNumber).filter(Boolean))].join(', ') },
+  { header: 'Goods (m3)', value: (slot) => number(slotUsed(slot)) },
+  { header: 'Capacity (m3)', value: (slot) => number(slot.capacity_cbm) },
+]

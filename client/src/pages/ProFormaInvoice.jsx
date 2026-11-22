@@ -5,13 +5,24 @@ import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import { createNotification } from '../services/notificationService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faFolderOpen, faFileSignature, faTrash, faXmark, faDownload, faFileInvoice } from '@fortawesome/free-solid-svg-icons'
+import { faFolderOpen, faFileSignature, faXmark, faDownload, faFileInvoice } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 import { generatePFI } from '../services/pfiService'
-import { localDateString } from '../utils/dates'
+import { localDateExcludingSundays, formatDateString, QUOTATION_VALIDITY_DAYS, formatDateTime } from '../utils/dates'
+import { getQuotationPricing, pricingErrorMessage } from '../services/pricingService'
+import { containerCount, containerText, formatVolume, formatWeight } from '../utils/containers'
+import { previewEstimate } from '../services/predictionService'
+import { creditRoom, formatPeso, getCreditStatus, overLimitBy } from '../services/creditService'
+import { loadCarriedFrom, loadWaitingGoods, waitingState } from '../services/rushService'
+import { formatDay } from '../utils/paymentDeadline'
+import { RUSH_ITEM_COLUMNS, columnsIf, isMissingColumn, withNewColumns } from '../utils/newColumns'
 
 import IconButton from '../components/IconButton'
 import StatusBadge from '../components/StatusBadge'
+import TableScroll from '../components/TableScroll'
+import ListControls from '../components/ListControls'
+import { dateTime, day, exportList, productsText, statusText } from '../utils/csvExport'
+import { ALL, applySearch, applyShow, applySort, byNewest, byOldest, byStatus, showChoices, showingOf } from '../utils/listControls'
 
 
 export default function ProFormaInvoicePage() {
@@ -20,21 +31,32 @@ export default function ProFormaInvoicePage() {
 
   const [showModal, setShowModal] = useState(false)
   const [requests, setRequests] = useState([])
+  // Show (a request status), Sort by and Search, above the list.
+  const [show, setShow] = useState(ALL)
+  const [sortBy, setSortBy] = useState('status')
+  const [search, setSearch] = useState('')
   const [currentRequest, setCurrentRequest] = useState(null)
   const [currentQuotation, setCurrentQuotation] = useState(null)
   const [creatingQuotation, setCreatingQuotation] = useState(false)
+  // Each request's newest delivery location change by its customer (037).
+  const [locationChanges, setLocationChanges] = useState({})
 
 
   // =============================================
   // LOAD QUEUES
   // =============================================
   async function loadQueues() {
-    const { data, error } = await supabase
+    // Which request a new quote replaces (035) and whether it's on hold for the
+    // customer's credit limit (040), asked for until those scripts are run.
+    const { data, error } = await withNewColumns((withHold) => withNewColumns((withLink) => supabase
       .from('quotation_requests')
       .select(`
         id,
         quotation_reference,
         preferred_ship_date,
+        delivery_location_id,
+        ${columnsIf(withLink, ['replaces_request_id'])}
+        ${columnsIf(withHold, ['credit_hold_at', 'credit_hold_by_name'])}
         status,
         created_at,
         profiles (
@@ -58,11 +80,14 @@ export default function ProFormaInvoicePage() {
             id,
             product_name,
             brand,
-            unit
+            unit,
+            supplier_id,
+            cbm,
+            gross_weight_kg
           )
         )
       `)
-      .order('created_at', { ascending: false })
+      .order('created_at', { ascending: false }), ['replaces_request_id']), ['credit_hold_at'])
 
 
     if (error) {
@@ -71,6 +96,13 @@ export default function ProFormaInvoicePage() {
     }
 
     setRequests(data || [])
+
+    // The customers' delivery location changes (037; none before it's run): the newest per request.
+    const { data: changes, error: changesError } = await supabase
+      .from('quotation_request_location_changes')
+      .select('quotation_request_id, from_text, withdrawn_quotation_id, changed_at')
+      .order('changed_at', { ascending: true })
+    if (!changesError) setLocationChanges(Object.fromEntries((changes || []).map((change) => [change.quotation_request_id, change])))
   }
 
 
@@ -82,39 +114,64 @@ export default function ProFormaInvoicePage() {
     setCreatingQuotation(true)
 
     try {
-      const quotationNumber = `QT-${Math.random()
-        .toString(36)
-        .substring(2, 8)
-        .toUpperCase()}`
+      // The customer may have changed the request (its delivery location, say,
+      // 037) while it was being priced: then nothing is saved.
+      const { data: fresh } = await supabase
+        .from('quotation_requests')
+        .select('delivery_location_id, status')
+        .eq('id', currentRequest.id)
+        .maybeSingle()
 
-      // Create quotation
-      const { data: quotation, error } = await supabase
-        .from('quotations')
-        .insert({
-          quotation_request_id: currentRequest.id,
-          quotation_number: quotationNumber,
-          subtotal: data.subtotal,
-          shipping_cost: data.shippingCost,
-          total_amount: data.total,
-          down_payment_amount: data.downPayment,
-          expiry_date: data.expiryDate,
-          status: 'pending approval',
-        })
-        .select()
-        .single()
-
-      if (error) {
-        console.error(error)
+      if (fresh && (fresh.delivery_location_id !== currentRequest.delivery_location_id
+        || String(fresh.status || '').trim().toLowerCase() !== 'awaiting pricing')) {
+        toast.error(`The customer changed ${currentRequest.quotation_reference} while you were pricing it (its delivery location or status). Nothing was saved: open it again to price it as it is now.`)
+        setShowModal(false)
+        loadQueues()
         return
       }
 
-      // Create quotation items
+      // Create quotation. The database gives it its number (QT-2026-00001), its
+      // fixed expiry date, and sets the container and shipping costs itself.
+      const row = {
+        quotation_request_id: currentRequest.id,
+        subtotal: data.subtotal,
+        container_size: data.containerSize,
+        container_cost: data.containerCost,
+        shipping_cost: data.shippingCost,
+        total_amount: data.total,
+        down_payment_amount: data.downPayment,
+        expiry_date: data.expiryDate,
+        status: 'pending approval',
+      }
+      // Its containers (044). One container can still be saved before 044 is run.
+      const insertQuotation = (values) => supabase.from('quotations').insert(values).select().single()
+      let { data: quotation, error } = await insertQuotation({ ...row, container_plan: data.containerPlan })
+      if (error && isMissingColumn(error, ['container_plan'])) {
+        if ((data.containerPlan || []).reduce((total, entry) => total + entry.count, 0) > 1) {
+          toast.error('An order that needs more than one container can be quoted once db/migrations/044 is run.')
+          return
+        }
+        ;({ data: quotation, error } = await insertQuotation(row))
+      }
+
+      if (error) {
+        console.error(error)
+        // The database's own reason, e.g. the expiry-date rule.
+        toast.error(error.message || 'Failed to generate the quotation.')
+        return
+      }
+
+      // Create quotation items. Goods waiting from a rush shipment are ₱0
+      // lines that name the earlier order's line they carry (034); approving
+      // checks them. Left out when there are none, as before 034.
+      const carries = data.items.some((item) => item.carried_from_item_id)
       const quotationItems = data.items.map((item) => ({
         quotation_id: quotation.id,
         product_id: item.product_id,
         quantity: item.quantity,
         unit_price: item.unit_price,
         subtotal: item.quantity * item.unit_price,
+        ...(carries ? { carried_from_item_id: item.carried_from_item_id || null } : {}),
       }))
 
       const { error: itemError } = await supabase
@@ -171,6 +228,7 @@ export default function ProFormaInvoicePage() {
         .from('documents')
         .upload(filePath, pdfBlob, {
           contentType: 'application/pdf',
+          upsert: true,
         })
 
       if (uploadError) {
@@ -240,83 +298,29 @@ export default function ProFormaInvoicePage() {
 
 
   // =============================================
-  // DELETE REQUEST
+  // OPEN QUOTATION MODAL
   // =============================================
-  async function deleteRequest(requestId) {
-    const request = requests.find((request) => request.id === requestId)
+  // =============================================
+  // PUT ON HOLD UNTIL THE CUSTOMER PAYS (040)
+  // Its total would take the customer over the credit limit if approved.
+  // =============================================
+  async function holdRequest(request) {
+    const { data, error } = await supabase.rpc('hold_request_for_credit', { p_request_id: request.id })
 
-    if (!request) return
-
-    if (request.status !== 'rejected') {
-      alert('Only rejected quotation requests can be deleted.')
+    if (error) {
+      toast.error(error.code === 'PGRST202' || /hold_request_for_credit/.test(error.message || '')
+        ? 'Putting a request on hold needs db/migrations/040 to be run first.'
+        : error.message)
       return
     }
 
-    const confirmed = window.confirm(
-      'Are you sure you want to delete this rejected quotation request?'
-    )
-
-    if (!confirmed) return
-
-
-    /* FIND QUOTATION */
-    const { data: quotation, error: quotationFetchError } = await supabase
-      .from('quotations')
-      .select('id')
-      .eq('quotation_request_id', requestId)
-      .maybeSingle()
-
-    if (quotationFetchError) {
-      toast.error('Failed to find quotation.')
-      return
-    }
-
-
-    /* DELETE QUOTATION */
-    if (quotation) {
-      const { error: quotationError } = await supabase
-        .from('quotations')
-        .delete()
-        .eq('id', quotation.id)
-
-      if (quotationError) {
-        toast.error('Failed to delete quotation.')
-        return
-      }
-    }
-
-
-    /* DELETE QUOTATION REQUESTS ITEMS */
-    const { error: itemError } = await supabase
-      .from('quotation_request_items')
-      .delete()
-      .eq('quotation_request_id', requestId)
-
-    if (itemError) {
-      toast.error('Failed to delete quotation request items.')
-      return
-    }
-
-
-    /* DELETE QUOTATION REQUESTS */
-    const { error: requestError } = await supabase
-      .from('quotation_requests')
-      .delete()
-      .eq('id', requestId)
-
-    if (requestError) {
-      toast.error('Failed to delete quotation request.')
-      return
-    }
-
-    toast.success('Quotation deleted successfully')
-    await loadQueues()
+    toast.success(`${request.quotation_reference} is on hold until the customer pays. You'll be told when their balance goes down.${data?.already ? ' (It was already on hold.)' : ''}`)
+    setShowModal(false)
+    setCurrentRequest(null)
+    loadQueues()
   }
 
 
-  // =============================================
-  // OPEN QUOTATION MODAL
-  // =============================================
   async function openInfoModal(request) {
     setCurrentRequest(request)
 
@@ -325,45 +329,60 @@ export default function ProFormaInvoicePage() {
       return
     }
 
-    if (request.status === 'priced & sent to customer') {
-      const { data, error } = await supabase
-        .from('quotations')
-        .select(`
+    // Every other status has a quotation on record, kept even after it's
+    // answered. Its lines for waiting goods (034) are asked for until then.
+    const { data, error } = await withNewColumns((withPlan) => withNewColumns((withRush) => supabase
+      .from('quotations')
+      .select(`
+        id,
+        quotation_request_id,
+        quotation_number,
+        subtotal,
+        container_size,
+        ${columnsIf(withPlan, ['container_plan'])}
+        container_cost,
+        shipping_cost,
+        total_amount,
+        down_payment_amount,
+        expiry_date,
+        status,
+        created_at,
+        pfi_file_path,
+        quotation_items (
           id,
-          quotation_request_id,
-          quotation_number,
+          product_id,
+          quantity,
+          unit_price,
           subtotal,
-          shipping_cost,
-          total_amount,
-          down_payment_amount,
-          expiry_date,
-          status,
-          created_at,
-          pfi_file_path,
-          quotation_items (
-            id,
-            product_id,
-            quantity,
-            unit_price,
-            subtotal,
-            products (
-              product_name,
-              brand,
-              unit
-            )
+          ${columnsIf(withRush, ['carried_from_item_id'])}
+          products (
+            product_name,
+            brand,
+            unit
           )
-        `)
-        .eq('quotation_request_id', request.id)
-        .single()
+        )
+      `)
+      .eq('quotation_request_id', request.id)
+      // Its newest: an earlier one may have been withdrawn when the customer
+      // changed the delivery location (037).
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single(), RUSH_ITEM_COLUMNS), ['container_plan'])
 
-      if (error) {
-        toast.error('Failed to load quotation.')
-        return
-      }
-
-      setCurrentQuotation(data)
-      setShowModal(true)
+    if (error) {
+      toast.error('Failed to load quotation.')
+      return
     }
+
+    const carriedFrom = await loadCarriedFrom(data.quotation_items)
+    setCurrentQuotation({
+      ...data,
+      quotation_items: (data.quotation_items || []).map((item) => ({
+        ...item,
+        carried_from: item.carried_from_item_id ? carriedFrom.get(item.carried_from_item_id) || 'an earlier order' : null,
+      })),
+    })
+    setShowModal(true)
   }
 
 
@@ -380,6 +399,23 @@ export default function ProFormaInvoicePage() {
   // =============================================
   // MAIN CONTENT
   // =============================================
+  // The list as chosen above it. By status: awaiting pricing first, the one
+  // waiting longest first.
+  const REQUEST_ORDER = ['awaiting pricing', 'priced & sent to customer', 'approved', 'rejected', 'expired', 'cancelled']
+  const requestList = { statusOf: (request) => request.status, order: REQUEST_ORDER, allLabel: 'All requests' }
+  const choices = showChoices(requests, requestList)
+  const showing = showingOf(choices, show)
+  const byWaiting = byOldest((request) => request.created_at)
+  const shownRequests = applySort(
+    applySearch(applyShow(requests, showing, requestList), search, (request) => [request.quotation_reference, request.profiles?.name, request.profiles?.company].join(' ')),
+    sortBy,
+    {
+      status: (a, b) => byStatus((request) => request.status, REQUEST_ORDER, () => null)(a, b) || byWaiting(a, b),
+      oldest: byWaiting,
+      newest: byNewest((request) => request.created_at),
+    }
+  )
+
   return (
     <div>
 
@@ -397,8 +433,29 @@ export default function ProFormaInvoicePage() {
       </div>
 
 
+      <ListControls
+        choices={choices}
+        show={showing}
+        onShow={setShow}
+        sorts={[
+          { value: 'status', label: 'Status (awaiting pricing first, waiting longest first)' },
+          { value: 'oldest', label: 'Oldest first (waiting longest)' },
+          { value: 'newest', label: 'Newest first' },
+        ]}
+        sortBy={sortBy}
+        onSort={setSortBy}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="Reference or customer"
+        shown={shownRequests.length}
+        total={requests.length}
+        onExport={(how) => exportList(how, 'quotation-requests', requestColumns(requests), shownRequests)}
+        noun={requests.length === 1 ? 'request' : 'requests'}
+      />
+
+
       {/* Table */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+      <TableScroll className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
           <thead className="bg-[#F4F8F5]">
             <tr>
@@ -434,8 +491,8 @@ export default function ProFormaInvoicePage() {
 
 
           <tbody>
-            {requests.length > 0 ? (
-              requests.map((request) => (
+            {shownRequests.length > 0 ? (
+              shownRequests.map((request) => (
                 <tr
                   key={request.id}
                   className="border-t border-gray-200 text-sm hover:bg-gray-50"
@@ -443,6 +500,16 @@ export default function ProFormaInvoicePage() {
 
                   <td className="px-5 py-3 font-medium text-gray-800">
                     {request.quotation_reference}
+                    {request.replaces_request_id && (
+                      <span className="mt-0.5 block text-xs font-normal text-gray-500">
+                        New quote for {requests.find((other) => other.id === request.replaces_request_id)?.quotation_reference || 'an expired request'} (its quotation expired)
+                      </span>
+                    )}
+                    {requests.some((other) => other.replaces_request_id === request.id) && (
+                      <span className="mt-0.5 block text-xs font-normal text-gray-500">
+                        New quote requested: {requests.find((other) => other.replaces_request_id === request.id).quotation_reference}
+                      </span>
+                    )}
                   </td>
 
                   <td className="px-5 py-3">
@@ -451,6 +518,12 @@ export default function ProFormaInvoicePage() {
 
                   <td className="px-5 py-3">
                     {request.delivery_locations?.location_name || '-'}
+                    {locationChanges[request.id] && (
+                      <span className="mt-0.5 block max-w-[14rem] text-xs text-amber-700">
+                        Changed by the customer {formatDateTime(locationChanges[request.id].changed_at)}, from {locationChanges[request.id].from_text}
+                        {locationChanges[request.id].withdrawn_quotation_id ? ': price it again' : ''}
+                      </span>
+                    )}
                   </td>
 
                   <td className="px-5 py-3">
@@ -459,23 +532,20 @@ export default function ProFormaInvoicePage() {
 
                   <td className="px-5 py-3">
                     <StatusBadge status={request.status} />
-                  </td>
-
-                  <td className="px-5 py-3">
-                    {new Date(request.created_at).toLocaleDateString()}
-                  </td>
-
-                  <td className="px-5 py-3">
-                    {request.status === 'priced & sent to customer' && (
-                      <IconButton icon={faFolderOpen} title="View Quotation" color="blue" disabled={false} onClick={() => openInfoModal(request)}/>
+                    {request.credit_hold_at && request.status === 'awaiting pricing' && (
+                      <span className="mt-1 block text-xs font-medium text-amber-700">On hold: over the credit limit</span>
                     )}
+                  </td>
 
-                    {request.status === 'awaiting pricing' && (
+                  <td className="px-5 py-3">
+                    {formatDateTime(request.created_at)}
+                  </td>
+
+                  <td className="px-5 py-3">
+                    {request.status === 'awaiting pricing' ? (
                       <IconButton icon={faFileSignature} title="View Quotation" color="amber" disabled={false} onClick={() => openInfoModal(request)}/>
-                    )}
-
-                    {request.status === 'rejected' && (
-                      <IconButton icon={faTrash} title="Delete Request" color="red" disabled={false} onClick={() => deleteRequest(request.id)}/>
+                    ) : (
+                      <IconButton icon={faFolderOpen} title="View Quotation" color="blue" disabled={false} onClick={() => openInfoModal(request)}/>
                     )}
                   </td>
 
@@ -487,14 +557,14 @@ export default function ProFormaInvoicePage() {
                   colSpan="6"
                   className="py-10 text-center text-sm text-gray-500"
                 >
-                  No quotation requests found.
+                  {requests.length > 0 ? 'Nothing matches what is chosen above.' : 'No quotation requests found.'}
                 </td>
               </tr>
             )}
 
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
 
       {showModal && currentRequest?.status === 'awaiting pricing' && (
@@ -507,10 +577,11 @@ export default function ProFormaInvoicePage() {
             setCurrentRequest(null)
           }}
           onSubmit={generateQuotation}
+          onHold={holdRequest}
         />
       )}
 
-      {showModal && currentRequest?.status === 'priced & sent to customer' && (
+      {showModal && currentRequest && currentRequest.status !== 'awaiting pricing' && (
         <QuotationViewModal
           quotation={currentQuotation}
           onClose={() => {
@@ -619,7 +690,7 @@ function QuotationViewModal({ quotation, onClose }) {
 
             <div>
               <p className="text-xs uppercase text-gray-500"> Date Created </p>
-              <p className="mt-1 font-medium text-gray-800"> {new Date(quotation.created_at).toLocaleDateString()} </p>
+              <p className="mt-1 font-medium text-gray-800"> {formatDateTime(quotation.created_at)} </p>
             </div>
           </div>
 
@@ -631,7 +702,7 @@ function QuotationViewModal({ quotation, onClose }) {
             Quotation Items
           </h3>
 
-          <div className="overflow-x-auto rounded-lg border">
+          <TableScroll className="rounded-lg border">
             <table className=" min-w-full">
 
               <thead className="bg-gray-50">
@@ -673,6 +744,12 @@ function QuotationViewModal({ quotation, onClose }) {
                           {item.products.brand}
                         </p>
                       )}
+
+                      {item.carried_from && (
+                        <p className="mt-0.5 text-xs font-medium text-amber-700">
+                          From {item.carried_from} (rush shipment): already paid
+                        </p>
+                      )}
                     </td>
 
 
@@ -703,7 +780,7 @@ function QuotationViewModal({ quotation, onClose }) {
               </tbody>
 
             </table>
-          </div>
+          </TableScroll>
 
 
           {/* =================================================
@@ -728,6 +805,20 @@ function QuotationViewModal({ quotation, onClose }) {
                     })}
                   </span>
                 </div>
+
+                {quotation.container_cost != null && (
+                  <div className="mb-3 flex justify-between text-sm">
+                    <span className="font-semibold text-gray-700">
+                      Container{containerCount(quotation) > 1 ? 's' : ''} ({containerText(quotation)})
+                    </span>
+
+                    <span className="text-lg font-bold text-gray-800">
+                      ₱ {Number(quotation.container_cost).toLocaleString(undefined, {
+                        minimumFractionDigits: 2
+                      })}
+                    </span>
+                  </div>
+                )}
 
                 <div className="mb-3 flex justify-between text-sm">
                   <span className="font-semibold text-gray-700">
@@ -809,11 +900,72 @@ function QuotationViewModal({ quotation, onClose }) {
 // =====================================================
 // ADD PURCHASE ORDER MODAL
 // =====================================================
-function QuotationModal({ request, creating, onClose, onSubmit }) {
-  // Prices start empty rather than 0: a 0 already in the field made typing
-  // "15" show "015", and let a ₱0 quotation through by default.
-  const [shippingCost, setShippingCost] = useState('')
-  const [expiryDate, setExpiryDate] = useState('')
+// =============================================
+// SHIP DATE CHECK
+//
+// For sales, before the quotation goes out: when the order would likely ship
+// if paid today, and whether that meets the customer's preferred date.
+// =============================================
+function ShipEstimateCheck({ estimate, preferredDate }) {
+  const fullDate = (date) => new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  const shortDate = (date) => new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  const late = estimate.daysPastRequested > 0
+  const preferred = preferredDate ? fullDate(`${preferredDate}T00:00:00`) : null
+
+  return (
+    <div className={`mb-6 rounded-lg border p-4 text-sm ${late ? 'border-amber-200 bg-amber-50' : 'border-green-200 bg-green-50'}`}>
+      <p className="font-medium text-gray-800">
+        If the customer pays the down payment today, it ships around {fullDate(estimate.estimatedShipDate)}
+        {estimate.shipDateRange && (
+          <span className="font-normal text-gray-600">
+            {' '}· likely {shortDate(estimate.shipDateRange.quick)} to {shortDate(estimate.shipDateRange.slow)}
+          </span>
+        )}
+      </p>
+
+      {late ? (
+        <p className="mt-1 font-medium text-amber-800">
+          That's {estimate.daysPastRequested} {estimate.daysPastRequested === 1 ? 'day' : 'days'} after their preferred date ({preferred}).
+          Tell the customer before sending the quotation, or agree on a later date.
+        </p>
+      ) : preferred ? (
+        <p className="mt-1 text-green-800">On track for their preferred date ({preferred}).</p>
+      ) : null}
+
+      <p className="mt-1 text-xs text-gray-500">
+        {estimate.confidence}% confidence{estimate.roughEstimate ? ' · rough estimate: few finished orders to learn from yet' : ''}
+      </p>
+    </div>
+  )
+}
+
+
+// onHold(request): puts it on hold until the customer pays (040), when its
+// total would take them over the credit limit if they approved it.
+function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
+  // The customer's unpaid balance and credit limit, for the hold check.
+  const [credit, setCredit] = useState(null)
+
+  useEffect(() => {
+    let active = true
+    if (request.profiles?.id) {
+      getCreditStatus(request.profiles.id)
+        .then((status) => { if (active) setCredit(status) })
+        .catch((error) => console.error('Failed to load the customer\'s credit status:', error))
+    }
+    return () => { active = false }
+  }, [request.profiles?.id])
+
+  // Fixed, like the prices: the country's shipping cost, and the cost of the
+  // container the order needs: the smallest that holds it, worked out from each
+  // product's volume and weight per case. Nobody picks it (DMC, Nov 2026).
+  const [shipping, setShipping] = useState({ cost: null, source: '' })
+  const [containers, setContainers] = useState(null)
+  const [containerCode, setContainerCode] = useState('')
+  // DMC: a quotation is valid for exactly 7 days, Sundays not counted. Fixed,
+  // not chosen, so it can't be set wrong; the database sets the same date
+  // itself when the quotation is saved (db/migrations/009).
+  const expiryDate = localDateExcludingSundays(QUOTATION_VALIDITY_DAYS)
   const [items, setItems] = useState(
     request.quotation_request_items.map((item) => ({
       id: item.id,
@@ -823,17 +975,186 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
       quantity: item.quantity,
       notes: item.notes,
       unit: item.products.unit,
-      unit_price: '',
+      supplier_id: item.products.supplier_id,
+
+      // Filled in from the price list and markup below; never typed.
+      unit_price: null,
+      price_source: '',
+      moq: null,
     }))
   )
+  const [pricingError, setPricingError] = useState('')
+  const [loadingPrices, setLoadingPrices] = useState(true)
+  // The customer's goods waiting from a rush shipment (034), not yet joined
+  // to an order: they go in this quotation's container, at ₱0.
+  const carriedItems = items.filter((item) => item.carried_from_item_id)
+  // The soonest last day the customer can approve it to keep them (041).
+  const approveBy = carriedItems.map((item) => item.approve_by).filter(Boolean).sort()[0] || null
+
+
+  // ===================================================
+  // SHIP DATE ESTIMATE
+  //
+  // When the order would likely ship if the customer paid the down payment
+  // today, against the date they asked for: the same estimate the customer
+  // sees on the quotation (utils/predictions.js).
+  // ===================================================
+  const [shipEstimate, setShipEstimate] = useState(null)
+
+  useEffect(() => {
+    let active = true
+
+    previewEstimate({
+      items: request.quotation_request_items.map((item) => ({ product_id: item.products.id, quantity: item.quantity })),
+      deliveryLocationId: request.delivery_location_id,
+      requestedShipDate: request.preferred_ship_date,
+      // Labeling takes longer for a new customer or product, and a 40-ft.
+      customerId: request.profiles?.id || null,
+      containerSize: containerCode || null,
+    })
+      .then((estimate) => { if (active) setShipEstimate(estimate) })
+      .catch((error) => console.error('Failed to estimate the ship date:', error))
+
+    return () => { active = false }
+  }, [request.id, containerCode])
+
+
+  // ===================================================
+  // SELLING PRICES, CONTAINER AND SHIPPING
+  //
+  // Fixed: supplier price + the destination country's markup, the container
+  // size's cost, and the country's shipping cost (or the Default rates). Sales
+  // can't type any of them, so a wrong one can't be sent by accident or on
+  // purpose.
+  // ===================================================
+  useEffect(() => {
+    let active = true
+
+    async function loadPrices() {
+      try {
+        // What waits from the customer's rush shipments, not taken by an order yet.
+        const waiting = request.profiles?.id
+          ? (await loadWaitingGoods(request.profiles.id)).filter((row) => waitingState(row) === 'waiting')
+          : []
+
+        const { prices, shipping: shippingPrice, containers: containerPlan } = await getQuotationPricing({
+          country: request.delivery_locations?.country,
+          lines: request.quotation_request_items.map((item) => ({
+            productId: item.products.id,
+            supplierId: item.products.supplier_id,
+            quantity: item.quantity,
+            name: item.products.product_name,
+            cbm: item.products.cbm,
+            grossWeightKg: item.products.gross_weight_kg,
+          })),
+          carriedLines: waiting.map((row) => ({
+            productId: row.product_id,
+            quantity: Number(row.cases),
+            name: row.product_name,
+            cbm: row.cbm,
+            grossWeightKg: row.gross_weight_kg,
+          })),
+        })
+
+        if (!active) return
+
+        setShipping(shippingPrice)
+        setContainers(containerPlan)
+        setContainerCode(containerPlan.plan?.[0]?.code || '')
+
+        setItems((current) => [
+          ...current
+            .filter((item) => !item.carried_from_item_id)
+            .map((item) => {
+              const price = prices[item.product_id]
+              if (!price) return item
+
+              return {
+                ...item,
+                unit_price: price.price,
+                price_source: price.source,
+                moq: price.moq,
+              }
+            }),
+          ...waiting.map((row) => ({
+            id: `carried:${row.item_id}`,
+            product_id: row.product_id,
+            product_name: row.product_name,
+            brand: null,
+            quantity: Number(row.cases),
+            notes: null,
+            unit: row.unit,
+            supplier_id: null,
+            unit_price: 0,
+            price_source: `Already paid on ${row.order_number}`,
+            moq: null,
+            carried_from_item_id: row.item_id,
+            carried_from: row.order_number,
+            // The last day this next order can be approved to take them (041).
+            approve_by: row.deadline ? String(row.deadline).slice(0, 10) : null,
+            // Under the product's name on the PFI.
+            description: `From ${row.order_number} (rush shipment): already paid`,
+          })),
+        ])
+      } catch (error) {
+        console.error('Failed to load prices:', error)
+        if (active) setPricingError(pricingErrorMessage(error))
+      } finally {
+        if (active) setLoadingPrices(false)
+      }
+    }
+
+    loadPrices()
+
+    return () => {
+      active = false
+    }
+  }, [request])
 
   const subtotal = items.reduce(
     (sum, item) => sum + item.quantity * Number(item.unit_price || 0),
     0
   )
 
-  const total = subtotal + Number(shippingCost || 0)
-  const downPayment = total * 0.5
+  // The containers it goes in (044): one when it fits, else full 40-ft high
+  // cubes and the smallest size for the rest. `container` is the biggest one.
+  const plan = containers?.plan || null
+  const container = plan?.[0] || null
+  const containerCount = containers?.count || 0
+  const containerCost = plan && plan.every((entry) => entry.cost != null)
+    ? plan.reduce((total, entry) => total + Number(entry.cost) * entry.count, 0)
+    : null
+  // Every container pays the destination's shipping (DMC's rule).
+  const shippingCost = shipping.cost == null ? null : Number(shipping.cost) * Math.max(containerCount, 1)
+  const planVolume = plan ? plan.reduce((total, entry) => total + entry.usableVolume * entry.count, 0) : 0
+  const planWeight = plan ? plan.reduce((total, entry) => total + entry.maxWeight * entry.count, 0) : 0
+  const noCost = plan?.find((entry) => entry.cost == null) || null
+  const firstSize = containers?.options[0] || null
+  const largestSize = containers?.options.at(-1) || null
+
+  // Why no container can be chosen yet, if so.
+  let containerProblem = ''
+
+  if (containers?.load.unmeasured.length > 0) {
+    containerProblem = `No volume or weight per case yet for ${containers.load.unmeasured.join(', ')} — admin must add it in the Product Catalog`
+  } else if (containers?.tooBig) {
+    containerProblem = `Too big for the largest container (${largestSize.name}: ${formatVolume(largestSize.usableVolume)}, ${formatWeight(largestSize.maxWeight)}) — ask the customer to reduce the quantity`
+  } else if (containers && containers.options.length === 0) {
+    containerProblem = 'No container sizes are set up — admin or management must add them in Markups & Credit'
+  } else if (noCost) {
+    containerProblem = `No cost for the ${noCost.name} container yet — admin or management must set it in Markups & Credit`
+  }
+
+  const total = subtotal + Number(containerCost || 0) + Number(shippingCost || 0)
+  const downPayment = Math.round(total * 50) / 100
+
+  // Sending these prices would take the customer over the credit limit if they
+  // approved: it can't be sent, only put on hold until they pay (040). Priced
+  // from the current price list each time, so a hold is never out of date.
+  const priced = !loadingPrices && !pricingError && container && containerCost != null && shipping.cost != null
+  const overBy = priced ? overLimitBy(credit, total) : 0
+  const room = creditRoom(credit)
+  const company = request.profiles?.company || 'The customer'
 
 
   return (
@@ -866,6 +1187,41 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
             CONTENT
         ================================================= */}
         <div className="flex-1 overflow-y-auto p-6">
+
+          {overBy > 0 && (
+            <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+              {credit?.hasCredit === false ? (
+                <>
+                  <p className="font-semibold">No credit from DMC: these prices can't be sent yet.</p>
+                  <p className="mt-1">
+                    {company} has no credit, so they can have one unpaid order at a time, and they still owe {formatPeso(credit.outstanding)} on their open orders.
+                    They have to pay it all first. (Admin gives a customer credit on the Customers page.)
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="font-semibold">Over the credit limit: these prices can't be sent yet.</p>
+                  <p className="mt-1">
+                    This quotation ({formatPeso(total)}) would take {company} over their credit limit if they approved it:
+                    they owe {formatPeso(credit.outstanding)} of {formatPeso(credit.creditLimit)}, so their room is {formatPeso(room)}.
+                    They have to pay first.
+                  </p>
+                </>
+              )}
+              <p className="mt-1">
+                {request.credit_hold_at
+                  ? `On hold since ${formatDateTime(request.credit_hold_at)}${request.credit_hold_by_name ? ` (${request.credit_hold_by_name})` : ''}. You'll be told ${credit?.hasCredit === false ? 'once they have paid it all' : 'when their balance goes down'}.`
+                  : `Put it on hold: the customer is told to pay their open orders, without seeing any prices, and you're told ${credit?.hasCredit === false ? 'once they have paid it all' : 'when their balance goes down'}.`}
+                {' '}Nothing is fixed while it's on hold: it's priced from the current price list each time it's opened.
+              </p>
+            </div>
+          )}
+
+          {overBy === 0 && priced && request.credit_hold_at && (
+            <div className="mb-4 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800">
+              On hold since {formatDateTime(request.credit_hold_at)}: {credit?.hasCredit === false ? 'they have paid all their orders now' : `their balance now leaves room for it (${formatPeso(room)}), at today's prices`}. It can be sent.
+            </div>
+          )}
 
 
 
@@ -905,6 +1261,10 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
             </div>
           </div>
 
+          {shipEstimate?.estimatedShipDate && (
+            <ShipEstimateCheck estimate={shipEstimate} preferredDate={request.preferred_ship_date} />
+          )}
+
 
           {/* =================================================
               ITEMS
@@ -921,7 +1281,29 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                 </span>
               </div>
 
-              <div className="overflow-x-auto rounded-lg border">
+              {carriedItems.length > 0 && (
+                <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                  This customer agreed to a rush shipment on {[...new Set(carriedItems.map((item) => item.carried_from))].join(', ')}:
+                  the goods that hadn't arrived then go in the container of their next order. They're added below at ₱0 (already paid),
+                  counted in the container, and can't be left out.
+                  {request.quotation_request_items.length === 0 && ' This request is for them alone: only its container and shipping are priced, and the customer pays them.'}
+                  {approveBy && (
+                    <span className="mt-1 block font-semibold">
+                      The customer must approve this quotation by {formatDay(approveBy)}, or the waiting goods become DMC's. Price it promptly.
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {pricingError && (
+                <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                  <p className="text-sm text-amber-800">
+                    {pricingError} Quotations can't be generated until this is fixed.
+                  </p>
+                </div>
+              )}
+
+              <TableScroll className="rounded-lg border">
                 <table className="min-w-full">
 
                   <thead className="bg-gray-50">
@@ -956,7 +1338,7 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                   <tbody>
                     {items.length > 0 ? (
                       items.map(
-                        (item, index) => {
+                        (item) => {
                           return (
                             <tr key={item.id} className="border-t border-gray-200">
 
@@ -969,6 +1351,12 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                                 {item.brand && (
                                   <p className="text-xs text-gray-500">
                                     {item.brand}
+                                  </p>
+                                )}
+
+                                {item.carried_from && (
+                                  <p className="mt-0.5 text-xs font-medium text-amber-700">
+                                    From {item.carried_from} (rush shipment)
                                   </p>
                                 )}
                               </td>
@@ -1000,35 +1388,32 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
 
                               {/* UNIT PRICE */}
                               <td className="px-4 py-4">
-                                <div className="relative">
-                                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">
-                                    ₱
-                                  </span>
+                                {/* Read-only: the price comes from the price list and markup. */}
+                                <p className="font-medium text-gray-800">
+                                  {loadingPrices
+                                    ? 'Loading...'
+                                    : item.unit_price != null
+                                      ? `₱${item.unit_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                                      : '-'}
+                                </p>
 
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={item.unit_price}
-                                    disabled={creating}
-                                    onChange={(e) => {
-                                      const copy = [...items]
-                                      copy[index] = {
-                                        ...copy[index],
-                                        unit_price: e.target.value === '' ? '' : Number(e.target.value),
-                                      }
-                                      setItems(copy)
-                                    }}
-                                    placeholder="0.00"
-                                    className="w-36 rounded-md border border-gray-300 py-2 pl-7 pr-3 text-right text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
-                                  />
-                                </div>
+                                {item.price_source && (
+                                  <p className={`mt-1 max-w-[220px] text-xs ${item.unit_price != null ? 'text-gray-500' : 'font-medium text-red-700'}`}>
+                                    {item.price_source}
+                                  </p>
+                                )}
+
+                                {!item.carried_from_item_id && item.moq && item.quantity < item.moq && (
+                                  <p className="mt-1 text-xs font-medium text-amber-700">
+                                    Below supplier minimum of {item.moq} {item.unit}
+                                  </p>
+                                )}
                               </td>
 
 
                               {/* SUBTOTAL */}
                               <td className="px-4 py-4 text-right font-medium text-gray-800">
-                               ₱{(item.quantity * item.unit_price).toLocaleString()}
+                               {item.unit_price != null ? `₱${(item.quantity * item.unit_price).toLocaleString()}` : '-'}
                               </td>
                             </tr>
                           )
@@ -1043,7 +1428,7 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                     )}
                   </tbody>
                 </table>
-              </div>
+              </TableScroll>
 
 
               {/* =================================================
@@ -1057,38 +1442,119 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                   </h3>
 
                   <div className="rounded-lg bg-gray-50 p-5">
-                    <div className="mb-3 flex items-center justify-between text-sm">
-                      <span className="font-medium text-gray-700">
-                        Shipping Cost
-                      </span>
+                    {/* The smallest container that holds the order, chosen by the system. */}
+                    <div className="mb-3 text-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-medium text-gray-700">
+                          Container
+                        </span>
 
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        placeholder="0.00"
-                        value={shippingCost}
-                        disabled={creating}
-                        onChange={(e) => setShippingCost(e.target.value === '' ? '' : Number(e.target.value))}
-                        className="w-36 rounded-md border border-gray-300 bg-white px-3 py-2 text-right text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
-                      />
+                        {loadingPrices ? (
+                          <span className="font-medium text-gray-800">Loading...</span>
+                        ) : plan ? (
+                          <span className="text-right font-medium text-gray-800" title="Chosen by the system from each product's volume and weight per case">
+                            {plan.map((entry) => (plan.length > 1 || entry.count > 1 ? `${entry.count} × ${entry.name}` : entry.name)).join(' + ')}
+                          </span>
+                        ) : (
+                          <span className="font-medium text-gray-800">-</span>
+                        )}
+                      </div>
+
+                      {containers && containers.load.unmeasured.length === 0 && (
+                        <p className="mt-1 text-right text-xs text-gray-500">
+                          Load: {formatVolume(containers.load.volume)}
+                          {plan ? ` of ${formatVolume(planVolume)}` : ''}, {formatWeight(containers.load.weight)}
+                          {plan ? ` of ${formatWeight(planWeight)}` : ''}
+                        </p>
+                      )}
+
+                      {plan && containers.multiple && (
+                        <p className="mt-1 text-right text-xs font-medium text-amber-700">
+                          Too big for one {largestSize.name}: it takes {containerCount} containers, and each pays its own cost and shipping.
+                        </p>
+                      )}
+
+                      {plan && !containers.multiple && firstSize && container.code !== firstSize.code && (
+                        <p className="mt-1 text-right text-xs font-medium text-amber-700">
+                          Too big for a {firstSize.name}, so it goes in a {container.name}.
+                        </p>
+                      )}
+
+                      {containerProblem && (
+                        <p className="mt-1 text-right text-xs font-medium text-red-700">
+                          {containerProblem}
+                        </p>
+                      )}
+
+                      <div className="mt-2 flex items-center justify-between">
+                        <span className="font-medium text-gray-700">
+                          Container Cost
+                        </span>
+
+                        <span className="font-medium text-gray-800">
+                          {loadingPrices
+                            ? 'Loading...'
+                            : containerCost != null
+                              ? `₱${containerCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                              : '-'}
+                        </span>
+                      </div>
+
+                      {plan && containerCost != null && (
+                        <p className="mt-1 text-right text-xs text-gray-500">
+                          {containers.multiple
+                            ? `Fixed costs: ${plan.map((entry) => `₱${Number(entry.cost).toLocaleString()}${entry.count > 1 ? ` × ${entry.count}` : ''}`).join(' + ')}`
+                            : `Fixed cost of a ${container.name}`}
+                        </p>
+                      )}
                     </div>
 
 
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="font-medium text-gray-700">
-                        Expiry Date <span className="text-red-500">*</span>
-                      </span>
+                    {/* Read-only: the country's fixed shipping cost. */}
+                    <div className="mb-3 text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium text-gray-700">
+                          Shipping Cost
+                        </span>
 
-                      <input
-                        type="date"
-                        value={expiryDate}
-                        disabled={creating}
-                        min={localDateString()}
-                        onChange={(e) => setExpiryDate(e.target.value)}
-                        required
-                        className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
-                      />
+                        <span className="font-medium text-gray-800">
+                          {loadingPrices
+                            ? 'Loading...'
+                            : shippingCost != null
+                              ? `₱${shippingCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                              : '-'}
+                        </span>
+                      </div>
+
+                      {shipping.cost != null && containerCount > 1 && (
+                        <p className="mt-1 text-right text-xs text-gray-500">
+                          ₱{Number(shipping.cost).toLocaleString()} × {containerCount} containers
+                        </p>
+                      )}
+
+                      {shipping.source && (
+                        <p className={`mt-1 text-right text-xs ${shipping.cost != null ? 'text-gray-500' : 'font-medium text-red-700'}`}>
+                          {shipping.source}
+                        </p>
+                      )}
+                    </div>
+
+
+                    {/* Read-only: fixed by DMC's 7-day rule. */}
+                    <div className="text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium text-gray-700">
+                          Expiry Date
+                        </span>
+
+                        <span className="font-medium text-gray-800">
+                          {formatDateString(expiryDate)}
+                        </span>
+                      </div>
+
+                      <p className="mt-1 text-right text-xs text-gray-500">
+                        Fixed: {QUOTATION_VALIDITY_DAYS} days from today, Sundays not counted
+                      </p>
                     </div>
 
                     <div className="my-4 border-t border-gray-200" />
@@ -1100,6 +1566,16 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
 
                       <span className="font-semibold text-gray-800">
                         ₱{subtotal.toLocaleString()}
+                      </span>
+                    </div>
+
+                    <div className="mb-2 flex justify-between text-sm">
+                      <span className="font-medium text-gray-700">
+                        Container
+                      </span>
+
+                      <span className="font-semibold text-gray-800">
+                        ₱{Number(containerCost || 0).toLocaleString()}
                       </span>
                     </div>
 
@@ -1143,32 +1619,54 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                         Cancel
                       </button>
 
+                      {overBy > 0 ? (
+                        <button
+                          disabled={creating || Boolean(request.credit_hold_at)}
+                          onClick={() => {
+                            const confirmed = window.confirm(
+                              `Put ${request.quotation_reference} on hold until ${company} pays?\n\n` +
+                              'They are told to pay their open orders first, without seeing any prices.'
+                            )
+                            if (confirmed) onHold(request)
+                          }}
+                          className="rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                        >
+                          {request.credit_hold_at ? 'On Hold Until They Pay' : 'Put on Hold Until They Pay'}
+                        </button>
+                      ) : (
                       <button
-                        disabled={creating}
+                        disabled={creating || loadingPrices}
                         onClick={() => {
-                          if (!expiryDate) {
-                            alert('Please select an expiry date.')
-                            return
-                          }
-
-                          // This button isn't a form submit, so the inputs'
-                          // min/required attributes are never checked — do it here.
-                          if (expiryDate < localDateString()) {
-                            alert('The expiry date cannot be in the past.')
-                            return
-                          }
-
+                          // Every line needs its fixed price; there is no
+                          // manual price to fall back on.
                           const unpriced = items.find(
-                            (item) => !(Number(item.unit_price) > 0)
+                            (item) => !item.carried_from_item_id && !(Number(item.unit_price) > 0)
                           )
 
-                          if (unpriced) {
-                            alert(`Please enter a unit price above ₱0 for ${unpriced.product_name}.`)
+                          // Something to quote: the customer's products, or their
+                          // waiting goods alone when the request has none (039).
+                          if (!items.length) {
+                            alert("Nothing to quote: this request has no products, and the customer's waiting goods already go with another order.")
                             return
                           }
 
-                          if (Number(shippingCost || 0) < 0) {
-                            alert('Shipping cost cannot be negative.')
+                          if (request.quotation_request_items.length > 0 && !items.some((item) => !item.carried_from_item_id)) {
+                            alert('This quotation has only goods waiting from a rush shipment, but the customer asked for products too.')
+                            return
+                          }
+
+                          if (unpriced) {
+                            alert(`${unpriced.product_name} can't be priced yet: ${unpriced.price_source || 'prices could not be loaded'}.`)
+                            return
+                          }
+
+                          if (!container || containerCost == null) {
+                            alert(`The container can't be worked out yet: ${containerProblem || 'container sizes could not be loaded'}.`)
+                            return
+                          }
+
+                          if (shipping.cost == null) {
+                            alert(`Shipping can't be worked out yet: ${shipping.source || 'rates could not be loaded'}.`)
                             return
                           }
 
@@ -1181,7 +1679,10 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
 
                           onSubmit({
                             items,
-                            shippingCost: Number(shippingCost || 0),
+                            containerSize: container.code,
+                            containerPlan: plan.map((entry) => ({ code: entry.code, count: entry.count })),
+                            containerCost,
+                            shippingCost,
                             expiryDate,
                             subtotal,
                             total,
@@ -1193,6 +1694,7 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
                         <FontAwesomeIcon icon={faFileInvoice} />
                         {creating ? ' Generating Quotation...': ' Generate Quotation'}
                       </button>
+                      )}
                     </div>
                   </div>
 
@@ -1205,3 +1707,21 @@ function QuotationModal({ request, creating, onClose, onSubmit }) {
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per quotation request, as listed.
+// =============================================
+const requestColumns = (requests) => [
+  { header: 'Reference', value: (request) => request.quotation_reference },
+  { header: 'New quote for', value: (request) => requests.find((other) => other.id === request.replaces_request_id)?.quotation_reference || '' },
+  { header: 'Company', value: (request) => request.profiles?.company },
+  { header: 'Email', value: (request) => request.profiles?.email },
+  { header: 'Delivery location', value: (request) => request.delivery_locations?.location_name },
+  { header: 'Country', value: (request) => request.delivery_locations?.country },
+  { header: 'Status', value: (request) => statusText(request.status) },
+  { header: 'Requested', value: (request) => dateTime(request.created_at) },
+  { header: 'Preferred ship date', value: (request) => day(request.preferred_ship_date) },
+  { header: 'Products', value: (request) => productsText(request.quotation_request_items) },
+]

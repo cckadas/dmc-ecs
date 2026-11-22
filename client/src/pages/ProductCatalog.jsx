@@ -1,19 +1,79 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../supabase'
+import ExportButton from '../components/ExportButton'
+import { exportList, number } from '../utils/csvExport'
 import { useAuth } from '../context/AuthContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPen, faTrash, faXmark, faPlus, faImage } from '@fortawesome/free-solid-svg-icons'
+import { faPen, faTrash, faXmark, faPlus, faImage, faClockRotateLeft, faCube } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from "../context/ToastContext"
 
 import RoleActivityBadge from '../components/RoleActivityBadge'
 import IconButton from '../components/IconButton'
+import TableScroll from '../components/TableScroll'
+import ProductTransactions from '../components/ProductTransactions'
+import CaseVolumeModal from '../components/CaseVolumeModal'
+import { getMinimumOrderQuantities, getProductManufacturers } from '../services/pricingService'
+import { bySize, groupByFamily, sizeNames } from '../utils/productGroups'
+
+
+// =============================================
+// CASE VOLUME AND WEIGHT
+// =============================================
+// From the supplier. Every product needs both, because an order's container
+// size is worked out from them. The upper limits only catch unit mistakes,
+// such as cm³ or grams typed in by accident.
+const MAX_CASE_VOLUME_M3 = 2
+const MAX_CASE_WEIGHT_KG = 1000
+
+function caseMeasurementError(form) {
+  const volume = Number(form.cbm)
+  const weight = Number(form.gross_weight_kg)
+
+  if (!(volume > 0)) return 'Enter the volume of one case, in cubic metres (e.g. 0.0212).'
+  if (volume > MAX_CASE_VOLUME_M3) return `${volume} m³ is too big for one case. Enter the volume of one case in cubic metres (e.g. 0.0212).`
+  if (!(weight > 0)) return 'Enter the weight of one case, in kilograms (e.g. 7.8).'
+  if (weight > MAX_CASE_WEIGHT_KG) return `${weight} kg is too heavy for one case. Enter the weight of one case in kilograms (e.g. 7.8).`
+
+  return null
+}
+
+const formatVolume = (value) => `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 4 })} m³`
+const formatWeight = (value) => `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })} kg`
+
+
+// The suppliers a family's sizes come from, each once. A product can come
+// from a manufacturer or another supplier, such as a distributor; customers
+// are shown manufacturers only.
+function familySuppliers(items, includeOtherSuppliers) {
+  const suppliers = new Map()
+
+  items.forEach((item) => {
+    const supplier = item.suppliers
+    if (!supplier?.supplier_name) return
+    if (!includeOtherSuppliers && supplier.supplier_type !== 'Manufacturer') return
+    suppliers.set(supplier.supplier_name, supplier)
+  })
+
+  return [...suppliers.values()]
+}
 
 
 export default function ProductCatalogPage() {
   const { profile } = useAuth()
   const { toast } = useToast()
+
+  // Staff see whichever supplier a product comes from. Customers see only the
+  // manufacturer: a distributor is DMC's own sourcing, which stays private.
+  const showsSupplier = ['admin', 'management', 'sales', 'procurement'].includes(profile?.role)
+  // Staff can look up every transaction a product is in (quotations, orders,
+  // purchase orders). Customers can't: those are other customers' and DMC's own.
+  const seesTransactions = ['admin', 'sales', 'procurement', 'management', 'warehouse'].includes(profile?.role)
+  // A product's minimum order (MOQ) is its supplier's, kept with the price on
+  // Price Lists (005), which admin and procurement change: they get a link there.
+  const setsPrices = ['admin', 'procurement'].includes(profile?.role)
 
   const [products, setProducts] = useState([])
   const [search, setSearch] = useState('')
@@ -23,10 +83,38 @@ export default function ProductCatalogPage() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [editingProduct, setEditingProduct] = useState(null)
-  const [manufacturers, setManufacturers] = useState([])
+  const [supplierOptions, setSupplierOptions] = useState([])
   const [categories, setCategories] = useState([])
   const [brands, setBrands] = useState([])
   const [availabilities, setAvailabilities] = useState([])
+  const [minimums, setMinimums] = useState({})
+  const [sizeNameOf, setSizeNameOf] = useState({})
+  const [transactionsOf, setTransactionsOf] = useState(null)
+  // Warehouse staff (and admin) correct a product's volume per case (033).
+  const [caseVolumeOf, setCaseVolumeOf] = useState(null)
+  const setsCaseVolume = ['admin', 'warehouse'].includes(profile?.role)
+
+
+  // =============================================
+  // SIZE NAMES
+  // =============================================
+  // Small / Medium / Large for each size of a family, worked out from all of
+  // the family's sizes, so a search or filter that hides one size doesn't
+  // change what the others are called.
+  async function loadSizeNames(shownProducts) {
+    const filtered = Boolean(search || category || brand || availability)
+    let everySize = shownProducts
+
+    if (filtered) {
+      const { data, error } = await supabase
+        .from('products')
+        .select('id, product_name, sku, family, pack_size, cbm, gross_weight_kg')
+
+      if (!error && data) everySize = data
+    }
+
+    setSizeNameOf(sizeNames(everySize))
+  }
 
 
   // =============================================
@@ -45,6 +133,10 @@ export default function ProductCatalogPage() {
         availability,
         supplier_id,
         image_path,
+        family,
+        pack_size,
+        cbm,
+        gross_weight_kg,
         suppliers (
           supplier_name,
           supplier_type
@@ -94,18 +186,39 @@ export default function ProductCatalogPage() {
       return nameA.localeCompare(nameB)
     })
 
+    await loadSizeNames(sortedProducts)
+
+    // Customers can't read the suppliers table, so their catalog gets
+    // manufacturer names separately.
+    if (!showsSupplier) {
+      const manufacturers = await getProductManufacturers().catch(() => ({}))
+
+      setProducts(sortedProducts.map((product) => ({
+        ...product,
+        suppliers: manufacturers[product.id]
+          ? { supplier_name: manufacturers[product.id], supplier_type: 'Manufacturer' }
+          : null,
+      })))
+      return
+    }
+
     setProducts(sortedProducts)
   }
 
 
   // =============================================
-  // LOAD MANUFACTURERS
+  // LOAD SUPPLIERS
   // =============================================
-  async function loadManufacturers() {
+  // Every supplier a product can come from: manufacturers, and others such
+  // as distributors.
+  async function loadSuppliers() {
+    if (!showsSupplier) {
+      return
+    }
+
     const { data, error } = await supabase
       .from('suppliers')
-      .select('id, supplier_name')
-      .eq('supplier_type', 'Manufacturer')
+      .select('id, supplier_name, supplier_type')
       .order('supplier_name')
 
     if (error) {
@@ -113,7 +226,7 @@ export default function ProductCatalogPage() {
       return
     }
 
-    setManufacturers(data || [])
+    setSupplierOptions(data || [])
   }
 
 
@@ -221,6 +334,10 @@ export default function ProductCatalogPage() {
           supplier_id:
             product.supplier_id || null,
           image_path: imagePath,
+          family: product.family?.trim() || null,
+          pack_size: product.pack_size?.trim() || null,
+          cbm: Number(product.cbm),
+          gross_weight_kg: Number(product.gross_weight_kg),
         })
 
       if (error) {
@@ -289,6 +406,10 @@ export default function ProductCatalogPage() {
         category: updatedProduct.category,
         availability: updatedProduct.availability,
         supplier_id: updatedProduct.supplier_id || null,
+        family: updatedProduct.family?.trim() || null,
+        pack_size: updatedProduct.pack_size?.trim() || null,
+        cbm: Number(updatedProduct.cbm),
+        gross_weight_kg: Number(updatedProduct.gross_weight_kg),
       })
       .eq('id', updatedProduct.id)
 
@@ -321,8 +442,14 @@ export default function ProductCatalogPage() {
   }, [ search, category, brand, availability ])
 
   useEffect(() => {
-    loadManufacturers()
+    loadSuppliers()
     loadFilterOptions()
+
+    // The minimum each product must be ordered in (the supplier's MOQ).
+    // Shown to everyone, customers included; prices stay hidden.
+    getMinimumOrderQuantities()
+      .then(setMinimums)
+      .catch((error) => console.error('Failed to load minimum order quantities:', error))
   }, [])
 
 
@@ -342,6 +469,8 @@ export default function ProductCatalogPage() {
           <p className="mt-1 text-gray-500">
             Browse available export products.
           </p>
+
+          <ExportButton className="mt-3" count={products.length} onExport={(how) => exportList(how, 'products', productColumns(showsSupplier), products)} />
         </div>
 
 
@@ -421,7 +550,7 @@ export default function ProductCatalogPage() {
 
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+      <TableScroll className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
 
           <thead className="bg-[#F4F8F5]">
@@ -439,7 +568,7 @@ export default function ProductCatalogPage() {
               </th>
 
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
-                Manufacturer
+                {showsSupplier ? 'Manufacturer / Supplier' : 'Manufacturer'}
               </th>
 
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
@@ -447,14 +576,17 @@ export default function ProductCatalogPage() {
               </th>
 
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
-                Unit
+                Pack Size
+              </th>
+              <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
+                Min. Order
               </th>
 
               <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
                 Availability
               </th>
 
-              {profile?.role === 'admin' && (
+              {seesTransactions && (
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
                   Actions
                 </th>
@@ -464,25 +596,31 @@ export default function ProductCatalogPage() {
 
           <tbody>
             {products.length > 0 ? (
-              products.map((product) => {
+              groupByFamily(products).flatMap((group) =>
+                [...group.items].sort(bySize).map((product, index) => {
 
-                const imageUrl = getImageUrl(product.image_path)
+                const imageUrl = getImageUrl(group.items[0].image_path)
+                const first = index === 0
+                const span = group.items.length
+                const suppliersShown = first ? familySuppliers(group.items, showsSupplier) : []
 
                 return (
-                  <tr key={product.id} className="border-t border-gray-200 text-sm hover:bg-gray-50">
+                  <tr key={product.id} className={`text-sm hover:bg-gray-50 ${first ? 'border-t border-gray-200' : ''}`}>
 
-                    {/* IMAGE */}
-                    <td className="px-5 py-3">
+                    {/* IMAGE — shared by the family's sizes */}
+                    {first && (
+                      <td rowSpan={span} className="px-5 py-3 align-top">
 
-                      {imageUrl ? (
-                        <img src={imageUrl} alt={product.product_name} className="h-12 w-12 rounded-lg border border-gray-200 object-cover"/>
-                      ) : (
-                        <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-gray-100 text-gray-400">
-                          <FontAwesomeIcon icon={faImage}/>
-                        </div>
-                      )}
+                        {imageUrl ? (
+                          <img src={imageUrl} alt={group.family} className="h-12 w-12 rounded-lg border border-gray-200 object-cover"/>
+                        ) : (
+                          <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-gray-100 text-gray-400">
+                            <FontAwesomeIcon icon={faImage}/>
+                          </div>
+                        )}
 
-                    </td>
+                      </td>
+                    )}
 
 
                     {/* SKU */}
@@ -491,32 +629,85 @@ export default function ProductCatalogPage() {
                     </td>
 
 
-                    {/* PRODUCT */}
+                    {/* PRODUCT — the family's name on its first size, and a
+                        size name (Small, Medium, Large) on every size of a
+                        family with more than one, so no size row is blank */}
                     <td className="px-5 py-3">
-                      <p className="font-medium text-gray-800">
-                        {product.product_name}
-                      </p>
+                      {first && (
+                        <>
+                          <p className="font-medium text-gray-800">
+                            {group.family}
+                          </p>
 
-                      {product.brand && (
-                        <p className="text-sm text-gray-500">
-                          {product.brand}
+                          {(product.brand || span > 1) && (
+                            <p className="text-sm text-gray-500">
+                              {[product.brand, span > 1 && `${span} sizes`].filter(Boolean).join(' · ')}
+                            </p>
+                          )}
+                        </>
+                      )}
+
+                      {sizeNameOf[product.id] && (
+                        <span className={`inline-block rounded-full border border-gray-300 bg-white px-2.5 py-0.5 text-xs font-medium text-gray-700 ${first ? 'mt-1.5' : ''}`}>
+                          {sizeNameOf[product.id]}
+                        </span>
+                      )}
+                    </td>
+
+                    {/* MANUFACTURER / SUPPLIER — every one the family's sizes come from */}
+                    {first && (
+                      <td rowSpan={span} className="px-5 py-3 align-top text-gray-700">
+                        {suppliersShown.length > 0 ? suppliersShown.map((supplier) => (
+                          <div key={supplier.supplier_name}>
+                            <p>{supplier.supplier_name}</p>
+
+                            {showsSupplier && supplier.supplier_type && (
+                              <p className="text-xs text-gray-500">
+                                {supplier.supplier_type}
+                              </p>
+                            )}
+                          </div>
+                        )) : '-'}
+                      </td>
+                    )}
+
+                    {/* CATEGORY */}
+                    {first && (
+                      <td rowSpan={span} className="px-5 py-3 align-top">
+                        {product.category}
+                      </td>
+                    )}
+
+                    {/* PACK SIZE */}
+                    <td className="px-5 py-3">
+                      {product.pack_size || '-'}
+
+                      {product.unit && (
+                        <p className="text-xs text-gray-500">
+                          per {product.unit}
+                        </p>
+                      )}
+
+                      {Number(product.cbm) > 0 && Number(product.gross_weight_kg) > 0 && (
+                        <p className="text-xs text-gray-500">
+                          {formatVolume(product.cbm)} · {formatWeight(product.gross_weight_kg)}
                         </p>
                       )}
                     </td>
 
-                    {/* MANUFACTURER */}
-                    <td className="px-5 py-3 text-gray-700">
-                      {product.suppliers?.supplier_type === 'Manufacturer' ? product.suppliers.supplier_name : '-'}
-                    </td>
-
-                    {/* CATEGORY */}
+                    {/* MINIMUM ORDER */}
                     <td className="px-5 py-3">
-                      {product.category}
-                    </td>
+                      {minimums[product.id] ? `${minimums[product.id]} ${product.unit || 'units'}` : '-'}
 
-                    {/* UNIT */}
-                    <td className="px-5 py-3">
-                      {product.unit}
+                      {setsPrices && product.supplier_id && (
+                        <Link
+                          to={`/${profile.role}/price-lists?supplier=${product.supplier_id}&product=${product.id}`}
+                          className="mt-0.5 block text-xs font-medium text-[#2D5A42] underline hover:text-[#1F3A2C]"
+                          title="The MOQ is the supplier's, set with its price"
+                        >
+                          Set in Price Lists
+                        </Link>
+                      )}
                     </td>
 
                     {/* AVAILABILITY */}
@@ -525,21 +716,31 @@ export default function ProductCatalogPage() {
                     </td>
 
 
-                    {/* ACTIONS */}
-                    {profile?.role === 'admin' && (
+                    {/* ACTIONS — every transaction it's in, for staff; edit and delete, for the admin */}
+                    {seesTransactions && (
                       <td className="px-5 py-3">
                         <div className="flex items-center justify-start gap-2">
-                          <IconButton icon={faPen} title="Edit Product" color="amber" disabled={false} onClick={() => handleEditProduct(product)}/>
-                          <IconButton icon={faTrash} title="Delete Product" color="red" disabled={false} onClick={() => handleDeleteProduct(product)}/>
+                          <IconButton icon={faClockRotateLeft} title="Transactions with this product" color="blue" disabled={false} onClick={() => setTransactionsOf(product)}/>
+
+                          {setsCaseVolume && (
+                            <IconButton icon={faCube} title="Change volume per case" color="green" disabled={false} onClick={() => setCaseVolumeOf(product)}/>
+                          )}
+
+                          {profile?.role === 'admin' && (
+                            <>
+                              <IconButton icon={faPen} title="Edit Product" color="amber" disabled={false} onClick={() => handleEditProduct(product)}/>
+                              <IconButton icon={faTrash} title="Delete Product" color="red" disabled={false} onClick={() => handleDeleteProduct(product)}/>
+                            </>
+                          )}
                         </div>
                       </td>
                     )}
                   </tr>
                 )
-              })
+              }))
             ) : (
               <tr>
-                <td colSpan={ profile?.role === 'admin' ? 8 : 7} className="py-10 text-center text-sm text-gray-500">
+                <td colSpan={seesTransactions ? 9 : 8} className="py-10 text-center text-sm text-gray-500">
                   No products found.
                 </td>
               </tr>
@@ -547,13 +748,36 @@ export default function ProductCatalogPage() {
           </tbody>
 
         </table>
-      </div>
+      </TableScroll>
+
+
+      {/* A PRODUCT'S TRANSACTIONS */}
+      {transactionsOf && (
+        <ProductTransactions
+          key={transactionsOf.id}
+          productId={transactionsOf.id}
+          name={transactionsOf.family || transactionsOf.product_name}
+          onClose={() => setTransactionsOf(null)}
+        />
+      )}
+
+
+      {/* A PRODUCT'S VOLUME PER CASE */}
+      {caseVolumeOf && (
+        <CaseVolumeModal
+          key={caseVolumeOf.id}
+          product={caseVolumeOf}
+          onClose={() => setCaseVolumeOf(null)}
+          onSaved={loadProducts}
+        />
+      )}
 
 
       {/* ADD PRODUCT MODAL */}
       {showAddModal && (
         <AddProductModal
-          manufacturers={manufacturers}
+          suppliers={supplierOptions}
+          categories={categories}
           onClose={() =>
             setShowAddModal(false)
           }
@@ -566,7 +790,8 @@ export default function ProductCatalogPage() {
       {showEditModal && editingProduct && (
         <EditProductModal
           product={editingProduct}
-          manufacturers={manufacturers}
+          suppliers={supplierOptions}
+          categories={categories}
           onClose={() => {
             setShowEditModal(false)
             setEditingProduct(null)
@@ -584,9 +809,135 @@ export default function ProductCatalogPage() {
 
 
 // =============================================
+// FIELDS SHARED BY ADD AND EDIT
+// =============================================
+const INPUT_CLASS = 'w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20'
+
+
+// Any existing category, or a new one typed in. (A fixed list of three
+// couldn't hold the imported products' categories, so they couldn't be saved.)
+function CategoryField({ value, onChange, categories }) {
+  return (
+    <div>
+      <label className="mb-1 block text-sm font-medium text-gray-700">
+        Category
+      </label>
+
+      <input
+        type="text"
+        name="category"
+        list="product-category-options"
+        value={value}
+        onChange={onChange}
+        placeholder="e.g. Canned Goods / Meat"
+        className={INPUT_CLASS}
+        required
+      />
+
+      <datalist id="product-category-options">
+        {categories.map((category) => (
+          <option key={category} value={category}/>
+        ))}
+      </datalist>
+    </div>
+  )
+}
+
+
+// DMC buys from manufacturers and from other suppliers, such as distributors,
+// so every supplier is listed, with its type.
+function SupplierField({ value, onChange, suppliers }) {
+  return (
+    <div className="col-span-2">
+      <label className="mb-1 block text-sm font-medium text-gray-700">
+        Manufacturer / Supplier
+      </label>
+
+      <select
+        name="supplier_id"
+        value={value}
+        onChange={onChange}
+        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
+        required
+      >
+        <option value="">
+          Select manufacturer or supplier
+        </option>
+
+        {suppliers.map((supplier) => (
+          <option key={supplier.id} value={supplier.id}>
+            {supplier.supplier_name}{supplier.supplier_type ? ` (${supplier.supplier_type})` : ''}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+
+// One case's volume and weight, from the supplier's specification. Both are
+// required, by the database too (db/migrations/010).
+function CaseMeasurementFields({ form, onChange }) {
+  return (
+    <>
+      {/* VOLUME PER CASE */}
+      <div>
+        <label className="mb-1 block text-sm font-medium text-gray-700">
+          Volume per Case (m³)
+        </label>
+
+        <input
+          type="number"
+          name="cbm"
+          value={form.cbm}
+          onChange={onChange}
+          min="0"
+          step="any"
+          placeholder="e.g. 0.0212"
+          className={INPUT_CLASS}
+          required
+        />
+
+        <p className="mt-1 text-xs text-gray-500">
+          One case, from the supplier.
+        </p>
+      </div>
+
+
+      {/* WEIGHT PER CASE */}
+      <div>
+        <label className="mb-1 block text-sm font-medium text-gray-700">
+          Weight per Case (kg)
+        </label>
+
+        <input
+          type="number"
+          name="gross_weight_kg"
+          value={form.gross_weight_kg}
+          onChange={onChange}
+          min="0"
+          step="any"
+          placeholder="e.g. 7.8"
+          className={INPUT_CLASS}
+          required
+        />
+
+        <p className="mt-1 text-xs text-gray-500">
+          One case with its packaging, from the supplier.
+        </p>
+      </div>
+    </>
+  )
+}
+
+
+
+
+
+// =============================================
 // ADD PRODUCT MODAL
 // =============================================
-function AddProductModal({ manufacturers, onClose, onSubmit }) {
+function AddProductModal({ suppliers, categories, onClose, onSubmit }) {
 
   const [form, setForm] = useState({
     product_name: '',
@@ -596,10 +947,15 @@ function AddProductModal({ manufacturers, onClose, onSubmit }) {
     category: '',
     availability: 'Available',
     supplier_id: '',
+    family: '',
+    pack_size: '',
+    cbm: '',
+    gross_weight_kg: '',
     image: null,
   })
 
   const [preview, setPreview] = useState(null)
+  const [error, setError] = useState('')
 
 
   // =============================================
@@ -639,13 +995,20 @@ function AddProductModal({ manufacturers, onClose, onSubmit }) {
       return
     }
 
+    const problem = caseMeasurementError(form)
+    if (problem) {
+      setError(problem)
+      return
+    }
+
+    setError('')
     onSubmit(form)
   }
 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-xl">
 
         {/* HEADER */}
         <div className="flex items-center justify-between border-b bg-[#F4F8F5] px-6 py-4">
@@ -745,25 +1108,49 @@ function AddProductModal({ manufacturers, onClose, onSubmit }) {
             </div>
 
 
-            {/* CATEGORY */}
+            {/* FAMILY */}
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">
-                Category
+                Product Family
               </label>
 
-              <select
-                name="category"
-                value={form.category}
+              <input
+                type="text"
+                name="family"
+                value={form.family}
                 onChange={handleChange}
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
-                required
-              >
-                <option value=""> Select category </option>
-                <option value="Biscuits"> Biscuits </option>
-                <option value="Snacks"> Snacks </option>
-                <option value="Coffee"> Coffee </option>
-              </select>
+                placeholder="e.g. Argentina Corned Beef"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
+              />
+
+              <p className="mt-1 text-xs text-gray-500">
+                Sizes with the same family are shown together.
+              </p>
             </div>
+
+
+            {/* PACK SIZE */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Pack Size
+              </label>
+
+              <input
+                type="text"
+                name="pack_size"
+                value={form.pack_size}
+                onChange={handleChange}
+                placeholder="e.g. 150g x 48"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
+              />
+            </div>
+
+
+            <CaseMeasurementFields form={form} onChange={handleChange}/>
+
+
+            {/* CATEGORY */}
+            <CategoryField value={form.category} onChange={handleChange} categories={categories}/>
 
 
             {/* AVAILABILITY */}
@@ -785,31 +1172,8 @@ function AddProductModal({ manufacturers, onClose, onSubmit }) {
             </div>
 
 
-            {/* MANUFACTURER */}
-            <div className="col-span-2">
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                Manufacturer
-              </label>
-
-              <select
-                name="supplier_id"
-                value={form.supplier_id}
-                onChange={handleChange}
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
-              >
-                <option value="">
-                  Select manufacturer
-                </option>
-
-                {manufacturers.map(
-                  (manufacturer) => (
-                    <option key={manufacturer.id} value={manufacturer.id}>
-                      {manufacturer.supplier_name}
-                    </option>
-                  )
-                )}
-              </select>
-            </div>
+            {/* MANUFACTURER / SUPPLIER */}
+            <SupplierField value={form.supplier_id} onChange={handleChange} suppliers={suppliers}/>
 
 
             {/* IMAGE */}
@@ -843,6 +1207,12 @@ function AddProductModal({ manufacturers, onClose, onSubmit }) {
           </div>
 
 
+          {error && (
+            <p className="text-sm font-medium text-red-600">
+              {error}
+            </p>
+          )}
+
           {/* BUTTONS */}
           <div className="flex justify-end gap-3 pt-5">
             <button
@@ -873,7 +1243,7 @@ function AddProductModal({ manufacturers, onClose, onSubmit }) {
 // =============================================
 // EDIT PRODUCT MODAL
 // =============================================
-function EditProductModal({ product, manufacturers, onClose, onSubmit }) {
+function EditProductModal({ product, suppliers, categories, onClose, onSubmit }) {
   const [form, setForm] = useState({
     id: product.id,
     product_name: product.product_name || '',
@@ -883,7 +1253,13 @@ function EditProductModal({ product, manufacturers, onClose, onSubmit }) {
     category: product.category || '',
     availability: product.availability || 'Available',
     supplier_id: product.supplier_id || '',
+    family: product.family || '',
+    pack_size: product.pack_size || '',
+    cbm: product.cbm ?? '',
+    gross_weight_kg: product.gross_weight_kg ?? '',
   })
+
+  const [error, setError] = useState('')
 
 
   // =============================================
@@ -904,13 +1280,20 @@ function EditProductModal({ product, manufacturers, onClose, onSubmit }) {
       return
     }
 
+    const problem = caseMeasurementError(form)
+    if (problem) {
+      setError(problem)
+      return
+    }
+
+    setError('')
     onSubmit(form)
   }
 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-xl">
 
         {/* Header */}
         <div className="flex items-center justify-between border-b bg-[#F4F8F5] px-6 py-4">
@@ -1007,25 +1390,49 @@ function EditProductModal({ product, manufacturers, onClose, onSubmit }) {
             </div>
 
 
-            {/* Category */}
+            {/* FAMILY */}
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">
-                Category
+                Product Family
               </label>
 
-              <select
-                name="category"
-                value={form.category}
+              <input
+                type="text"
+                name="family"
+                value={form.family}
                 onChange={handleChange}
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
-                required
-              >
-                <option value=""> Select category </option>
-                <option value="Biscuits"> Biscuits </option>
-                <option value="Snacks"> Snacks </option>
-                <option value="Coffee"> Coffee </option>
-              </select>
+                placeholder="e.g. Argentina Corned Beef"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
+              />
+
+              <p className="mt-1 text-xs text-gray-500">
+                Sizes with the same family are shown together.
+              </p>
             </div>
+
+
+            {/* PACK SIZE */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Pack Size
+              </label>
+
+              <input
+                type="text"
+                name="pack_size"
+                value={form.pack_size}
+                onChange={handleChange}
+                placeholder="e.g. 150g x 48"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
+              />
+            </div>
+
+
+            <CaseMeasurementFields form={form} onChange={handleChange}/>
+
+
+            {/* Category */}
+            <CategoryField value={form.category} onChange={handleChange} categories={categories}/>
 
 
             {/* Availability */}
@@ -1047,33 +1454,16 @@ function EditProductModal({ product, manufacturers, onClose, onSubmit }) {
             </div>
 
 
-            {/* Manufacturer */}
-            <div className="col-span-2">
-              <label className="mb-1 block text-sm font-medium text-gray-700">
-                Manufacturer
-              </label>
-
-              <select
-                name="supplier_id"
-                value={form.supplier_id}
-                onChange={handleChange}
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 outline-none focus:border-[#2D5A42] focus:ring-2 focus:ring-[#3B7556]/20"
-              >
-
-                <option value="">
-                  Select manufacturer
-                </option>
-
-                {manufacturers.map((manufacturer) => (
-                  <option key={manufacturer.id} value={manufacturer.id}>
-                    {manufacturer.supplier_name}
-                  </option>
-                ))}
-
-              </select>
-            </div>
+            {/* Manufacturer / Supplier */}
+            <SupplierField value={form.supplier_id} onChange={handleChange} suppliers={suppliers}/>
           </div>
 
+
+          {error && (
+            <p className="text-sm font-medium text-red-600">
+              {error}
+            </p>
+          )}
 
           {/* Buttons */}
           <div className="flex justify-end gap-3 pt-5">
@@ -1098,3 +1488,23 @@ function EditProductModal({ product, manufacturers, onClose, onSubmit }) {
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per product, as listed. Customers get the manufacturer only, as on the page.
+// =============================================
+const productColumns = (staff) => [
+  { header: 'Product', value: (product) => product.product_name },
+  { header: 'SKU', value: (product) => product.sku },
+  { header: 'Family', value: (product) => product.family },
+  { header: 'Pack size', value: (product) => product.pack_size },
+  { header: 'Brand', value: (product) => product.brand },
+  { header: 'Category', value: (product) => product.category },
+  { header: 'Unit', value: (product) => product.unit },
+  { header: 'Availability', value: (product) => product.availability },
+  { header: staff ? 'Supplier' : 'Manufacturer', value: (product) => product.suppliers?.supplier_name },
+  ...(staff ? [{ header: 'Supplier type', value: (product) => product.suppliers?.supplier_type }] : []),
+  { header: 'Volume per case (m3)', value: (product) => number(product.cbm) },
+  { header: 'Weight per case (kg)', value: (product) => number(product.gross_weight_kg) },
+]

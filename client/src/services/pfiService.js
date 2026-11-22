@@ -2,7 +2,10 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import logo from '../assets/logo.png'
 import seal from '../assets/seal.png'
+import { containerCount, containerText } from '../utils/containers'
 
+// Lossless. Without it, jsPDF stores the images uncompressed and each PDF is about 9 MB.
+const IMAGE_COMPRESSION = 'FAST'
 
 
 // ============================================================
@@ -110,7 +113,9 @@ export async function generatePFI(quotation, items) {
       logoX,
       logoY,
       logoWidth,
-      logoHeight
+      logoHeight,
+      undefined,
+      IMAGE_COMPRESSION
     )
   }
 
@@ -301,11 +306,17 @@ export async function generatePFI(quotation, items) {
   )
 
   doc.text(
+    `Container${containerCount(quotation) > 1 ? 's' : ''}: ${containerText(quotation, { short: true })}`,
+    145,
+    129
+  )
+
+  doc.text(
     `Delivery: ${
       quotation.delivery_method || 'Standard'
     }`,
     145,
-    129
+    136
   )
 
 
@@ -445,7 +456,7 @@ export async function generatePFI(quotation, items) {
 
 
   // Prevent totals from overflowing
-  if (finalY > 245) {
+  if (finalY > 237) {
     doc.addPage()
 
     doc.setFillColor(...background)
@@ -498,7 +509,7 @@ export async function generatePFI(quotation, items) {
   const totalBoxX = 130
   const totalBoxY = finalY - 3
   const totalBoxWidth = 60
-  const totalBoxHeight = 38
+  const totalBoxHeight = 46
 
   doc.setDrawColor(...borderColor)
   doc.setLineWidth(0.3)
@@ -539,14 +550,39 @@ export async function generatePFI(quotation, items) {
 
 
   // ==========================================================
+  // CONTAINER
+  // ==========================================================
+  doc.setFont('helvetica', 'bold')
+
+  doc.text(
+    containerCount(quotation) > 1 ? `Containers (${containerCount(quotation)})` : `Container (${quotation.container_size || '-'})`,
+    totalBoxX + 4,
+    totalBoxY + 16
+  )
+
+  doc.setFont('helvetica', 'normal')
+
+  doc.text(
+    formatCurrency(
+      quotation.container_cost
+    ),
+    totalBoxX + totalBoxWidth - 4,
+    totalBoxY + 16,
+    {
+      align: 'right',
+    }
+  )
+
+
+  // ==========================================================
   // SHIPPING
   // ==========================================================
   doc.setFont('helvetica', 'bold')
 
   doc.text(
-    'Shipping',
+    containerCount(quotation) > 1 ? `Shipping (${containerCount(quotation)} containers)` : 'Shipping',
     totalBoxX + 4,
-    totalBoxY + 16
+    totalBoxY + 24
   )
 
   doc.setFont('helvetica', 'normal')
@@ -556,7 +592,7 @@ export async function generatePFI(quotation, items) {
       quotation.shipping_cost
     ),
     totalBoxX + totalBoxWidth - 4,
-    totalBoxY + 16,
+    totalBoxY + 24,
     {
       align: 'right',
     }
@@ -571,7 +607,7 @@ export async function generatePFI(quotation, items) {
   doc.text(
     'Total',
     totalBoxX + 4,
-    totalBoxY + 24
+    totalBoxY + 32
   )
 
   doc.text(
@@ -579,7 +615,7 @@ export async function generatePFI(quotation, items) {
       quotation.total_amount
     ),
     totalBoxX + totalBoxWidth - 4,
-    totalBoxY + 24,
+    totalBoxY + 32,
     {
       align: 'right',
     }
@@ -594,7 +630,7 @@ export async function generatePFI(quotation, items) {
   doc.text(
     'Down Payment',
     totalBoxX + 4,
-    totalBoxY + 32
+    totalBoxY + 40
   )
 
   doc.setFont('helvetica', 'normal')
@@ -604,7 +640,7 @@ export async function generatePFI(quotation, items) {
       quotation.down_payment_amount
     ),
     totalBoxX + totalBoxWidth - 4,
-    totalBoxY + 32,
+    totalBoxY + 40,
     {
       align: 'right',
     }
@@ -631,7 +667,9 @@ export async function generatePFI(quotation, items) {
       sealX,
       sealY,
       sealSize,
-      sealSize
+      sealSize,
+      undefined,
+      IMAGE_COMPRESSION
     )
 
     doc.setFont('helvetica', 'bold')

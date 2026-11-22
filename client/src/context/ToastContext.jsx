@@ -13,9 +13,13 @@ export function ToastProvider({ children }) {
       { id, message, type }
     ]);
 
+    // Three seconds, or longer for a long message, so it can be read to the end
+    // (e.g. why the database refused a step).
+    const duration = Math.max(3000, String(message ?? "").length * 60);
+
     setTimeout(() => {
       setToasts((prev) => prev.filter((toast) => toast.id !== id));
-    }, 3000);
+    }, duration);
   }
 
   const toast = {

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
+import ExportButton from '../components/ExportButton'
+import { dateTime, exportList, money, statusText } from '../utils/csvExport'
 import { useAuth } from '../context/AuthContext'
 import { 
   faFileInvoice,
@@ -11,6 +13,8 @@ import { useToast } from "../context/ToastContext"
 import StatusBadge from '../components/StatusBadge'
 
 import IconButton from '../components/IconButton'
+import TableScroll from '../components/TableScroll'
+import { formatDateTime } from '../utils/dates'
 
 
 export default function DocumentsPage() {
@@ -115,11 +119,13 @@ export default function DocumentsPage() {
         <p className="mt-1 text-gray-500">
           View attached documents for your orders.
         </p>
+
+        <ExportButton className="mt-3" count={orders.length} onExport={(how) => exportList(how, 'order-documents', DOCUMENT_COLUMNS, orders)} />
       </div>
 
 
       {/* TABLE */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+      <TableScroll className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
 
           {/* TABLE HEADER */}
@@ -207,7 +213,7 @@ export default function DocumentsPage() {
 
                   {/* DATE */}
                   <td className="px-5 py-3">
-                    {new Date(order.created_at).toLocaleDateString()}
+                    {formatDateTime(order.created_at)}
                   </td>
 
 
@@ -285,9 +291,28 @@ export default function DocumentsPage() {
             )}
           </tbody>
         </table>
-      </div>
+      </TableScroll>
 
 
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per order: which of its documents are ready.
+// =============================================
+const ready = (path) => (path ? 'Ready' : '')
+const DOCUMENT_COLUMNS = [
+  { header: 'Order', value: (order) => order.order_number },
+  { header: 'Quotation', value: (order) => order.quotation_number },
+  { header: 'Status', value: (order) => statusText(order.status) },
+  { header: 'Total (PHP)', value: (order) => money(order.total_amount) },
+  { header: 'Paid (PHP)', value: (order) => money(order.settled_amount) },
+  { header: 'PFI', value: (order) => ready(order.pfi_file_path) },
+  { header: 'Packing list', value: (order) => ready(order.pack_list_path) },
+  { header: 'Certificate of shipment', value: (order) => ready(order.cert_shipment_path) },
+  { header: 'Certificate of clearance', value: (order) => ready(order.cert_clearance_path) },
+  { header: 'Placed', value: (order) => dateTime(order.created_at) },
+]

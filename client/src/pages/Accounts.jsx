@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
+import ExportButton from '../components/ExportButton'
+import { dateTime, exportList, statusText } from '../utils/csvExport'
 import { useAuth } from '../context/AuthContext'
 import { createStaffAccount, updateStaffAccountStatus } from '../services/userService'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -10,6 +12,7 @@ import { useToast } from "../context/ToastContext"
 
 import RoleActivityBadge from '../components/RoleActivityBadge'
 import IconButton from '../components/IconButton'
+import TableScroll from '../components/TableScroll'
 
 
 export default function AccountsPage() {
@@ -203,6 +206,8 @@ export default function AccountsPage() {
           <p className="mt-1 text-gray-500">
             Manage staff accounts and access.
           </p>
+
+          <ExportButton className="mt-3" count={accounts.length} onExport={(how) => exportList(how, 'staff-accounts', ACCOUNT_COLUMNS, accounts)} />
         </div>
 
         {profile?.role === 'admin' && (
@@ -285,7 +290,7 @@ export default function AccountsPage() {
 
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+      <TableScroll className="rounded-xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full">
 
           <thead className="bg-[#F4F8F5]">
@@ -410,7 +415,7 @@ export default function AccountsPage() {
           </tbody>
 
         </table>
-      </div>
+      </TableScroll>
 
 
       {/* Add Staff Modal */}
@@ -482,7 +487,7 @@ function AddStaffModal({ onClose, onSubmit }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-xl">
 
         {/* Header */}
         <div className="flex items-center justify-between border-b bg-[#F4F8F5] px-6 py-4">
@@ -691,7 +696,7 @@ function AddStaffModal({ onClose, onSubmit }) {
 function ViewAccountModal({ account, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-xl">
 
         {/* =================================================
             HEADER
@@ -782,3 +787,19 @@ function ViewAccountModal({ account, onClose }) {
     </div>
   )
 }
+
+
+// =============================================
+// EXPORT (utils/csvExport.js)
+// A row per staff account, as listed.
+// =============================================
+const ACCOUNT_COLUMNS = [
+  { header: 'Name', value: (account) => account.name },
+  { header: 'Email', value: (account) => account.email },
+  { header: 'Role', value: (account) => statusText(account.role) },
+  { header: 'Company', value: (account) => account.company },
+  { header: 'Contact number', value: (account) => account.contact_number },
+  { header: 'Country', value: (account) => account.country },
+  { header: 'Active', value: (account) => account.is_active !== false },
+  { header: 'Created', value: (account) => dateTime(account.created_at) },
+]
