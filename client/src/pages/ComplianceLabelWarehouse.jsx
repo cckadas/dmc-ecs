@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
+import { LABEL_ORDER_STATUSES, arrivedOnly } from '../utils/labelArrival'
 import { useToast } from '../context/ToastContext'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { createNotification } from '../services/notificationService'
@@ -74,7 +75,8 @@ async function loadCustomerOrders() {
       `)
       .in('status', [
         'fully delivered',
-        'partially delivered'
+        'partially delivered',
+        'delivered short'
       ])
       .order('created_at', {
         ascending: false
@@ -93,8 +95,7 @@ async function loadCustomerOrders() {
     const filteredPurchaseOrders =
       (purchaseOrders || []).filter(
         (po) =>
-          po.customer_orders?.status ===
-          'warehouse preparation'
+          LABEL_ORDER_STATUSES.includes(po.customer_orders?.status)
       )
 
 
@@ -161,7 +162,8 @@ async function loadCustomerOrders() {
     }
 
     // A rushed order: only the lines going in its container.
-    const orderItems = await linesShippingNow(loadedItems)
+    // Only products whose goods are in: each moves on as it arrives (049).
+    const orderItems = await arrivedOnly(await linesShippingNow(loadedItems))
 
 
     // =================================================
@@ -1105,9 +1107,9 @@ async function loadCustomerOrders() {
 
                                       <IconButton
                                         icon={faStickyNote}
-                                        title="Label Applied to Units"
+                                        title={item.arrival?.complete === false ? `${item.arrival.received} of ${item.arrival.ordered} cases are in: its labels are applied once all of them are` : 'Label Applied to Units'}
                                         color="blue"
-                                        disabled={ !exchange?.original_label_path || !exchange?.customer_design_path || exchange.status !== 'printed & awaiting application'}
+                                        disabled={ !exchange?.original_label_path || !exchange?.customer_design_path || exchange.status !== 'printed & awaiting application' || item.arrival?.complete === false}
                                         onClick={() => sendToStaging(customerOrder,item)}
                                       />
                                     </div>
