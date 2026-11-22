@@ -135,6 +135,13 @@ function documentsLine(order) {
 }
 
 function creditLine(credit) {
+  // No credit from DMC yet (047): one unpaid order at a time.
+  if (credit.hasCreditFromDmc === false) {
+    return credit.canApproveAnotherOrder
+      ? "DMC hasn't given your account credit yet. You owe nothing now, so you can approve your next order. Until DMC gives you credit, you can have one unpaid order at a time, and each order ships only once it's paid in full."
+      : `DMC hasn't given your account credit yet, so you can have one unpaid order at a time: you owe ${credit.unpaidBalance}, so a new quotation is sent and approved only once that's paid. Each order ships only once it's paid in full. Only payments verified by DMC count.`
+  }
+
   return credit.canPlaceNewOrders
     ? `Your unpaid balance is ${credit.unpaidBalance}, within your credit limit of ${credit.creditLimit}, so you can place new orders.`
     : `Your unpaid balance of ${credit.unpaidBalance} has reached your credit limit of ${credit.creditLimit}, so new quotation requests and approvals are on hold until you pay. Only payments verified by DMC reduce the balance.`

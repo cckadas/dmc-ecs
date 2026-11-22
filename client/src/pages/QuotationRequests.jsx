@@ -613,10 +613,31 @@ export default function QuotationRequestsPage() {
           <p className="text-sm font-medium text-amber-800">
             {requests.filter((request) => request.credit_hold_at && request.status === 'awaiting pricing').map((request) => request.quotation_reference).join(', ')} on hold until you pay
           </p>
-          <p className="mt-1 text-sm text-amber-700">
-            Approving {requests.filter((request) => request.credit_hold_at && request.status === 'awaiting pricing').length === 1 ? 'it' : 'them'} would take your unpaid balance over your credit limit
-            {credit?.creditLimit != null ? ` (you owe ${formatPeso(credit.outstanding)} of ${formatPeso(credit.creditLimit)})` : ''}.
-            Pay your open orders on the Payments page, and DMC sends its prices once there's room.
+          {credit?.hasCredit === false ? (
+            <p className="mt-1 text-sm text-amber-700">
+              Until DMC gives you credit, you can have one unpaid order at a time, and you still owe {formatPeso(credit.outstanding)} on your open orders.
+              Pay them on the Payments page, and DMC sends its prices then.
+            </p>
+          ) : (
+            <p className="mt-1 text-sm text-amber-700">
+              Approving {requests.filter((request) => request.credit_hold_at && request.status === 'awaiting pricing').length === 1 ? 'it' : 'them'} would take your unpaid balance over your credit limit
+              {credit?.creditLimit != null ? ` (you owe ${formatPeso(credit.outstanding)} of ${formatPeso(credit.creditLimit)})` : ''}.
+              Pay your open orders on the Payments page, and DMC sends its prices once there's room.
+            </p>
+          )}
+        </div>
+      )}
+
+
+      {/* No credit from DMC yet (047) */}
+      {credit?.hasCredit === false && !stopped && (
+        <div className="mb-6 rounded-lg border border-gray-200 bg-gray-50 p-4">
+          <p className="text-sm font-medium text-gray-800">
+            DMC hasn't given your account credit yet.
+          </p>
+          <p className="mt-1 text-sm text-gray-600">
+            You can have one unpaid order at a time: pay each order in full before approving another. Each order ships only once it's paid in full
+            {Number(credit.outstanding || 0) > 0.009 ? ` (you owe ${formatPeso(credit.outstanding)} now)` : ''}.
           </p>
         </div>
       )}
@@ -1399,6 +1420,11 @@ function approveCreditProblem(status, quotation) {
   const until = quotation.expiry_date
     ? ` It can be approved until ${new Date(`${quotation.expiry_date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}.`
     : ''
+
+  // Without credit (047): one unpaid order at a time.
+  if (status?.hasCredit === false) {
+    return `DMC hasn't given you credit yet, so you can have one unpaid order at a time: pay the ${formatPeso(over)} you still owe on your open orders first, then approve it.${until}`
+  }
 
   return `Approving this would bring your unpaid balance to ${formatPeso(after)}, over your credit limit of ${formatPeso(status.creditLimit)}. Pay at least ${formatPeso(over)} of your open orders first, then approve it.${until}`
 }

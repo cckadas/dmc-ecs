@@ -9,6 +9,7 @@ import { faFloppyDisk, faPlus, faTrash } from '@fortawesome/free-solid-svg-icons
 import IconButton from '../components/IconButton'
 import { getMarkups, getContainerSizes, getContainerFillPercent, pricingErrorMessage } from '../services/pricingService'
 import { getCreditLimit, saveCreditLimit, formatPeso, creditErrorMessage } from '../services/creditService'
+import { withNewColumns } from '../utils/newColumns'
 import TableScroll from '../components/TableScroll'
 import { COUNTRY_NAMES, countryKey } from '../utils/countryPlaces'
 
@@ -585,9 +586,11 @@ function ContainersSection() {
 // CREDIT LIMIT
 //
 // A customer's unpaid balance is what they still owe on all their orders.
-// Once it reaches the limit, they can't send new quotation requests or
-// approve quotations until they pay. The database enforces it too
-// (db/migrations/002_credit_limit.sql).
+// Credit is given customer by customer, on the Customers page (047): with it,
+// once the balance reaches their limit they can't send new quotation requests
+// or approve quotations until they pay; without it, they have one unpaid
+// order at a time. The standard limit here is what admin starts from when
+// giving credit. The database enforces it all (002, 040, 047).
 // =============================================
 function CreditSection() {
   const { profile } = useAuth()
@@ -605,7 +608,8 @@ function CreditSection() {
       const limit = await getCreditLimit()
 
       const [customersResult, ordersResult] = await Promise.all([
-        supabase.from('profiles').select('id, name, company').eq('role', 'customer'),
+        // Each customer's own credit (047), asked again without it until that's run.
+        withNewColumns((withCredit) => supabase.from('profiles').select(`id, name, company${withCredit ? ', has_credit, credit_limit' : ''}`).eq('role', 'customer'), ['has_credit', 'credit_limit']),
         supabase.from('customer_orders').select('customer_id, total_amount, settled_amount, status'),
       ])
 
@@ -648,7 +652,7 @@ function CreditSection() {
 
     try {
       await saveCreditLimit(value, profile?.id)
-      toast.success(`Credit limit set to ${formatPeso(value)}.`)
+      toast.success(`Standard credit limit set to ${formatPeso(value)}.`)
       await loadCredit()
     } catch (error) {
       toast.error(creditErrorMessage(error))
@@ -663,26 +667,24 @@ function CreditSection() {
   }, [])
 
 
-  function creditState(outstanding) {
-    if (creditLimit == null) return { label: 'No limit set', className: 'text-gray-500' }
-    if (outstanding >= creditLimit) return { label: 'Blocked — must pay first', className: 'font-medium text-red-700' }
-    if (outstanding >= creditLimit * 0.8) return { label: 'Near the limit', className: 'font-medium text-amber-700' }
-    return { label: 'Can order', className: 'text-green-700' }
-  }
+  // Whether customers have their own credit yet (047 run).
+  const perCustomer = balances.some((customer) => customer.has_credit !== undefined)
 
 
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold text-[#1F3A2C]">
-          Credit limit
+          Credit
         </h2>
 
         <ExportButton count={balances.length} onExport={(how) => exportList(how, 'customer-balances', balanceColumns(creditLimit), balances)} />
       </div>
 
       <p className="mb-3 text-sm text-gray-500">
-        Once a customer's unpaid balance reaches this amount, they can't send new quotation requests or approve quotations until they pay. Every unpaid order counts, including overdue ones.
+        {perCustomer
+          ? "DMC gives credit customer by customer: admin gives it, changes its limit or removes it on the Customers page. With credit, once a customer's unpaid balance reaches their limit, they can't send new quotation requests or approve quotations until they pay. Without credit (every new customer), a customer has one unpaid order at a time, and each order ships only once it's paid in full. Every unpaid order counts, including overdue ones."
+          : "Once a customer's unpaid balance reaches this amount, they can't send new quotation requests or approve quotations until they pay. Every unpaid order counts, including overdue ones."}
       </p>
 
       {loadError && (
@@ -692,6 +694,8 @@ function CreditSection() {
       )}
 
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+        {perCustomer && <span className="text-sm font-medium text-gray-700">Standard limit</span>}
+
         <div className="relative">
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">₱</span>
           <input
@@ -717,7 +721,8 @@ function CreditSection() {
         </button>
 
         <span className="text-sm text-gray-500">
-          Current limit: {creditLimit == null ? 'none' : formatPeso(creditLimit)}
+          Current {perCustomer ? 'standard ' : ''}limit: {creditLimit == null ? 'none' : formatPeso(creditLimit)}
+          {perCustomer ? ". It's what admin starts from when giving a customer credit; changing it changes nobody's limit." : ''}
         </span>
       </div>
 
@@ -728,6 +733,7 @@ function CreditSection() {
               <th className={th}>Customer</th>
               <th className={th}>Company</th>
               <th className={th}>Unpaid Balance</th>
+              <th className={th}>Credit Limit</th>
               <th className={th}>Status</th>
             </tr>
           </thead>
@@ -735,20 +741,21 @@ function CreditSection() {
           <tbody>
             {balances.length > 0 ? (
               balances.map((customer) => {
-                const state = creditState(customer.outstanding)
+                const state = creditStanding(customer, creditLimit)
 
                 return (
                   <tr key={customer.id} className="border-t border-gray-200 text-sm">
                     <td className="px-5 py-3 font-medium text-gray-800">{customer.name || '-'}</td>
                     <td className="px-5 py-3">{customer.company || '-'}</td>
                     <td className="px-5 py-3">{formatPeso(customer.outstanding)}</td>
+                    <td className="px-5 py-3">{limitText(customer, creditLimit)}</td>
                     <td className={`px-5 py-3 ${state.className}`}>{state.label}</td>
                   </tr>
                 )
               })
             ) : (
               <tr>
-                <td colSpan="4" className="px-5 py-8 text-center text-sm text-gray-500">
+                <td colSpan="5" className="px-5 py-8 text-center text-sm text-gray-500">
                   No customers yet.
                 </td>
               </tr>
@@ -772,10 +779,32 @@ const MARKUP_COLUMNS = [
   { header: 'Simulated', value: (markup) => Boolean(markup.is_simulated) },
 ]
 
-const balanceColumns = (limit) => [
+// Where a customer stands: their own limit, or no credit (047); before that's
+// run, DMC's one limit for everyone.
+function creditStanding(customer, standard) {
+  if (customer.has_credit === false) {
+    return customer.outstanding > 0.009
+      ? { label: 'No credit: pays before the next order', className: 'font-medium text-amber-700' }
+      : { label: 'No credit: can order', className: 'text-gray-600' }
+  }
+
+  const limit = customer.has_credit ? Number(customer.credit_limit) : standard
+  if (limit == null) return { label: 'No limit set', className: 'text-gray-500' }
+  if (customer.outstanding >= limit) return { label: 'Blocked — must pay first', className: 'font-medium text-red-700' }
+  if (customer.outstanding >= limit * 0.8) return { label: 'Near the limit', className: 'font-medium text-amber-700' }
+  return { label: 'Can order', className: 'text-green-700' }
+}
+
+function limitText(customer, standard) {
+  if (customer.has_credit === false) return 'No credit'
+  const limit = customer.has_credit ? customer.credit_limit : standard
+  return limit == null ? 'None' : formatPeso(limit)
+}
+
+const balanceColumns = (standard) => [
   { header: 'Customer', value: (customer) => customer.name },
   { header: 'Company', value: (customer) => customer.company },
   { header: 'Unpaid balance (PHP)', value: (customer) => money(customer.outstanding) },
-  { header: 'Credit limit (PHP)', value: () => money(limit) },
-  { header: 'Standing', value: (customer) => (limit == null ? 'No limit set' : customer.outstanding >= limit ? 'Blocked: must pay first' : customer.outstanding >= limit * 0.8 ? 'Near the limit' : 'OK') },
+  { header: 'Credit limit (PHP)', value: (customer) => (customer.has_credit === false ? 'No credit' : money(customer.has_credit ? customer.credit_limit : standard)) },
+  { header: 'Standing', value: (customer) => creditStanding(customer, standard).label },
 ]

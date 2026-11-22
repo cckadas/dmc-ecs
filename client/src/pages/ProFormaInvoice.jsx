@@ -1190,16 +1190,28 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
 
           {overBy > 0 && (
             <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-              <p className="font-semibold">Over the credit limit: these prices can't be sent yet.</p>
-              <p className="mt-1">
-                This quotation ({formatPeso(total)}) would take {company} over their credit limit if they approved it:
-                they owe {formatPeso(credit.outstanding)} of {formatPeso(credit.creditLimit)}, so their room is {formatPeso(room)}.
-                They have to pay first.
-              </p>
+              {credit?.hasCredit === false ? (
+                <>
+                  <p className="font-semibold">No credit from DMC: these prices can't be sent yet.</p>
+                  <p className="mt-1">
+                    {company} has no credit, so they can have one unpaid order at a time, and they still owe {formatPeso(credit.outstanding)} on their open orders.
+                    They have to pay it all first. (Admin gives a customer credit on the Customers page.)
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="font-semibold">Over the credit limit: these prices can't be sent yet.</p>
+                  <p className="mt-1">
+                    This quotation ({formatPeso(total)}) would take {company} over their credit limit if they approved it:
+                    they owe {formatPeso(credit.outstanding)} of {formatPeso(credit.creditLimit)}, so their room is {formatPeso(room)}.
+                    They have to pay first.
+                  </p>
+                </>
+              )}
               <p className="mt-1">
                 {request.credit_hold_at
-                  ? `On hold since ${formatDateTime(request.credit_hold_at)}${request.credit_hold_by_name ? ` (${request.credit_hold_by_name})` : ''}. You'll be told when their balance goes down.`
-                  : 'Put it on hold: the customer is told to pay their open orders, without seeing any prices, and you\'re told when their balance goes down.'}
+                  ? `On hold since ${formatDateTime(request.credit_hold_at)}${request.credit_hold_by_name ? ` (${request.credit_hold_by_name})` : ''}. You'll be told ${credit?.hasCredit === false ? 'once they have paid it all' : 'when their balance goes down'}.`
+                  : `Put it on hold: the customer is told to pay their open orders, without seeing any prices, and you're told ${credit?.hasCredit === false ? 'once they have paid it all' : 'when their balance goes down'}.`}
                 {' '}Nothing is fixed while it's on hold: it's priced from the current price list each time it's opened.
               </p>
             </div>
@@ -1207,7 +1219,7 @@ function QuotationModal({ request, creating, onClose, onSubmit, onHold }) {
 
           {overBy === 0 && priced && request.credit_hold_at && (
             <div className="mb-4 rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800">
-              On hold since {formatDateTime(request.credit_hold_at)}: their balance now leaves room for it ({formatPeso(room)}), at today's prices. It can be sent.
+              On hold since {formatDateTime(request.credit_hold_at)}: {credit?.hasCredit === false ? 'they have paid all their orders now' : `their balance now leaves room for it (${formatPeso(room)}), at today's prices`}. It can be sent.
             </div>
           )}
 

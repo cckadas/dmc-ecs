@@ -8,11 +8,11 @@ import { useAuth } from '../context/AuthContext'
 import { createCustomer } from '../services/userService'
 import { previewAccountStep, runAccountStep } from '../services/customerAccounts'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faTrash, faPen, faXmark, faHand, faUserSlash, faUserCheck } from '@fortawesome/free-solid-svg-icons'
+import { faTrash, faPen, faXmark, faHand, faUserSlash, faUserCheck, faCreditCard } from '@fortawesome/free-solid-svg-icons'
 import { useToast } from '../context/ToastContext'
 import { withNewColumns } from '../utils/newColumns'
 import { ACCOUNT_COLUMNS, ACCOUNT_STATUS_TEXT, accountStatusOf } from '../utils/customerAccount'
-import { formatPeso } from '../services/creditService'
+import { creditErrorMessage, formatPeso, getCreditChanges, getCreditLimit, getCreditStatus, setCustomerCredit } from '../services/creditService'
 
 import IconButton from '../components/IconButton'
 import RoleActivityBadge from '../components/RoleActivityBadge'
@@ -39,6 +39,10 @@ const STEP_TEXT = {
 }
 
 
+// Each customer's credit (db/migrations/047); asked again without it until
+// that's run.
+const CREDIT_COLUMNS = ['has_credit', 'credit_limit', 'credit_changed_at', 'credit_changed_by_name']
+
 export default function CustomersPage() {
   const { profile } = useAuth()
   const { toast } = useToast()
@@ -57,6 +61,7 @@ export default function CustomersPage() {
   const [status, setStatus] = useState('current')
   const [accountChanges, setAccountChanges] = useState({})
   const [accountStep, setAccountStep] = useState(null)
+  const [creditCustomer, setCreditCustomer] = useState(null)
   const isAdmin = profile?.role === 'admin'
 
 
@@ -64,7 +69,7 @@ export default function CustomersPage() {
   // LOAD CUSTOMERS
   // =============================================
   async function loadCustomers() {
-    const { data, error } = await withNewColumns((withAccount) => {
+    const { data, error } = await withNewColumns((withCredit) => withNewColumns((withAccount) => {
       let query = supabase
         .from('profiles')
         .select(`
@@ -77,6 +82,7 @@ export default function CustomersPage() {
           country,
           is_active
           ${withAccount ? `, ${ACCOUNT_COLUMNS.join(', ')}` : ''}
+          ${withCredit ? `, ${CREDIT_COLUMNS.join(', ')}` : ''}
         `)
         .eq('role', 'customer')
         .order('created_at', { ascending: false })
@@ -96,7 +102,7 @@ export default function CustomersPage() {
       }
 
       return query
-    }, ACCOUNT_COLUMNS)
+    }, ACCOUNT_COLUMNS), CREDIT_COLUMNS)
 
     if (error) {
       toast.error(error.message)
@@ -370,6 +376,10 @@ export default function CustomersPage() {
                 Account
               </th>
 
+              <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
+                Credit
+              </th>
+
               {isAdmin && (
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-600">
                   Actions
@@ -412,11 +422,18 @@ export default function CustomersPage() {
                     )}
                   </td>
 
+                  <td className="px-5 py-3 text-gray-700">
+                    <CreditCell customer={customer}/>
+                  </td>
+
                   {isAdmin && (
                     <td className="px-5 py-3">
                       <div className="flex items-center justify-start gap-2">
                         {accountStatusOf(customer) !== 'deleted' && (
                           <IconButton icon={faPen} title="Edit Customer" color="amber" disabled={false} onClick={() => handleEditCustomer(customer)}/>
+                        )}
+                        {accountStatusOf(customer) !== 'deleted' && customer.has_credit !== undefined && (
+                          <IconButton icon={faCreditCard} title="Credit: give, change or remove" color="green" disabled={false} onClick={() => setCreditCustomer(customer)}/>
                         )}
                         {accountStatusOf(customer) === 'active' && (
                           <IconButton icon={faHand} title="Stop new orders (they finish what's paid)" color="amber" disabled={false} onClick={() => setAccountStep({ customer, step: 'stop' })}/>
@@ -440,7 +457,7 @@ export default function CustomersPage() {
               ))
             ) : (
               <tr>
-                <td colSpan={isAdmin ? 7 : 6} className="py-10 text-center text-sm text-gray-500">
+                <td colSpan={isAdmin ? 8 : 7} className="py-10 text-center text-sm text-gray-500">
                   No customers found.
                 </td>
               </tr>
@@ -479,6 +496,19 @@ export default function CustomersPage() {
           step={accountStep.step}
           onClose={() => setAccountStep(null)}
           onDone={handleAccountStepDone}
+        />
+      )}
+
+
+      {/* GIVE, CHANGE OR REMOVE CREDIT (047) */}
+      {creditCustomer && (
+        <CreditModal
+          customer={creditCustomer}
+          onClose={() => setCreditCustomer(null)}
+          onDone={() => {
+            setCreditCustomer(null)
+            loadCustomers()
+          }}
         />
       )}
 
@@ -1061,3 +1091,203 @@ const CUSTOMER_COLUMNS = [
   { header: 'Country', value: (customer) => customer.country },
   { header: 'Account', value: (customer) => ACCOUNT_STATUS_TEXT[accountStatusOf(customer)] },
 ]
+
+
+
+// =============================================
+// A CUSTOMER'S CREDIT, FOR THE LIST (db/migrations/047)
+// =============================================
+const formatDay = (value) => new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+
+function CreditCell({ customer }) {
+  if (customer.has_credit === undefined) return <span className="text-gray-400">-</span>
+
+  const kept = customer.credit_changed_by_name === 'Kept from before'
+
+  return (
+    <>
+      {customer.has_credit
+        ? <span className="font-medium text-gray-800">Up to {formatPeso(customer.credit_limit)}</span>
+        : <span className="text-gray-500">No credit</span>}
+      {customer.credit_changed_at && (
+        <span className="mt-1 block text-xs text-gray-500">
+          {kept ? 'Kept from before' : formatDay(customer.credit_changed_at)}
+          {!kept && customer.credit_changed_by_name ? `, by ${customer.credit_changed_by_name}` : ''}
+        </span>
+      )}
+    </>
+  )
+}
+
+
+// =============================================
+// GIVE, CHANGE OR REMOVE A CUSTOMER'S CREDIT (admin, db/migrations/047)
+// With credit, a customer may owe DMC up to their own limit. Without it, they
+// have one unpaid order at a time and pay each order in full before it ships.
+// =============================================
+const CHANGE_TEXT = {
+  'kept from before': (change) => `Credit kept from before, up to ${formatPeso(change.credit_limit)}`,
+  given: (change) => `Credit given, up to ${formatPeso(change.credit_limit)}`,
+  'limit changed': (change) => `Limit changed from ${formatPeso(change.previous_limit)} to ${formatPeso(change.credit_limit)}`,
+  removed: (change) => `Credit removed${change.previous_limit != null ? ` (was up to ${formatPeso(change.previous_limit)})` : ''}`,
+}
+
+function CreditModal({ customer, onClose, onDone }) {
+  const { toast } = useToast()
+  const [hasCredit, setHasCredit] = useState(Boolean(customer.has_credit))
+  const [limit, setLimit] = useState(customer.has_credit ? String(Number(customer.credit_limit)) : '')
+  const [owed, setOwed] = useState(null)
+  const [changes, setChanges] = useState([])
+  const [saving, setSaving] = useState(false)
+  const label = customer.company || customer.name || 'This customer'
+
+  useEffect(() => {
+    getCreditStatus(customer.id).then((status) => setOwed(status.outstanding)).catch(() => setOwed(null))
+    getCreditChanges(customer.id).then(setChanges).catch(() => setChanges([]))
+
+    // A first limit starts from the standard one (Markups & Credit).
+    if (!customer.has_credit) {
+      getCreditLimit()
+        .then((standard) => { if (standard != null) setLimit((current) => current || String(standard)) })
+        .catch(() => {})
+    }
+  }, [customer.id, customer.has_credit])
+
+  const value = Number(limit)
+  const unchanged = hasCredit === Boolean(customer.has_credit) && (!hasCredit || value === Number(customer.credit_limit))
+  const owesNow = owed != null && owed > 0.009
+
+
+  async function save() {
+    if (hasCredit && !(value > 0)) {
+      toast.error('Type the credit limit, above ₱0.')
+      return
+    }
+
+    setSaving(true)
+
+    try {
+      const result = await setCustomerCredit(customer.id, hasCredit, hasCredit ? value : null)
+      toast.success(
+        !result?.changed ? 'Nothing changed.'
+          : result.kind === 'given' ? `${label} has credit now, up to ${formatPeso(value)}.`
+            : result.kind === 'removed' ? `${label} has no credit now.`
+              : `${label}'s credit limit is now ${formatPeso(value)}.`
+      )
+      onDone()
+    } catch (error) {
+      toast.error(creditErrorMessage(error))
+      setSaving(false)
+    }
+  }
+
+
+  const choice = (selected) => `flex cursor-pointer gap-3 rounded-lg border p-3 ${selected ? 'border-[#2D5A42] bg-[#F4F8F5]' : 'border-gray-200 hover:bg-gray-50'}`
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-xl bg-white shadow-xl">
+
+        <div className="flex items-center justify-between border-b px-6 py-4">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-800">Credit</h2>
+            <p className="text-sm text-gray-500">{label}</p>
+          </div>
+
+          <button onClick={onClose} disabled={saving} className="rounded-md p-2 text-gray-500 hover:bg-gray-100 disabled:opacity-50">
+            <FontAwesomeIcon icon={faXmark}/>
+          </button>
+        </div>
+
+        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5 text-sm">
+          <p className="text-gray-700">
+            Now: {customer.has_credit
+              ? <>credit up to <span className="font-medium">{formatPeso(customer.credit_limit)}</span></>
+              : 'no credit'}
+            {owed != null && <>. They owe {formatPeso(owed)} on their orders</>}.
+          </p>
+
+          <label className={choice(hasCredit)}>
+            <input type="radio" name="credit" checked={hasCredit} onChange={() => setHasCredit(true)} disabled={saving} className="mt-1"/>
+            <span className="flex-1">
+              <span className="block font-medium text-gray-800">Credit, up to a limit</span>
+              <span className="block text-gray-600">
+                They may owe DMC up to this amount: their orders can ship before they're paid in full, and they can approve new orders while others are unpaid.
+              </span>
+              {hasCredit && (
+                <span className="relative mt-2 block w-48">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">₱</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={limit}
+                    onChange={(e) => setLimit(e.target.value)}
+                    disabled={saving}
+                    placeholder="0.00"
+                    className="w-full rounded-md border border-gray-300 bg-white py-2 pl-7 pr-3 text-right text-sm outline-none focus:border-[#2D5A42] focus:ring-1 focus:ring-[#2D5A42]"
+                  />
+                </span>
+              )}
+            </span>
+          </label>
+
+          <label className={choice(!hasCredit)}>
+            <input type="radio" name="credit" checked={!hasCredit} onChange={() => setHasCredit(false)} disabled={saving} className="mt-1"/>
+            <span className="flex-1">
+              <span className="block font-medium text-gray-800">No credit</span>
+              <span className="block text-gray-600">
+                One unpaid order at a time: they pay each order in full before it ships, and before they can approve another.
+              </span>
+            </span>
+          </label>
+
+          {hasCredit && owesNow && value > 0 && owed >= value && (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-800">
+              They already owe {formatPeso(owed)}, which reaches this limit: they can't send new requests or approve quotations until they pay it down.
+            </p>
+          )}
+
+          {!hasCredit && customer.has_credit && owesNow && (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-800">
+              They owe {formatPeso(owed)}: without credit, each of those orders ships only once it's paid in full, and they can't approve a new order until they've paid.
+            </p>
+          )}
+
+          {changes.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Changes</p>
+              <ul className="mt-1 space-y-1 text-xs text-gray-600">
+                {changes.map((change) => (
+                  <li key={change.id}>
+                    {formatDay(change.changed_at)}: {(CHANGE_TEXT[change.kind] || (() => change.kind))(change)}
+                    {change.kind !== 'kept from before' && change.changed_by_name ? `, by ${change.changed_by_name}` : ''}
+                    {` (owed ${formatPeso(change.owed_then)} then)`}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t px-6 py-4">
+          <button
+            onClick={onClose}
+            disabled={saving}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+
+          <button
+            onClick={save}
+            disabled={saving || unchanged}
+            className="rounded-lg bg-[#2D5A42] px-4 py-2 text-sm font-medium text-white hover:bg-[#234633] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}

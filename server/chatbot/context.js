@@ -429,11 +429,19 @@ export async function buildCustomerContext(customerId, message) {
     }
   })
 
+  // The customer's own credit (047); before that's run, DMC's one limit for
+  // everyone.
+  const ownCredit = await supabaseAdmin.from('profiles').select('has_credit, credit_limit').eq('id', customerId).maybeSingle()
+    .then(({ data, error }) => (error ? null : data))
+
   // A cancelled order owes nothing (028).
   const unpaid = orders
     .filter((order) => String(order.status || '').trim().toLowerCase() !== 'cancelled')
     .reduce((sum, order) => sum + Math.max(Number(order.total_amount || 0) - Number(order.settled_amount || 0), 0), 0)
-  const creditLimit = settings[0]?.value == null ? null : Number(settings[0].value)
+  const hasCredit = ownCredit ? Boolean(ownCredit.has_credit) : true
+  const creditLimit = ownCredit
+    ? (hasCredit ? Number(ownCredit.credit_limit) : null)
+    : (settings[0]?.value == null ? null : Number(settings[0].value))
 
   return {
     today: formatDateOnly(today),
@@ -478,9 +486,12 @@ export async function buildCustomerContext(customerId, message) {
       expired: Boolean(quotation.expiry_date && String(quotation.expiry_date).slice(0, 10) < today),
     })),
     credit: {
+      hasCreditFromDmc: hasCredit,
       unpaidBalance: peso(unpaid),
-      creditLimit: creditLimit == null ? 'no limit set' : peso(creditLimit),
-      canPlaceNewOrders: creditLimit == null || unpaid < creditLimit,
+      creditLimit: !hasCredit ? 'none: DMC has not given this customer credit yet' : creditLimit == null ? 'no limit set' : peso(creditLimit),
+      canPlaceNewOrders: !hasCredit || creditLimit == null || unpaid < creditLimit,
+      canApproveAnotherOrder: hasCredit ? (creditLimit == null || unpaid < creditLimit) : unpaid <= 0.009,
+      ...(hasCredit ? {} : { withoutCredit: 'One unpaid order at a time: a new quotation is sent and approved only once every earlier order is paid in full, and each order ships only once it is paid in full.' }),
     },
     productsMentioned: await findMentionedProducts(message),
   }

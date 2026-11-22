@@ -70,7 +70,7 @@ export const PORTAL_FAQ = [
   },
   {
     topic: 'Credit limit',
-    answer: 'If a customer\'s unpaid balance across all orders reaches DMC\'s credit limit, they cannot send new quotation requests or approve quotations until they pay. Only payments verified by DMC reduce the unpaid balance.',
+    answer: 'DMC decides when to give a customer credit, and sets a limit for that customer. With credit, a customer may owe DMC up to their limit; once their unpaid balance across all orders reaches it, they cannot send new quotation requests or approve quotations until they pay. Without credit (every new customer), a customer still pays the 50% down payment, but has one unpaid order at a time: a new quotation is sent and approved only once every earlier order is paid in full, and each order ships only once it is paid in full. Only payments verified by DMC reduce the unpaid balance.',
   },
   {
     topic: 'Order progress',
