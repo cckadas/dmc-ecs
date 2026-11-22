@@ -4,6 +4,28 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../context/AuthContext'
 import OwedBySuppliers from '../components/OwedBySuppliers'
+
+// What DMC pays for a purchase order line: the cases the supplier owes from an
+// earlier delivery are already paid for (db/migrations/046).
+const linePayable = (item) => Math.max(Number(item.ordered_quantity || 0) - Number(item.owed_cases || 0), 0) * Number(item.unit_price || 0)
+
+// Cases each supplier still owes per product, for a new purchase order to
+// count first ({ 'supplier:product': cases }); empty before 046 is run.
+async function loadOwedCredit() {
+  const check = await supabase.from('purchase_order_items').select('owed_cases').limit(1)
+  if (check.error) return {}
+  const { data, error } = await supabase
+    .from('supplier_owed_cases')
+    .select('supplier_id, product_id, cases, used_cases')
+    .is('refunded_at', null)
+  if (error) return {}
+  const open = {}
+  for (const row of data || []) {
+    const left = Number(row.cases || 0) - Number(row.used_cases || 0)
+    if (left > 0) open[`${row.supplier_id}:${row.product_id}`] = (open[`${row.supplier_id}:${row.product_id}`] || 0) + left
+  }
+  return open
+}
 import { useToast } from '../context/ToastContext'
 import { sendPurchaseOrderEmails, sendPaymentProof } from '../services/emailService'
 import { MIN_PO_DELIVERY_DAYS, formatDateTime, localDateString } from '../utils/dates'
@@ -72,7 +94,7 @@ export default function PurchaseOrdersPage() {
       .then((list) => setArrivals(Object.fromEntries(list.map((delivery) => [`${delivery.purchaseOrderId}:${delivery.supplierId}`, delivery]))))
       .catch((arrivalError) => console.error('Failed to load expected deliveries:', arrivalError))
 
-    const {data, error} = await supabase
+    const {data, error} = await withNewColumns((withOwed) => supabase
       .from('purchase_orders')
       .select(`
         id,
@@ -90,6 +112,7 @@ export default function PurchaseOrdersPage() {
           ordered_quantity,
           received_quantity,
           unit_price,
+          ${columnsIf(withOwed, ['owed_cases'])}
           status,
           created_at,
           updated_at,
@@ -130,7 +153,7 @@ export default function PurchaseOrdersPage() {
       `)
       .order('created_at', {
         ascending: false
-      })
+      }), ['owed_cases'])
 
 
     if (error) {
@@ -487,7 +510,7 @@ export default function PurchaseOrdersPage() {
         p_expected_delivery_date: expectedDeliveryDate,
         // The total this form showed. A supplier price changed since is
         // refused, rather than ordered at a price nobody saw.
-        p_expected_total: items.reduce((total, item) => total + Number(item.ordered_quantity) * Number(item.unit_price), 0),
+        p_expected_total: items.reduce((total, item) => total + linePayable(item), 0),
       })
 
       if (createError) {
@@ -906,7 +929,7 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI, profile}
   const purchaseTotal =
     items.reduce(
       (total, item) => {
-        return (total + (Number(item.ordered_quantity || 0) * Number(item.unit_price || 0)))
+        return (total + (linePayable(item)))
       },
       0
     )
@@ -1254,7 +1277,7 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI, profile}
 
                         <tbody>
                           {supplierItems.map((item) => {
-                            const itemTotal = Number(item.ordered_quantity || 0) * Number(item.unit_price || 0)
+                            const itemTotal = linePayable(item)
 
                             return (
                               <tr key={item.id} className="border-t border-gray-200">
@@ -1264,6 +1287,12 @@ function PurchaseOrderModal({purchaseOrder, onClose, onOpenSupplierPFI, profile}
                                   <p className="font-medium text-gray-800">
                                     {item.products?.product_name || '-'}
                                   </p>
+
+                                  {Number(item.owed_cases || 0) > 0 && (
+                                    <p className="mt-0.5 text-xs font-medium text-amber-700">
+                                      {item.owed_cases} owed by the supplier, already paid: DMC pays for {Math.max(Number(item.ordered_quantity || 0) - Number(item.owed_cases), 0)}
+                                    </p>
+                                  )}
 
                                   {item.products?.brand && (
                                     <p className="text-xs text-gray-500">
@@ -1433,7 +1462,7 @@ function SupplierPFIPaymentModal({ po, supplierGroup, onClose, onSuccess }) {
   // The supplier's PFI must match this PO, and the payment must match the PFI,
   // unless a reason is recorded. The database checks this too (db/migrations/015).
   const supplierTotal = supplierItems.reduce(
-    (total, item) => total + Number(item.ordered_quantity || 0) * Number(item.unit_price || 0),
+    (total, item) => total + linePayable(item),
     0
   )
   const amountsDiffer = (a, b) => Math.round(Number(a || 0) * 100) !== Math.round(Number(b || 0) * 100)
@@ -2097,6 +2126,12 @@ function AddPurchaseOrderModal({ customerOrders, suppliers, warehouseRacks, load
 
     setItems(purchaseItems)
     loadPriceListPrices(purchaseItems)
+
+    // Cases the supplier owes for a product count first: DMC pays only for the rest (046).
+    loadOwedCredit().then((open) => setItems((current) => current.map((item) => ({
+      ...item,
+      owed_cases: Math.min(Number(item.ordered_quantity || 0), open[`${item.supplier_id}:${item.product_id}`] || 0),
+    }))))
   }
 
 
@@ -2144,7 +2179,7 @@ function AddPurchaseOrderModal({ customerOrders, suppliers, warehouseRacks, load
   const purchaseTotal =
     items.reduce(
       (total, item) => {
-        return (total + (Number( item.ordered_quantity || 0) * Number(item.unit_price || 0)))
+        return (total + (linePayable(item)))
       },
       0
     )
@@ -2393,7 +2428,7 @@ function AddPurchaseOrderModal({ customerOrders, suppliers, warehouseRacks, load
                     {items.length > 0 ? (
                       items.map(
                         (item) => {
-                          const subtotal = Number(item.ordered_quantity || 0) * Number(item.unit_price || 0)
+                          const subtotal = linePayable(item)
 
                           return (
                             <tr key={item.customer_order_item_id} className="border-t border-gray-200">
@@ -2403,6 +2438,12 @@ function AddPurchaseOrderModal({ customerOrders, suppliers, warehouseRacks, load
                                 <p className="font-medium text-gray-800">
                                   {item.product_name}
                                 </p>
+
+                                {Number(item.owed_cases || 0) > 0 && (
+                                  <p className="mt-0.5 text-xs font-medium text-amber-700">
+                                    {item.owed_cases} owed by the supplier, already paid: DMC pays for {Math.max(Number(item.ordered_quantity || 0) - Number(item.owed_cases), 0)}
+                                  </p>
+                                )}
 
                                 {item.brand && (
                                   <p className="text-xs text-gray-500">
